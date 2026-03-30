@@ -1,0 +1,6 @@
+{
+  "/api/providers/route": "app/api/providers/route.js",
+  "/advisor/page": "app/advisor/page.js",
+  "/estimator/page": "app/estimator/page.js",
+  "/api/advisor/chat/route": "app/api/advisor/chat/route.js"
+}

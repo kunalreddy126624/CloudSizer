@@ -1,0 +1,23 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/advisor/page": "app/advisor/page.js",
+  "/api/advisor/estimate-plan/route": "app/api/advisor/estimate-plan/route.js",
+  "/api/advisor/chat/route": "app/api/advisor/chat/route.js",
+  "/api/auth/login/route": "app/api/auth/login/route.js",
+  "/api/auth/me/route": "app/api/auth/me/route.js",
+  "/api/auth/logout/route": "app/api/auth/logout/route.js",
+  "/api/catalog/comparisons/route": "app/api/catalog/comparisons/route.js",
+  "/api/catalog/services/route": "app/api/catalog/services/route.js",
+  "/api/estimates/route": "app/api/estimates/route.js",
+  "/api/estimates/[estimateId]/route": "app/api/estimates/[estimateId]/route.js",
+  "/api/providers/route": "app/api/providers/route.js",
+  "/api/pricing/calculate/route": "app/api/pricing/calculate/route.js",
+  "/catalog/page": "app/catalog/page.js",
+  "/api/recommendations/route": "app/api/recommendations/route.js",
+  "/estimates/page": "app/estimates/page.js",
+  "/login/page": "app/login/page.js",
+  "/estimator/page": "app/estimator/page.js",
+  "/page": "app/page.js",
+  "/pricing/page": "app/pricing/page.js",
+  "/recommendations/[provider]/page": "app/recommendations/[provider]/page.js"
+}

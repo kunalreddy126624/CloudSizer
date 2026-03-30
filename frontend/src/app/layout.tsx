@@ -1,0 +1,25 @@
+import type { ReactNode } from "react";
+import type { Metadata } from "next";
+
+import { Providers } from "@/components/providers";
+
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "CloudSizer",
+  description: "Multi-cloud sizing and cost recommendation workspace."
+};
+
+export default function RootLayout({
+  children
+}: Readonly<{
+  children: ReactNode;
+}>) {
+  return (
+    <html lang="en">
+      <body>
+        <Providers>{children}</Providers>
+      </body>
+    </html>
+  );
+}

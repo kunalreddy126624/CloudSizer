@@ -1,0 +1,1192 @@
+{
+  "aws": [
+    {
+      "provider": "aws",
+      "category": "compute",
+      "service_family": "virtual_machine",
+      "service_code": "aws.ec2.general",
+      "name": "Amazon EC2",
+      "summary": "Virtual machine compute instances for general workloads.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 18.0,
+      "dimensions": [
+        {
+          "key": "instance_hours",
+          "label": "Instance hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.045,
+          "suggested_value": 730.0
+        },
+        {
+          "key": "vcpu_count",
+          "label": "vCPU count",
+          "unit": "vCPU",
+          "rate_per_unit_usd": 6.0,
+          "suggested_value": 2.0
+        },
+        {
+          "key": "memory_gb",
+          "label": "Memory",
+          "unit": "GB",
+          "rate_per_unit_usd": 2.8,
+          "suggested_value": 8.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "compute",
+      "service_family": "containers_managed",
+      "service_code": "aws.ecs.fargate",
+      "name": "AWS Fargate",
+      "summary": "Serverless container execution for managed workloads.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 10.0,
+      "dimensions": [
+        {
+          "key": "vcpu_hours",
+          "label": "vCPU hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.04,
+          "suggested_value": 500.0
+        },
+        {
+          "key": "memory_gb_hours",
+          "label": "Memory GB-hours",
+          "unit": "GB-hours",
+          "rate_per_unit_usd": 0.0045,
+          "suggested_value": 2000.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "compute",
+      "service_family": "serverless_runtime",
+      "service_code": "aws.lambda",
+      "name": "AWS Lambda",
+      "summary": "Event-driven serverless compute for API and background tasks.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 0.0,
+      "dimensions": [
+        {
+          "key": "requests_million",
+          "label": "Requests",
+          "unit": "million requests",
+          "rate_per_unit_usd": 0.2,
+          "suggested_value": 5.0
+        },
+        {
+          "key": "gb_seconds_million",
+          "label": "Compute duration",
+          "unit": "million GB-seconds",
+          "rate_per_unit_usd": 16.67,
+          "suggested_value": 1.5
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "storage",
+      "service_family": "object_storage",
+      "service_code": "aws.s3.standard",
+      "name": "Amazon S3 Standard",
+      "summary": "Object storage for files, backups, and application assets.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 2.0,
+      "dimensions": [
+        {
+          "key": "storage_gb",
+          "label": "Stored data",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.025,
+          "suggested_value": 500.0
+        },
+        {
+          "key": "retrieval_gb",
+          "label": "Data retrieval",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.01,
+          "suggested_value": 100.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "storage",
+      "service_family": "block_storage",
+      "service_code": "aws.ebs.gp3",
+      "name": "Amazon EBS gp3",
+      "summary": "General-purpose SSD block storage for EC2 workloads.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 3.0,
+      "dimensions": [
+        {
+          "key": "storage_gb",
+          "label": "Provisioned storage",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.096,
+          "suggested_value": 250.0
+        },
+        {
+          "key": "provisioned_iops",
+          "label": "Provisioned IOPS",
+          "unit": "IOPS",
+          "rate_per_unit_usd": 0.005,
+          "suggested_value": 3000.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "database",
+      "service_family": "relational_database",
+      "service_code": "aws.rds.postgres",
+      "name": "Amazon RDS PostgreSQL",
+      "summary": "Managed PostgreSQL database service.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 40.0,
+      "dimensions": [
+        {
+          "key": "db_instance_hours",
+          "label": "DB instance hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.085,
+          "suggested_value": 730.0
+        },
+        {
+          "key": "storage_gb",
+          "label": "Database storage",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.115,
+          "suggested_value": 200.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "database",
+      "service_family": "nosql_database",
+      "service_code": "aws.dynamodb",
+      "name": "Amazon DynamoDB",
+      "summary": "Managed key-value NoSQL database.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 5.0,
+      "dimensions": [
+        {
+          "key": "read_units_million",
+          "label": "Read request units",
+          "unit": "million units",
+          "rate_per_unit_usd": 0.13,
+          "suggested_value": 50.0
+        },
+        {
+          "key": "write_units_million",
+          "label": "Write request units",
+          "unit": "million units",
+          "rate_per_unit_usd": 0.65,
+          "suggested_value": 20.0
+        },
+        {
+          "key": "storage_gb",
+          "label": "Stored data",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.28,
+          "suggested_value": 50.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "networking",
+      "service_family": "load_balancer",
+      "service_code": "aws.alb",
+      "name": "Application Load Balancer",
+      "summary": "Managed layer-7 load balancing.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 18.0,
+      "dimensions": [
+        {
+          "key": "hours",
+          "label": "Balancer hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.03,
+          "suggested_value": 730.0
+        },
+        {
+          "key": "lcu_hours",
+          "label": "LCU hours",
+          "unit": "LCU-hours",
+          "rate_per_unit_usd": 0.008,
+          "suggested_value": 500.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "networking",
+      "service_family": "content_delivery",
+      "service_code": "aws.cloudfront",
+      "name": "Amazon CloudFront",
+      "summary": "Global CDN and edge caching service.",
+      "default_region": "global",
+      "base_monthly_cost_usd": 5.0,
+      "dimensions": [
+        {
+          "key": "data_transfer_gb",
+          "label": "Data transfer",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.085,
+          "suggested_value": 250.0
+        },
+        {
+          "key": "requests_10k",
+          "label": "Requests",
+          "unit": "10k requests",
+          "rate_per_unit_usd": 0.009,
+          "suggested_value": 50.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "analytics",
+      "service_family": "data_warehouse",
+      "service_code": "aws.redshift",
+      "name": "Amazon Redshift",
+      "summary": "Managed cloud data warehouse.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 30.0,
+      "dimensions": [
+        {
+          "key": "node_hours",
+          "label": "Node hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.25,
+          "suggested_value": 300.0
+        },
+        {
+          "key": "managed_storage_gb",
+          "label": "Managed storage",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.024,
+          "suggested_value": 500.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "analytics",
+      "service_family": "stream_analytics",
+      "service_code": "aws.kinesis",
+      "name": "Amazon Kinesis Data Streams",
+      "summary": "Managed real-time streaming data ingestion.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 4.0,
+      "dimensions": [
+        {
+          "key": "shard_hours",
+          "label": "Shard hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.015,
+          "suggested_value": 720.0
+        },
+        {
+          "key": "put_payload_gb",
+          "label": "Data ingress",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.014,
+          "suggested_value": 150.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "ai_ml",
+      "service_family": "generative_ai",
+      "service_code": "aws.bedrock.tokens",
+      "name": "Amazon Bedrock",
+      "summary": "Managed foundation model access for generative AI workloads.",
+      "default_region": "us-east-1",
+      "base_monthly_cost_usd": 0.0,
+      "dimensions": [
+        {
+          "key": "input_tokens_million",
+          "label": "Input tokens",
+          "unit": "million tokens",
+          "rate_per_unit_usd": 3.0,
+          "suggested_value": 5.0
+        },
+        {
+          "key": "output_tokens_million",
+          "label": "Output tokens",
+          "unit": "million tokens",
+          "rate_per_unit_usd": 15.0,
+          "suggested_value": 2.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "ai_ml",
+      "service_family": "vision_ai",
+      "service_code": "aws.rekognition",
+      "name": "Amazon Rekognition",
+      "summary": "Managed image and video analysis service.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 0.0,
+      "dimensions": [
+        {
+          "key": "images_1000",
+          "label": "Images analyzed",
+          "unit": "1000 images",
+          "rate_per_unit_usd": 1.0,
+          "suggested_value": 20.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "security",
+      "service_family": "key_management",
+      "service_code": "aws.kms",
+      "name": "AWS Key Management Service",
+      "summary": "Managed encryption key lifecycle service.",
+      "default_region": "ap-south-1",
+      "base_monthly_cost_usd": 1.0,
+      "dimensions": [
+        {
+          "key": "keys",
+          "label": "Customer managed keys",
+          "unit": "keys",
+          "rate_per_unit_usd": 1.0,
+          "suggested_value": 5.0
+        },
+        {
+          "key": "api_requests_10k",
+          "label": "API requests",
+          "unit": "10k requests",
+          "rate_per_unit_usd": 0.03,
+          "suggested_value": 10.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "security",
+      "service_family": "web_application_firewall",
+      "service_code": "aws.waf",
+      "name": "AWS WAF",
+      "summary": "Managed web application firewall.",
+      "default_region": "global",
+      "base_monthly_cost_usd": 5.0,
+      "dimensions": [
+        {
+          "key": "web_acl_count",
+          "label": "Web ACLs",
+          "unit": "ACLs",
+          "rate_per_unit_usd": 5.0,
+          "suggested_value": 1.0
+        },
+        {
+          "key": "rules_count",
+          "label": "Rules",
+          "unit": "rules",
+          "rate_per_unit_usd": 1.0,
+          "suggested_value": 10.0
+        },
+        {
+          "key": "requests_million",
+          "label": "Requests",
+          "unit": "million requests",
+          "rate_per_unit_usd": 0.6,
+          "suggested_value": 20.0
+        }
+      ]
+    }
+  ],
+  "azure": [
+    {
+      "provider": "azure",
+      "category": "compute",
+      "service_family": "virtual_machine",
+      "service_code": "azure.vm.general",
+      "name": "Azure Virtual Machines",
+      "summary": "General-purpose virtual machines.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 20.0,
+      "dimensions": [
+        {
+          "key": "instance_hours",
+          "label": "Instance hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.047,
+          "suggested_value": 730.0
+        },
+        {
+          "key": "vcpu_count",
+          "label": "vCPU count",
+          "unit": "vCPU",
+          "rate_per_unit_usd": 6.5,
+          "suggested_value": 2.0
+        },
+        {
+          "key": "memory_gb",
+          "label": "Memory",
+          "unit": "GB",
+          "rate_per_unit_usd": 3.0,
+          "suggested_value": 8.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "compute",
+      "service_family": "containers_managed",
+      "service_code": "azure.containerapps",
+      "name": "Azure Container Apps",
+      "summary": "Managed container application platform.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 8.0,
+      "dimensions": [
+        {
+          "key": "vcpu_seconds_million",
+          "label": "vCPU seconds",
+          "unit": "million seconds",
+          "rate_per_unit_usd": 40.0,
+          "suggested_value": 0.8
+        },
+        {
+          "key": "memory_gb_seconds_million",
+          "label": "Memory GB-seconds",
+          "unit": "million GB-seconds",
+          "rate_per_unit_usd": 4.0,
+          "suggested_value": 1.6
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "compute",
+      "service_family": "serverless_runtime",
+      "service_code": "azure.functions",
+      "name": "Azure Functions",
+      "summary": "Event-driven serverless functions.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 0.0,
+      "dimensions": [
+        {
+          "key": "requests_million",
+          "label": "Requests",
+          "unit": "million requests",
+          "rate_per_unit_usd": 0.2,
+          "suggested_value": 5.0
+        },
+        {
+          "key": "gb_seconds_million",
+          "label": "Compute duration",
+          "unit": "million GB-seconds",
+          "rate_per_unit_usd": 16.0,
+          "suggested_value": 1.5
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "storage",
+      "service_family": "object_storage",
+      "service_code": "azure.blob.hot",
+      "name": "Azure Blob Storage Hot",
+      "summary": "Object storage for active content and backups.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 2.0,
+      "dimensions": [
+        {
+          "key": "storage_gb",
+          "label": "Stored data",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.023,
+          "suggested_value": 500.0
+        },
+        {
+          "key": "retrieval_gb",
+          "label": "Data retrieval",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.01,
+          "suggested_value": 100.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "storage",
+      "service_family": "block_storage",
+      "service_code": "azure.manageddisk.premium",
+      "name": "Azure Managed Disks Premium SSD",
+      "summary": "Managed SSD block storage for VM workloads.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 4.0,
+      "dimensions": [
+        {
+          "key": "storage_gb",
+          "label": "Provisioned storage",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.11,
+          "suggested_value": 250.0
+        },
+        {
+          "key": "disk_count",
+          "label": "Disk count",
+          "unit": "disks",
+          "rate_per_unit_usd": 2.0,
+          "suggested_value": 1.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "database",
+      "service_family": "relational_database",
+      "service_code": "azure.sql.db",
+      "name": "Azure SQL Database",
+      "summary": "Managed relational database service.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 45.0,
+      "dimensions": [
+        {
+          "key": "compute_hours",
+          "label": "Compute hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.09,
+          "suggested_value": 730.0
+        },
+        {
+          "key": "storage_gb",
+          "label": "Database storage",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.12,
+          "suggested_value": 200.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "database",
+      "service_family": "nosql_database",
+      "service_code": "azure.cosmosdb",
+      "name": "Azure Cosmos DB",
+      "summary": "Globally distributed NoSQL database service.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 8.0,
+      "dimensions": [
+        {
+          "key": "throughput_100ru",
+          "label": "Provisioned throughput",
+          "unit": "100 RU/s",
+          "rate_per_unit_usd": 0.008,
+          "suggested_value": 40.0
+        },
+        {
+          "key": "storage_gb",
+          "label": "Stored data",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.25,
+          "suggested_value": 50.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "networking",
+      "service_family": "load_balancer",
+      "service_code": "azure.loadbalancer",
+      "name": "Azure Load Balancer",
+      "summary": "Managed layer-4 load balancing.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 18.0,
+      "dimensions": [
+        {
+          "key": "rules",
+          "label": "Load balancing rules",
+          "unit": "rules",
+          "rate_per_unit_usd": 0.025,
+          "suggested_value": 20.0
+        },
+        {
+          "key": "data_processed_gb",
+          "label": "Data processed",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.008,
+          "suggested_value": 250.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "networking",
+      "service_family": "content_delivery",
+      "service_code": "azure.frontdoor",
+      "name": "Azure Front Door",
+      "summary": "Edge delivery, caching, and global load balancing.",
+      "default_region": "global",
+      "base_monthly_cost_usd": 6.0,
+      "dimensions": [
+        {
+          "key": "data_transfer_gb",
+          "label": "Data transfer",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.082,
+          "suggested_value": 250.0
+        },
+        {
+          "key": "requests_10k",
+          "label": "Requests",
+          "unit": "10k requests",
+          "rate_per_unit_usd": 0.008,
+          "suggested_value": 50.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "analytics",
+      "service_family": "data_warehouse",
+      "service_code": "azure.synapse.sql",
+      "name": "Azure Synapse Analytics",
+      "summary": "Dedicated SQL pool data warehouse service.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 28.0,
+      "dimensions": [
+        {
+          "key": "dwus_hours",
+          "label": "DWU hours",
+          "unit": "100 DWU-hours",
+          "rate_per_unit_usd": 1.2,
+          "suggested_value": 200.0
+        },
+        {
+          "key": "storage_tb",
+          "label": "Stored data",
+          "unit": "TB",
+          "rate_per_unit_usd": 122.0,
+          "suggested_value": 1.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "analytics",
+      "service_family": "stream_analytics",
+      "service_code": "azure.streamanalytics",
+      "name": "Azure Stream Analytics",
+      "summary": "Real-time stream processing service.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 5.0,
+      "dimensions": [
+        {
+          "key": "streaming_units_hours",
+          "label": "Streaming unit hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.11,
+          "suggested_value": 500.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "ai_ml",
+      "service_family": "generative_ai",
+      "service_code": "azure.openai.tokens",
+      "name": "Azure OpenAI",
+      "summary": "Managed OpenAI model access through Azure.",
+      "default_region": "eastus",
+      "base_monthly_cost_usd": 0.0,
+      "dimensions": [
+        {
+          "key": "input_tokens_million",
+          "label": "Input tokens",
+          "unit": "million tokens",
+          "rate_per_unit_usd": 2.8,
+          "suggested_value": 5.0
+        },
+        {
+          "key": "output_tokens_million",
+          "label": "Output tokens",
+          "unit": "million tokens",
+          "rate_per_unit_usd": 12.0,
+          "suggested_value": 2.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "ai_ml",
+      "service_family": "vision_ai",
+      "service_code": "azure.ai.vision",
+      "name": "Azure AI Vision",
+      "summary": "Image analysis and OCR service.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 0.0,
+      "dimensions": [
+        {
+          "key": "images_1000",
+          "label": "Images analyzed",
+          "unit": "1000 images",
+          "rate_per_unit_usd": 1.0,
+          "suggested_value": 20.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "security",
+      "service_family": "key_management",
+      "service_code": "azure.keyvault",
+      "name": "Azure Key Vault",
+      "summary": "Secrets, keys, and certificate management service.",
+      "default_region": "centralindia",
+      "base_monthly_cost_usd": 1.0,
+      "dimensions": [
+        {
+          "key": "operations_10k",
+          "label": "Operations",
+          "unit": "10k operations",
+          "rate_per_unit_usd": 0.03,
+          "suggested_value": 10.0
+        },
+        {
+          "key": "premium_keys",
+          "label": "Premium keys",
+          "unit": "keys",
+          "rate_per_unit_usd": 1.0,
+          "suggested_value": 5.0
+        }
+      ]
+    },
+    {
+      "provider": "azure",
+      "category": "security",
+      "service_family": "web_application_firewall",
+      "service_code": "azure.waf",
+      "name": "Azure Web Application Firewall",
+      "summary": "Managed WAF for Front Door and Application Gateway.",
+      "default_region": "global",
+      "base_monthly_cost_usd": 7.0,
+      "dimensions": [
+        {
+          "key": "policies",
+          "label": "Policies",
+          "unit": "policies",
+          "rate_per_unit_usd": 20.0,
+          "suggested_value": 1.0
+        },
+        {
+          "key": "requests_million",
+          "label": "Requests inspected",
+          "unit": "million requests",
+          "rate_per_unit_usd": 0.6,
+          "suggested_value": 20.0
+        }
+      ]
+    }
+  ],
+  "gcp": [
+    {
+      "provider": "gcp",
+      "category": "compute",
+      "service_family": "virtual_machine",
+      "service_code": "gcp.compute.general",
+      "name": "Compute Engine",
+      "summary": "General-purpose virtual machine compute.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 16.0,
+      "dimensions": [
+        {
+          "key": "instance_hours",
+          "label": "Instance hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.043,
+          "suggested_value": 730.0
+        },
+        {
+          "key": "vcpu_count",
+          "label": "vCPU count",
+          "unit": "vCPU",
+          "rate_per_unit_usd": 5.8,
+          "suggested_value": 2.0
+        },
+        {
+          "key": "memory_gb",
+          "label": "Memory",
+          "unit": "GB",
+          "rate_per_unit_usd": 2.6,
+          "suggested_value": 8.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "compute",
+      "service_family": "containers_managed",
+      "service_code": "gcp.gke.standard",
+      "name": "Google Kubernetes Engine",
+      "summary": "Managed Kubernetes control plane and worker nodes.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 12.0,
+      "dimensions": [
+        {
+          "key": "cluster_hours",
+          "label": "Cluster management",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.1,
+          "suggested_value": 730.0
+        },
+        {
+          "key": "node_hours",
+          "label": "Node hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.06,
+          "suggested_value": 600.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "compute",
+      "service_family": "serverless_runtime",
+      "service_code": "gcp.cloudrun",
+      "name": "Cloud Run",
+      "summary": "Managed serverless containers.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 0.0,
+      "dimensions": [
+        {
+          "key": "vcpu_seconds_million",
+          "label": "vCPU seconds",
+          "unit": "million seconds",
+          "rate_per_unit_usd": 24.0,
+          "suggested_value": 0.8
+        },
+        {
+          "key": "memory_gb_seconds_million",
+          "label": "Memory GB-seconds",
+          "unit": "million GB-seconds",
+          "rate_per_unit_usd": 2.5,
+          "suggested_value": 1.6
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "storage",
+      "service_family": "object_storage",
+      "service_code": "gcp.storage.standard",
+      "name": "Cloud Storage Standard",
+      "summary": "Object storage for active data and backups.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 1.5,
+      "dimensions": [
+        {
+          "key": "storage_gb",
+          "label": "Stored data",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.021,
+          "suggested_value": 500.0
+        },
+        {
+          "key": "retrieval_gb",
+          "label": "Data retrieval",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.01,
+          "suggested_value": 100.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "storage",
+      "service_family": "block_storage",
+      "service_code": "gcp.persistentdisk.ssd",
+      "name": "Persistent Disk SSD",
+      "summary": "SSD block storage for Compute Engine workloads.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 2.0,
+      "dimensions": [
+        {
+          "key": "storage_gb",
+          "label": "Provisioned storage",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.17,
+          "suggested_value": 250.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "database",
+      "service_family": "relational_database",
+      "service_code": "gcp.cloudsql.postgres",
+      "name": "Cloud SQL for PostgreSQL",
+      "summary": "Managed PostgreSQL database service.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 38.0,
+      "dimensions": [
+        {
+          "key": "db_instance_hours",
+          "label": "DB instance hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.082,
+          "suggested_value": 730.0
+        },
+        {
+          "key": "storage_gb",
+          "label": "Database storage",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.11,
+          "suggested_value": 200.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "database",
+      "service_family": "nosql_database",
+      "service_code": "gcp.firestore",
+      "name": "Cloud Firestore",
+      "summary": "Serverless document database.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 3.0,
+      "dimensions": [
+        {
+          "key": "reads_million",
+          "label": "Document reads",
+          "unit": "million reads",
+          "rate_per_unit_usd": 0.6,
+          "suggested_value": 20.0
+        },
+        {
+          "key": "writes_million",
+          "label": "Document writes",
+          "unit": "million writes",
+          "rate_per_unit_usd": 1.8,
+          "suggested_value": 10.0
+        },
+        {
+          "key": "storage_gb",
+          "label": "Stored data",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.18,
+          "suggested_value": 50.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "networking",
+      "service_family": "load_balancer",
+      "service_code": "gcp.loadbalancer",
+      "name": "Cloud Load Balancing",
+      "summary": "Global and regional load balancing service.",
+      "default_region": "global",
+      "base_monthly_cost_usd": 18.0,
+      "dimensions": [
+        {
+          "key": "forwarding_rules",
+          "label": "Forwarding rules",
+          "unit": "rules",
+          "rate_per_unit_usd": 0.025,
+          "suggested_value": 20.0
+        },
+        {
+          "key": "data_processed_gb",
+          "label": "Data processed",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.008,
+          "suggested_value": 250.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "networking",
+      "service_family": "content_delivery",
+      "service_code": "gcp.cdn",
+      "name": "Cloud CDN",
+      "summary": "Content delivery and edge caching service.",
+      "default_region": "global",
+      "base_monthly_cost_usd": 4.0,
+      "dimensions": [
+        {
+          "key": "data_transfer_gb",
+          "label": "Data transfer",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.08,
+          "suggested_value": 250.0
+        },
+        {
+          "key": "requests_10k",
+          "label": "Requests",
+          "unit": "10k requests",
+          "rate_per_unit_usd": 0.0075,
+          "suggested_value": 50.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "analytics",
+      "service_family": "data_warehouse",
+      "service_code": "gcp.bigquery",
+      "name": "BigQuery",
+      "summary": "Serverless cloud data warehouse.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 0.0,
+      "dimensions": [
+        {
+          "key": "storage_gb",
+          "label": "Stored data",
+          "unit": "GB",
+          "rate_per_unit_usd": 0.023,
+          "suggested_value": 500.0
+        },
+        {
+          "key": "query_tb",
+          "label": "Queried data",
+          "unit": "TB",
+          "rate_per_unit_usd": 5.0,
+          "suggested_value": 5.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "analytics",
+      "service_family": "stream_analytics",
+      "service_code": "gcp.dataflow.streaming",
+      "name": "Dataflow Streaming",
+      "summary": "Managed stream and batch processing service.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 8.0,
+      "dimensions": [
+        {
+          "key": "vcpu_hours",
+          "label": "vCPU hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 0.056,
+          "suggested_value": 400.0
+        },
+        {
+          "key": "memory_gb_hours",
+          "label": "Memory GB-hours",
+          "unit": "GB-hours",
+          "rate_per_unit_usd": 0.0036,
+          "suggested_value": 1600.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "ai_ml",
+      "service_family": "generative_ai",
+      "service_code": "gcp.vertexai.tokens",
+      "name": "Vertex AI Generative AI",
+      "summary": "Managed generative AI API access.",
+      "default_region": "us-central1",
+      "base_monthly_cost_usd": 0.0,
+      "dimensions": [
+        {
+          "key": "input_tokens_million",
+          "label": "Input tokens",
+          "unit": "million tokens",
+          "rate_per_unit_usd": 2.5,
+          "suggested_value": 5.0
+        },
+        {
+          "key": "output_tokens_million",
+          "label": "Output tokens",
+          "unit": "million tokens",
+          "rate_per_unit_usd": 10.0,
+          "suggested_value": 2.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "ai_ml",
+      "service_family": "vision_ai",
+      "service_code": "gcp.visionai",
+      "name": "Cloud Vision API",
+      "summary": "Image analysis and OCR service.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 0.0,
+      "dimensions": [
+        {
+          "key": "images_1000",
+          "label": "Images analyzed",
+          "unit": "1000 images",
+          "rate_per_unit_usd": 1.5,
+          "suggested_value": 20.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "security",
+      "service_family": "key_management",
+      "service_code": "gcp.cloudkms",
+      "name": "Cloud KMS",
+      "summary": "Managed encryption keys and cryptographic operations.",
+      "default_region": "asia-south1",
+      "base_monthly_cost_usd": 1.0,
+      "dimensions": [
+        {
+          "key": "key_versions",
+          "label": "Key versions",
+          "unit": "versions",
+          "rate_per_unit_usd": 0.06,
+          "suggested_value": 20.0
+        },
+        {
+          "key": "operations_10k",
+          "label": "Operations",
+          "unit": "10k operations",
+          "rate_per_unit_usd": 0.03,
+          "suggested_value": 10.0
+        }
+      ]
+    },
+    {
+      "provider": "gcp",
+      "category": "security",
+      "service_family": "web_application_firewall",
+      "service_code": "gcp.cloudarmor",
+      "name": "Cloud Armor",
+      "summary": "Managed web application firewall and DDoS protection.",
+      "default_region": "global",
+      "base_monthly_cost_usd": 5.0,
+      "dimensions": [
+        {
+          "key": "policies",
+          "label": "Security policies",
+          "unit": "policies",
+          "rate_per_unit_usd": 5.0,
+          "suggested_value": 1.0
+        },
+        {
+          "key": "rules",
+          "label": "Rules",
+          "unit": "rules",
+          "rate_per_unit_usd": 1.0,
+          "suggested_value": 10.0
+        },
+        {
+          "key": "requests_million",
+          "label": "Requests inspected",
+          "unit": "million requests",
+          "rate_per_unit_usd": 0.75,
+          "suggested_value": 20.0
+        }
+      ]
+    }
+  ]
+}
