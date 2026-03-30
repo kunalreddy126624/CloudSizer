@@ -36,7 +36,19 @@ export function parseRecommendationRequest(
     availability_tier: (searchParams.get("availability_tier") ?? "high") as RecommendationRequest["availability_tier"],
     budget_preference: (searchParams.get("budget_preference") ?? "balanced") as RecommendationRequest["budget_preference"],
     preferred_providers: (
-      searchParams.get("preferred_providers")?.split(",").filter(Boolean) ?? ["aws", "azure", "gcp"]
+      searchParams.get("preferred_providers")?.split(",").filter(Boolean) ?? [
+        "aws",
+        "azure",
+        "gcp",
+        "oracle",
+        "alibaba",
+        "ibm",
+        "tencent",
+        "digitalocean",
+        "akamai",
+        "ovhcloud",
+        "cloudflare"
+      ]
     ) as RecommendationRequest["preferred_providers"]
   };
 }

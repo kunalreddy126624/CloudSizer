@@ -28,7 +28,19 @@ import type {
   EstimationAdvisorResponse
 } from "@/lib/types";
 
-const providerOptions: CloudProvider[] = ["aws", "azure", "gcp"];
+const providerOptions: CloudProvider[] = [
+  "aws",
+  "azure",
+  "gcp",
+  "oracle",
+  "alibaba",
+  "ibm",
+  "tencent",
+  "digitalocean",
+  "akamai",
+  "ovhcloud",
+  "cloudflare"
+];
 const quickPrompts = [
   "We need ERP for 800 users in India, PostgreSQL, 2 TB storage, backups, public web access, and disaster recovery in a second region.",
   "We need a CRM platform for 500 sales and support users in UAE with managed database, file attachments, and high availability.",

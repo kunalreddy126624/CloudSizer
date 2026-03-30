@@ -11,7 +11,19 @@ export const DEFAULT_REQUEST: RecommendationRequest = {
   requires_managed_database: true,
   availability_tier: "high",
   budget_preference: "balanced",
-  preferred_providers: ["aws", "azure", "gcp"]
+  preferred_providers: [
+    "aws",
+    "azure",
+    "gcp",
+    "oracle",
+    "alibaba",
+    "ibm",
+    "tencent",
+    "digitalocean",
+    "akamai",
+    "ovhcloud",
+    "cloudflare"
+  ]
 };
 
 export const optionSets = {
@@ -30,5 +42,17 @@ export const optionSets = {
     { value: "balanced", label: "Balanced" },
     { value: "enterprise", label: "Enterprise" }
   ],
-  providers: ["aws", "azure", "gcp"] as const
+  providers: [
+    "aws",
+    "azure",
+    "gcp",
+    "oracle",
+    "alibaba",
+    "ibm",
+    "tencent",
+    "digitalocean",
+    "akamai",
+    "ovhcloud",
+    "cloudflare"
+  ] as const
 };

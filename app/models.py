@@ -26,6 +26,14 @@ class CloudProvider(str, Enum):
     AWS = "aws"
     AZURE = "azure"
     GCP = "gcp"
+    ORACLE = "oracle"
+    ALIBABA = "alibaba"
+    IBM = "ibm"
+    TENCENT = "tencent"
+    DIGITALOCEAN = "digitalocean"
+    AKAMAI = "akamai"
+    OVHCLOUD = "ovhcloud"
+    CLOUDFLARE = "cloudflare"
 
 
 class ServiceCategory(str, Enum):
@@ -60,6 +68,14 @@ class RecommendationRequest(BaseModel):
             CloudProvider.AWS,
             CloudProvider.AZURE,
             CloudProvider.GCP,
+            CloudProvider.ORACLE,
+            CloudProvider.ALIBABA,
+            CloudProvider.IBM,
+            CloudProvider.TENCENT,
+            CloudProvider.DIGITALOCEAN,
+            CloudProvider.AKAMAI,
+            CloudProvider.OVHCLOUD,
+            CloudProvider.CLOUDFLARE,
         ]
     )
 
@@ -161,6 +177,14 @@ class EstimationAdvisorRequest(BaseModel):
             CloudProvider.AWS,
             CloudProvider.AZURE,
             CloudProvider.GCP,
+            CloudProvider.ORACLE,
+            CloudProvider.ALIBABA,
+            CloudProvider.IBM,
+            CloudProvider.TENCENT,
+            CloudProvider.DIGITALOCEAN,
+            CloudProvider.AKAMAI,
+            CloudProvider.OVHCLOUD,
+            CloudProvider.CLOUDFLARE,
         ]
     )
     monthly_budget_usd: float | None = Field(default=None, ge=0.0)
@@ -178,6 +202,14 @@ class EstimationAdvisorChatRequest(BaseModel):
             CloudProvider.AWS,
             CloudProvider.AZURE,
             CloudProvider.GCP,
+            CloudProvider.ORACLE,
+            CloudProvider.ALIBABA,
+            CloudProvider.IBM,
+            CloudProvider.TENCENT,
+            CloudProvider.DIGITALOCEAN,
+            CloudProvider.AKAMAI,
+            CloudProvider.OVHCLOUD,
+            CloudProvider.CLOUDFLARE,
         ]
     )
     monthly_budget_usd: float | None = Field(default=None, ge=0.0)

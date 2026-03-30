@@ -9,192 +9,218 @@ from app.models import (
 )
 
 
-BASE_SERVICE_CATALOG: dict[WorkloadType, dict[CloudProvider, list[ServiceEstimate]]] = {
-    WorkloadType.ERP: {
-        CloudProvider.AWS: [
-            ServiceEstimate(
-                name="Amazon ECS",
-                purpose="Run ERP application containers",
-                estimated_monthly_cost_usd=180.0,
-            ),
-            ServiceEstimate(
-                name="Amazon RDS PostgreSQL",
-                purpose="Primary transactional database",
-                estimated_monthly_cost_usd=240.0,
-            ),
-            ServiceEstimate(
-                name="Amazon S3",
-                purpose="Backups and document storage",
-                estimated_monthly_cost_usd=35.0,
-            ),
+PROVIDER_SERVICES: dict[
+    CloudProvider, dict[WorkloadType, list[tuple[str, str, float]]]
+] = {
+    CloudProvider.AWS: {
+        WorkloadType.ERP: [
+            ("Amazon ECS", "Run ERP application containers", 180.0),
+            ("Amazon RDS PostgreSQL", "Primary transactional database", 240.0),
+            ("Amazon S3", "Backups and document storage", 35.0),
         ],
-        CloudProvider.AZURE: [
-            ServiceEstimate(
-                name="Azure App Service",
-                purpose="Run ERP web and API workloads",
-                estimated_monthly_cost_usd=170.0,
-            ),
-            ServiceEstimate(
-                name="Azure SQL Database",
-                purpose="Primary transactional database",
-                estimated_monthly_cost_usd=255.0,
-            ),
-            ServiceEstimate(
-                name="Azure Blob Storage",
-                purpose="Backups and document storage",
-                estimated_monthly_cost_usd=38.0,
-            ),
+        WorkloadType.APPLICATION: [
+            ("AWS Fargate", "Run stateless application services", 110.0),
+            ("Amazon RDS MySQL", "Managed application database", 120.0),
+            ("Amazon CloudFront", "Traffic acceleration and caching", 28.0),
         ],
-        CloudProvider.GCP: [
-            ServiceEstimate(
-                name="Google Kubernetes Engine",
-                purpose="Run ERP application containers",
-                estimated_monthly_cost_usd=190.0,
-            ),
-            ServiceEstimate(
-                name="Cloud SQL for PostgreSQL",
-                purpose="Primary transactional database",
-                estimated_monthly_cost_usd=235.0,
-            ),
-            ServiceEstimate(
-                name="Cloud Storage",
-                purpose="Backups and document storage",
-                estimated_monthly_cost_usd=30.0,
-            ),
+        WorkloadType.CRM: [
+            ("Amazon ECS", "Run CRM application services", 140.0),
+            ("Amazon Aurora PostgreSQL", "Managed CRM database", 210.0),
+            ("Amazon S3", "Attachment storage and exports", 32.0),
         ],
     },
-    WorkloadType.APPLICATION: {
-        CloudProvider.AWS: [
-            ServiceEstimate(
-                name="AWS Fargate",
-                purpose="Run stateless application services",
-                estimated_monthly_cost_usd=110.0,
-            ),
-            ServiceEstimate(
-                name="Amazon RDS MySQL",
-                purpose="Managed application database",
-                estimated_monthly_cost_usd=120.0,
-            ),
-            ServiceEstimate(
-                name="Amazon CloudFront",
-                purpose="Traffic acceleration and caching",
-                estimated_monthly_cost_usd=28.0,
-            ),
+    CloudProvider.AZURE: {
+        WorkloadType.ERP: [
+            ("Azure App Service", "Run ERP web and API workloads", 170.0),
+            ("Azure SQL Database", "Primary transactional database", 255.0),
+            ("Azure Blob Storage", "Backups and document storage", 38.0),
         ],
-        CloudProvider.AZURE: [
-            ServiceEstimate(
-                name="Azure Container Apps",
-                purpose="Run stateless application services",
-                estimated_monthly_cost_usd=105.0,
-            ),
-            ServiceEstimate(
-                name="Azure Database for PostgreSQL",
-                purpose="Managed application database",
-                estimated_monthly_cost_usd=125.0,
-            ),
-            ServiceEstimate(
-                name="Azure Front Door",
-                purpose="Traffic acceleration and caching",
-                estimated_monthly_cost_usd=26.0,
-            ),
+        WorkloadType.APPLICATION: [
+            ("Azure Container Apps", "Run stateless application services", 105.0),
+            ("Azure Database for PostgreSQL", "Managed application database", 125.0),
+            ("Azure Front Door", "Traffic acceleration and caching", 26.0),
         ],
-        CloudProvider.GCP: [
-            ServiceEstimate(
-                name="Cloud Run",
-                purpose="Run stateless application services",
-                estimated_monthly_cost_usd=98.0,
-            ),
-            ServiceEstimate(
-                name="Cloud SQL for MySQL",
-                purpose="Managed application database",
-                estimated_monthly_cost_usd=118.0,
-            ),
-            ServiceEstimate(
-                name="Cloud CDN",
-                purpose="Traffic acceleration and caching",
-                estimated_monthly_cost_usd=24.0,
-            ),
+        WorkloadType.CRM: [
+            ("Azure App Service", "Run CRM application services", 145.0),
+            ("Azure SQL Database", "Managed CRM database", 220.0),
+            ("Azure Blob Storage", "Attachment storage and exports", 34.0),
         ],
     },
-    WorkloadType.CRM: {
-        CloudProvider.AWS: [
-            ServiceEstimate(
-                name="Amazon ECS",
-                purpose="Run CRM application services",
-                estimated_monthly_cost_usd=140.0,
-            ),
-            ServiceEstimate(
-                name="Amazon Aurora PostgreSQL",
-                purpose="Managed CRM database",
-                estimated_monthly_cost_usd=210.0,
-            ),
-            ServiceEstimate(
-                name="Amazon S3",
-                purpose="Attachment storage and exports",
-                estimated_monthly_cost_usd=32.0,
-            ),
+    CloudProvider.GCP: {
+        WorkloadType.ERP: [
+            ("Google Kubernetes Engine", "Run ERP application containers", 190.0),
+            ("Cloud SQL for PostgreSQL", "Primary transactional database", 235.0),
+            ("Cloud Storage", "Backups and document storage", 30.0),
         ],
-        CloudProvider.AZURE: [
-            ServiceEstimate(
-                name="Azure App Service",
-                purpose="Run CRM application services",
-                estimated_monthly_cost_usd=145.0,
-            ),
-            ServiceEstimate(
-                name="Azure SQL Database",
-                purpose="Managed CRM database",
-                estimated_monthly_cost_usd=220.0,
-            ),
-            ServiceEstimate(
-                name="Azure Blob Storage",
-                purpose="Attachment storage and exports",
-                estimated_monthly_cost_usd=34.0,
-            ),
+        WorkloadType.APPLICATION: [
+            ("Cloud Run", "Run stateless application services", 98.0),
+            ("Cloud SQL for MySQL", "Managed application database", 118.0),
+            ("Cloud CDN", "Traffic acceleration and caching", 24.0),
         ],
-        CloudProvider.GCP: [
-            ServiceEstimate(
-                name="Cloud Run",
-                purpose="Run CRM application services",
-                estimated_monthly_cost_usd=130.0,
-            ),
-            ServiceEstimate(
-                name="Cloud SQL for PostgreSQL",
-                purpose="Managed CRM database",
-                estimated_monthly_cost_usd=205.0,
-            ),
-            ServiceEstimate(
-                name="Cloud Storage",
-                purpose="Attachment storage and exports",
-                estimated_monthly_cost_usd=29.0,
-            ),
+        WorkloadType.CRM: [
+            ("Cloud Run", "Run CRM application services", 130.0),
+            ("Cloud SQL for PostgreSQL", "Managed CRM database", 205.0),
+            ("Cloud Storage", "Attachment storage and exports", 29.0),
+        ],
+    },
+    CloudProvider.ORACLE: {
+        WorkloadType.ERP: [
+            ("Oracle Kubernetes Engine", "Run ERP application services", 175.0),
+            ("Autonomous Database", "Primary transactional database", 225.0),
+            ("OCI Object Storage", "Backups and document storage", 31.0),
+        ],
+        WorkloadType.APPLICATION: [
+            ("Container Instances", "Run stateless application services", 102.0),
+            ("MySQL HeatWave", "Managed application database", 122.0),
+            ("OCI Load Balancer", "Traffic distribution and caching edge", 29.0),
+        ],
+        WorkloadType.CRM: [
+            ("Oracle Kubernetes Engine", "Run CRM application services", 138.0),
+            ("Autonomous Transaction Processing", "Managed CRM database", 214.0),
+            ("OCI Object Storage", "Attachment storage and exports", 30.0),
+        ],
+    },
+    CloudProvider.ALIBABA: {
+        WorkloadType.ERP: [
+            ("Alibaba ACK", "Run ERP application containers", 162.0),
+            ("ApsaraDB RDS", "Primary transactional database", 214.0),
+            ("Alibaba OSS", "Backups and document storage", 27.0),
+        ],
+        WorkloadType.APPLICATION: [
+            ("Elastic Container Instance", "Run stateless application services", 94.0),
+            ("ApsaraDB for PostgreSQL", "Managed application database", 112.0),
+            ("Alibaba CDN", "Traffic acceleration and caching", 22.0),
+        ],
+        WorkloadType.CRM: [
+            ("Alibaba ACK", "Run CRM application services", 126.0),
+            ("ApsaraDB PolarDB", "Managed CRM database", 198.0),
+            ("Alibaba OSS", "Attachment storage and exports", 26.0),
+        ],
+    },
+    CloudProvider.IBM: {
+        WorkloadType.ERP: [
+            ("Red Hat OpenShift on IBM Cloud", "Run ERP application containers", 196.0),
+            ("Db2 on Cloud", "Primary transactional database", 248.0),
+            ("IBM Cloud Object Storage", "Backups and document storage", 34.0),
+        ],
+        WorkloadType.APPLICATION: [
+            ("Code Engine", "Run stateless application services", 104.0),
+            ("Databases for PostgreSQL", "Managed application database", 127.0),
+            ("IBM Cloud Internet Services", "Traffic acceleration and caching", 27.0),
+        ],
+        WorkloadType.CRM: [
+            ("Red Hat OpenShift on IBM Cloud", "Run CRM application services", 148.0),
+            ("Databases for PostgreSQL", "Managed CRM database", 222.0),
+            ("IBM Cloud Object Storage", "Attachment storage and exports", 33.0),
+        ],
+    },
+    CloudProvider.TENCENT: {
+        WorkloadType.ERP: [
+            ("Tencent Kubernetes Engine", "Run ERP application containers", 166.0),
+            ("TencentDB for PostgreSQL", "Primary transactional database", 216.0),
+            ("Tencent Cloud Object Storage", "Backups and document storage", 28.0),
+        ],
+        WorkloadType.APPLICATION: [
+            ("Serverless Cloud Function", "Run stateless application services", 92.0),
+            ("TencentDB for MySQL", "Managed application database", 114.0),
+            ("Tencent EdgeOne", "Traffic acceleration and caching", 23.0),
+        ],
+        WorkloadType.CRM: [
+            ("Tencent Kubernetes Engine", "Run CRM application services", 132.0),
+            ("TencentDB", "Managed CRM database", 202.0),
+            ("Tencent Cloud Object Storage", "Attachment storage and exports", 27.0),
+        ],
+    },
+    CloudProvider.DIGITALOCEAN: {
+        WorkloadType.ERP: [
+            ("DigitalOcean Kubernetes", "Run ERP application services", 154.0),
+            ("Managed PostgreSQL", "Primary transactional database", 198.0),
+            ("Spaces Object Storage", "Backups and document storage", 24.0),
+        ],
+        WorkloadType.APPLICATION: [
+            ("App Platform", "Run stateless application services", 88.0),
+            ("Managed PostgreSQL", "Managed application database", 102.0),
+            ("Load Balancers", "Traffic acceleration and routing", 20.0),
+        ],
+        WorkloadType.CRM: [
+            ("DigitalOcean Kubernetes", "Run CRM application services", 118.0),
+            ("Managed PostgreSQL", "Managed CRM database", 184.0),
+            ("Spaces Object Storage", "Attachment storage and exports", 23.0),
+        ],
+    },
+    CloudProvider.AKAMAI: {
+        WorkloadType.ERP: [
+            ("Akamai Kubernetes Engine", "Run ERP application services", 158.0),
+            ("Managed Databases", "Primary transactional database", 204.0),
+            ("Akamai Object Storage", "Backups and document storage", 26.0),
+        ],
+        WorkloadType.APPLICATION: [
+            ("Akamai App Platform", "Run stateless application services", 91.0),
+            ("Managed Databases", "Managed application database", 108.0),
+            ("Akamai Application Load Balancer", "Traffic acceleration and routing", 23.0),
+        ],
+        WorkloadType.CRM: [
+            ("Akamai Kubernetes Engine", "Run CRM application services", 121.0),
+            ("Managed Databases", "Managed CRM database", 190.0),
+            ("Akamai Object Storage", "Attachment storage and exports", 24.0),
+        ],
+    },
+    CloudProvider.OVHCLOUD: {
+        WorkloadType.ERP: [
+            ("OVHcloud Managed Kubernetes", "Run ERP application services", 149.0),
+            ("OVHcloud Managed Databases", "Primary transactional database", 193.0),
+            ("OVHcloud Object Storage", "Backups and document storage", 24.0),
+        ],
+        WorkloadType.APPLICATION: [
+            ("Public Cloud Instances", "Run stateless application services", 86.0),
+            ("OVHcloud Managed Databases", "Managed application database", 99.0),
+            ("OVHcloud Load Balancer", "Traffic acceleration and routing", 19.0),
+        ],
+        WorkloadType.CRM: [
+            ("OVHcloud Managed Kubernetes", "Run CRM application services", 114.0),
+            ("OVHcloud Managed Databases", "Managed CRM database", 178.0),
+            ("OVHcloud Object Storage", "Attachment storage and exports", 22.0),
+        ],
+    },
+    CloudProvider.CLOUDFLARE: {
+        WorkloadType.ERP: [
+            ("Cloudflare Workers", "Run ERP edge and API services", 112.0),
+            ("Cloudflare D1", "Primary transactional database", 162.0),
+            ("Cloudflare R2", "Backups and document storage", 20.0),
+        ],
+        WorkloadType.APPLICATION: [
+            ("Cloudflare Workers", "Run stateless application services", 78.0),
+            ("Cloudflare D1", "Managed application database", 88.0),
+            ("Cloudflare CDN and Load Balancer", "Traffic acceleration and caching", 18.0),
+        ],
+        WorkloadType.CRM: [
+            ("Cloudflare Workers", "Run CRM application services", 104.0),
+            ("Cloudflare D1", "Managed CRM database", 150.0),
+            ("Cloudflare R2", "Attachment storage and exports", 18.0),
         ],
     },
 }
 
 
 PROVIDER_WEIGHT: dict[CloudProvider, dict[WorkloadType, float]] = {
-    CloudProvider.AWS: {
-        WorkloadType.ERP: 1.0,
-        WorkloadType.APPLICATION: 1.05,
-        WorkloadType.CRM: 1.0,
-    },
-    CloudProvider.AZURE: {
-        WorkloadType.ERP: 1.08,
-        WorkloadType.APPLICATION: 0.97,
-        WorkloadType.CRM: 1.1,
-    },
-    CloudProvider.GCP: {
-        WorkloadType.ERP: 0.95,
-        WorkloadType.APPLICATION: 1.08,
-        WorkloadType.CRM: 0.96,
-    },
+    CloudProvider.AWS: {WorkloadType.ERP: 1.0, WorkloadType.APPLICATION: 1.05, WorkloadType.CRM: 1.0},
+    CloudProvider.AZURE: {WorkloadType.ERP: 1.08, WorkloadType.APPLICATION: 0.97, WorkloadType.CRM: 1.1},
+    CloudProvider.GCP: {WorkloadType.ERP: 0.95, WorkloadType.APPLICATION: 1.08, WorkloadType.CRM: 0.96},
+    CloudProvider.ORACLE: {WorkloadType.ERP: 1.06, WorkloadType.APPLICATION: 0.94, WorkloadType.CRM: 0.95},
+    CloudProvider.ALIBABA: {WorkloadType.ERP: 0.9, WorkloadType.APPLICATION: 1.0, WorkloadType.CRM: 0.92},
+    CloudProvider.IBM: {WorkloadType.ERP: 1.02, WorkloadType.APPLICATION: 0.93, WorkloadType.CRM: 0.97},
+    CloudProvider.TENCENT: {WorkloadType.ERP: 0.91, WorkloadType.APPLICATION: 0.99, WorkloadType.CRM: 0.93},
+    CloudProvider.DIGITALOCEAN: {WorkloadType.ERP: 0.84, WorkloadType.APPLICATION: 1.02, WorkloadType.CRM: 0.88},
+    CloudProvider.AKAMAI: {WorkloadType.ERP: 0.86, WorkloadType.APPLICATION: 1.0, WorkloadType.CRM: 0.89},
+    CloudProvider.OVHCLOUD: {WorkloadType.ERP: 0.83, WorkloadType.APPLICATION: 0.97, WorkloadType.CRM: 0.87},
+    CloudProvider.CLOUDFLARE: {WorkloadType.ERP: 0.8, WorkloadType.APPLICATION: 1.06, WorkloadType.CRM: 0.85},
 }
 
 
 def estimate_services(
     request: RecommendationRequest, provider: CloudProvider
 ) -> list[ServiceEstimate]:
-    base_services = BASE_SERVICE_CATALOG[request.workload_type][provider]
+    base_services = PROVIDER_SERVICES[provider][request.workload_type]
     scaled_services: list[ServiceEstimate] = []
 
     usage_factor = max(request.concurrent_users / 50, 1.0)
@@ -210,23 +236,22 @@ def estimate_services(
     database_multiplier = 1.0 if request.requires_managed_database else 0.7
     disaster_recovery_multiplier = 1.15 if request.requires_disaster_recovery else 1.0
 
-    for service in base_services:
+    for name, purpose, base_cost in base_services:
         service_multiplier = availability_multiplier * disaster_recovery_multiplier
+        lowered_purpose = purpose.lower()
 
-        if "database" in service.purpose.lower():
+        if "database" in lowered_purpose:
             service_multiplier *= max(usage_factor, storage_factor) * database_multiplier
-        elif "storage" in service.purpose.lower() or "backup" in service.purpose.lower():
+        elif "storage" in lowered_purpose or "backup" in lowered_purpose:
             service_multiplier *= storage_factor
         else:
             service_multiplier *= max(usage_factor, request_factor)
 
         scaled_services.append(
             ServiceEstimate(
-                name=service.name,
-                purpose=service.purpose,
-                estimated_monthly_cost_usd=round(
-                    service.estimated_monthly_cost_usd * service_multiplier, 2
-                ),
+                name=name,
+                purpose=purpose,
+                estimated_monthly_cost_usd=round(base_cost * service_multiplier, 2),
             )
         )
 

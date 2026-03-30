@@ -22,6 +22,7 @@ import {
 } from "@mui/material";
 
 import { getServiceComparisons } from "@/lib/api";
+import { formatProviderLabel } from "@/lib/cloud-providers";
 import type { ServiceCategory, ServiceComparisonGroup } from "@/lib/types";
 
 const categoryOptions: { value: ServiceCategory | "all"; label: string }[] = [
@@ -92,11 +93,11 @@ export function CatalogComparisonWorkspace() {
                       sx={{ width: "fit-content", bgcolor: "rgba(12, 107, 88, 0.12)", color: "var(--accent)" }}
                     />
                     <Typography variant="h2" sx={{ fontSize: { xs: "2.3rem", md: "3.8rem" }, lineHeight: 0.98 }}>
-                      Compare equivalent services across AWS, Azure, and GCP.
+                      Compare equivalent services across the broader cloud market.
                     </Typography>
                     <Typography variant="body1" sx={{ color: "var(--muted)", maxWidth: 760 }}>
-                      Review aligned service families like virtual machines, managed containers, relational
-                      databases, and CDN services without bouncing between provider portals.
+                      Review aligned service families like virtual machines, managed containers, databases, CDN,
+                      AI, and security services across all supported providers without bouncing between portals.
                     </Typography>
                   </Stack>
                 </Grid>
@@ -162,7 +163,7 @@ export function CatalogComparisonWorkspace() {
                               >
                                 <CardContent>
                                   <Stack spacing={1.5}>
-                                    <Chip label={service.provider.toUpperCase()} sx={{ width: "fit-content" }} />
+                                    <Chip label={formatProviderLabel(service.provider)} sx={{ width: "fit-content" }} />
                                     <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                                       {service.name}
                                     </Typography>

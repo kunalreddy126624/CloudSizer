@@ -20,6 +20,7 @@ from app.models import (
 )
 from app.services.catalog import get_catalog_services
 from app.services.recommendation import build_recommendations
+from app.services.pricing import build_architecture
 from app.services.service_pricing import calculate_service_pricing
 
 
@@ -129,6 +130,30 @@ def build_provider_suggestions(
 
     for provider in providers:
         provider_services = get_catalog_services(provider=provider)
+        if not provider_services:
+            architecture = build_architecture(
+                RecommendationRequest(
+                    workload_type=WorkloadType.APPLICATION,
+                    region="ap-south-1",
+                    user_count=120,
+                    concurrent_users=40,
+                    storage_gb=500,
+                    monthly_requests_million=1.2,
+                    preferred_providers=[provider],
+                ),
+                provider,
+            )
+            for service in architecture.services:
+                suggestions.append(
+                    AdvisorSuggestion(
+                        provider=provider,
+                        service_code=f"{provider.value}.{service.name.lower().replace(' ', '_')}",
+                        service_name=service.name,
+                        rationale=service.purpose,
+                    )
+                )
+            continue
+
         for family in families:
             service = next(
                 (item for item in provider_services if item.service_family == family),
@@ -155,6 +180,37 @@ def build_provider_plans(
 
     for provider in providers:
         provider_services = get_catalog_services(provider=provider)
+        if not provider_services:
+            architecture = build_architecture(
+                RecommendationRequest(
+                    workload_type=WorkloadType.APPLICATION,
+                    region="ap-south-1",
+                    user_count=120,
+                    concurrent_users=40,
+                    storage_gb=500,
+                    monthly_requests_million=1.2,
+                    preferred_providers=[provider],
+                ),
+                provider,
+            )
+            plans.append(
+                AdvisorProviderPlan(
+                    provider=provider,
+                    estimated_monthly_cost_usd=architecture.estimated_monthly_cost_usd,
+                    items=[
+                        AdvisorPlannedItem(
+                            service_code=f"{provider.value}.{service.name.lower().replace(' ', '_')}",
+                            service_name=service.name,
+                            region="global",
+                            usage={},
+                            rationale=service.purpose,
+                        )
+                        for service in architecture.services
+                    ],
+                )
+            )
+            continue
+
         planned_items: list[AdvisorPlannedItem] = []
         pricing_items: list[ServicePricingLineItemRequest] = []
 

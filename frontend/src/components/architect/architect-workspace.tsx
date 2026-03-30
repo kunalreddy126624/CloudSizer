@@ -3,6 +3,7 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import {
   Alert,
@@ -24,12 +25,25 @@ import {
 
 import { DEFAULT_REQUEST, optionSets } from "@/lib/defaults";
 import {
+  loadArchitectCanvasDraft,
   clearPendingArchitectScenario,
-  loadPendingArchitectScenario
+  loadPendingArchitectScenario,
+  storeArchitectCanvasDraft
 } from "@/lib/scenario-store";
 import type { CloudProvider, RecommendationRequest, ServiceCategory } from "@/lib/types";
 
-type DiagramProvider = CloudProvider | "shared";
+type ArchitectureCloudProvider =
+  | CloudProvider
+  | "oracle"
+  | "alibaba"
+  | "ibm"
+  | "tencent"
+  | "digitalocean"
+  | "akamai"
+  | "ovhcloud"
+  | "cloudflare";
+
+type DiagramProvider = ArchitectureCloudProvider | "shared";
 type DiagramCategory =
   | ServiceCategory
   | "identity"
@@ -60,10 +74,16 @@ interface DiagramPlan {
   title: string;
   summary: string;
   assumptions: string[];
-  providers: CloudProvider[];
+  providers: ArchitectureCloudProvider[];
   nodes: DiagramNode[];
   edges: DiagramEdge[];
 }
+
+interface ArchitectWorkspaceProps {
+  canvasOnly?: boolean;
+}
+
+type DiagramStyle = "reference" | "network" | "workflow";
 
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = 780;
@@ -72,17 +92,47 @@ const NODE_HEIGHT = 86;
 const SHARED_LANE_X = 60;
 const PROVIDER_LANE_START = 320;
 
-const providerLabels: Record<CloudProvider, string> = {
+const architectureProviderOptions: ArchitectureCloudProvider[] = [
+  "aws",
+  "azure",
+  "gcp",
+  "oracle",
+  "alibaba",
+  "ibm",
+  "tencent",
+  "digitalocean",
+  "akamai",
+  "ovhcloud",
+  "cloudflare"
+];
+
+const providerLabels: Record<ArchitectureCloudProvider, string> = {
   aws: "AWS",
   azure: "Azure",
-  gcp: "GCP"
+  gcp: "GCP",
+  oracle: "Oracle Cloud",
+  alibaba: "Alibaba Cloud",
+  ibm: "IBM Cloud",
+  tencent: "Tencent Cloud",
+  digitalocean: "DigitalOcean",
+  akamai: "Akamai Cloud",
+  ovhcloud: "OVHcloud",
+  cloudflare: "Cloudflare"
 };
 
 const providerColors: Record<DiagramProvider, { fill: string; stroke: string; text: string }> = {
   shared: { fill: "#edf4ff", stroke: "#8aa9df", text: "#17315c" },
   aws: { fill: "#fff1dc", stroke: "#f3a53d", text: "#7a4500" },
   azure: { fill: "#e6f2ff", stroke: "#3082ff", text: "#0f4f9b" },
-  gcp: { fill: "#ecf8ef", stroke: "#4ea567", text: "#196532" }
+  gcp: { fill: "#ecf8ef", stroke: "#4ea567", text: "#196532" },
+  oracle: { fill: "#ffe8e5", stroke: "#f05f48", text: "#98281b" },
+  alibaba: { fill: "#fff0e5", stroke: "#ff8a2a", text: "#9a4e11" },
+  ibm: { fill: "#edf0ff", stroke: "#5a78ff", text: "#2540aa" },
+  tencent: { fill: "#e8f4ff", stroke: "#2f9cff", text: "#125e9f" },
+  digitalocean: { fill: "#e6f7ff", stroke: "#0080ff", text: "#0052a3" },
+  akamai: { fill: "#eef3ff", stroke: "#6c7cff", text: "#3743af" },
+  ovhcloud: { fill: "#eef0ff", stroke: "#4e63d9", text: "#26378f" },
+  cloudflare: { fill: "#fff2e8", stroke: "#f48120", text: "#984c0f" }
 };
 
 const quickPrompts = [
@@ -104,8 +154,22 @@ const categoryOptions: DiagramCategory[] = [
   "observability"
 ];
 
+const providerAliases: Record<ArchitectureCloudProvider, string[]> = {
+  aws: ["aws", "amazon web services", "amazon"],
+  azure: ["azure", "microsoft azure", "microsoft"],
+  gcp: ["gcp", "google cloud", "google cloud platform", "google"],
+  oracle: ["oracle", "oracle cloud", "oci"],
+  alibaba: ["alibaba", "alibaba cloud", "aliyun"],
+  ibm: ["ibm", "ibm cloud"],
+  tencent: ["tencent", "tencent cloud"],
+  digitalocean: ["digitalocean", "digital ocean"],
+  akamai: ["akamai", "linode", "akamai cloud"],
+  ovhcloud: ["ovh", "ovhcloud", "ovh cloud"],
+  cloudflare: ["cloudflare"]
+};
+
 const providerServices: Record<
-  CloudProvider,
+  ArchitectureCloudProvider,
   Record<ServiceCategory | "identity" | "integration" | "observability", string>
 > = {
   aws: {
@@ -143,6 +207,102 @@ const providerServices: Record<
     identity: "Cloud Identity",
     integration: "Pub/Sub",
     observability: "Cloud Monitoring"
+  },
+  oracle: {
+    compute: "Oracle Kubernetes Engine",
+    database: "Autonomous Database",
+    storage: "OCI Object Storage",
+    networking: "OCI Load Balancer",
+    analytics: "Oracle Analytics Cloud",
+    ai_ml: "OCI Generative AI",
+    security: "OCI Web Application Firewall",
+    identity: "OCI IAM",
+    integration: "OCI Streaming",
+    observability: "OCI Logging and Monitoring"
+  },
+  alibaba: {
+    compute: "Alibaba ACK",
+    database: "ApsaraDB RDS",
+    storage: "Alibaba OSS",
+    networking: "Server Load Balancer",
+    analytics: "MaxCompute",
+    ai_ml: "PAI",
+    security: "Alibaba Cloud Firewall",
+    identity: "Resource Access Management",
+    integration: "Alibaba EventBridge",
+    observability: "CloudMonitor"
+  },
+  ibm: {
+    compute: "Red Hat OpenShift on IBM Cloud",
+    database: "Db2 on Cloud",
+    storage: "IBM Cloud Object Storage",
+    networking: "IBM Cloud Load Balancer",
+    analytics: "watsonx.data",
+    ai_ml: "watsonx.ai",
+    security: "IBM Cloud Internet Services",
+    identity: "IBM Cloud IAM",
+    integration: "Event Streams",
+    observability: "IBM Cloud Monitoring"
+  },
+  tencent: {
+    compute: "Tencent Kubernetes Engine",
+    database: "TencentDB",
+    storage: "Tencent Cloud Object Storage",
+    networking: "Cloud Load Balancer",
+    analytics: "Tencent Data Warehouse",
+    ai_ml: "Tencent Hunyuan",
+    security: "Tencent Cloud Firewall",
+    identity: "Cloud Access Management",
+    integration: "Tencent EventBridge",
+    observability: "Tencent Cloud Monitor"
+  },
+  digitalocean: {
+    compute: "DigitalOcean Kubernetes",
+    database: "Managed PostgreSQL",
+    storage: "Spaces Object Storage",
+    networking: "DigitalOcean Load Balancer",
+    analytics: "Managed Kafka",
+    ai_ml: "DigitalOcean GenAI Platform",
+    security: "Cloud Firewalls",
+    identity: "DigitalOcean IAM",
+    integration: "Functions and Queues",
+    observability: "DigitalOcean Monitoring"
+  },
+  akamai: {
+    compute: "Akamai Kubernetes Engine",
+    database: "Managed Databases",
+    storage: "Akamai Object Storage",
+    networking: "Akamai Application Load Balancer",
+    analytics: "DataStream",
+    ai_ml: "Akamai AI Inference",
+    security: "App and API Protector",
+    identity: "Akamai IAM",
+    integration: "Event Center",
+    observability: "Akamai Cloud Monitor"
+  },
+  ovhcloud: {
+    compute: "OVHcloud Managed Kubernetes",
+    database: "OVHcloud Managed Databases",
+    storage: "OVHcloud Object Storage",
+    networking: "OVHcloud Load Balancer",
+    analytics: "OVHcloud Data Platform",
+    ai_ml: "OVHcloud AI Endpoints",
+    security: "OVHcloud Network Firewall",
+    identity: "OVHcloud IAM",
+    integration: "OVHcloud Event Streams",
+    observability: "OVHcloud Metrics"
+  },
+  cloudflare: {
+    compute: "Cloudflare Workers",
+    database: "Cloudflare D1",
+    storage: "Cloudflare R2",
+    networking: "Cloudflare Load Balancer",
+    analytics: "Cloudflare Analytics Engine",
+    ai_ml: "Workers AI",
+    security: "Cloudflare WAF",
+    identity: "Cloudflare Access",
+    integration: "Cloudflare Queues",
+    observability: "Cloudflare Analytics"
   }
 };
 
@@ -166,7 +326,10 @@ function getCategoryLabel(category: DiagramCategory) {
   return category.replaceAll("_", " ").replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
-function getProviderService(provider: CloudProvider, category: ServiceCategory | "identity" | "integration" | "observability") {
+function getProviderService(
+  provider: ArchitectureCloudProvider,
+  category: ServiceCategory | "identity" | "integration" | "observability"
+) {
   return providerServices[provider][category];
 }
 
@@ -198,9 +361,11 @@ function buildNode(
   };
 }
 
-function detectProviders(prompt: string, selectedProviders: CloudProvider[]) {
+function detectProviders(prompt: string, selectedProviders: ArchitectureCloudProvider[]) {
   const normalized = prompt.toLowerCase();
-  const mentioned = optionSets.providers.filter((provider) => normalized.includes(provider));
+  const mentioned = architectureProviderOptions.filter((provider) =>
+    providerAliases[provider].some((alias) => normalized.includes(alias))
+  );
   if (mentioned.length) {
     return mentioned;
   }
@@ -267,7 +432,7 @@ function getProviderLaneWidth(providerCount: number) {
 
 function buildArchitecturePlan(
   prompt: string,
-  selectedProviders: CloudProvider[],
+  selectedProviders: ArchitectureCloudProvider[],
   request: RecommendationRequest | null
 ): DiagramPlan {
   const providers = detectProviders(prompt, selectedProviders);
@@ -477,15 +642,37 @@ function buildManualNodeTitle(provider: DiagramProvider, category: DiagramCatego
   return getProviderService(provider, category as ServiceCategory);
 }
 
-export function ArchitectWorkspace() {
+function getBounds(nodes: DiagramNode[]) {
+  if (!nodes.length) {
+    return null;
+  }
+
+  const minX = Math.min(...nodes.map((node) => node.x));
+  const minY = Math.min(...nodes.map((node) => node.y));
+  const maxX = Math.max(...nodes.map((node) => node.x + node.width));
+  const maxY = Math.max(...nodes.map((node) => node.y + node.height));
+
+  return {
+    x: minX - 24,
+    y: minY - 28,
+    width: maxX - minX + 48,
+    height: maxY - minY + 56
+  };
+}
+
+export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspaceProps) {
+  const router = useRouter();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [prompt, setPrompt] = useState(quickPrompts[0]);
-  const [selectedProviders, setSelectedProviders] = useState<CloudProvider[]>([...DEFAULT_REQUEST.preferred_providers]);
+  const [selectedProviders, setSelectedProviders] = useState<ArchitectureCloudProvider[]>([
+    ...DEFAULT_REQUEST.preferred_providers
+  ]);
   const [requestContext, setRequestContext] = useState<RecommendationRequest | null>(null);
   const [plan, setPlan] = useState<DiagramPlan>(() =>
     buildArchitecturePlan(quickPrompts[0], DEFAULT_REQUEST.preferred_providers, null)
   );
   const [agentMessage, setAgentMessage] = useState(plan.summary);
+  const [diagramStyle, setDiagramStyle] = useState<DiagramStyle>("reference");
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -497,6 +684,21 @@ export function ArchitectWorkspace() {
   const [dragState, setDragState] = useState<{ nodeId: string; offsetX: number; offsetY: number } | null>(null);
 
   useEffect(() => {
+    if (canvasOnly) {
+      const draft = loadArchitectCanvasDraft();
+      if (!draft) {
+        return;
+      }
+
+      setPrompt(draft.prompt);
+      setSelectedProviders(draft.selected_providers as ArchitectureCloudProvider[]);
+      setDiagramStyle((draft.diagram_style as DiagramStyle | undefined) ?? "reference");
+      setRequestContext(draft.request_context);
+      setPlan(draft.plan as unknown as DiagramPlan);
+      setAgentMessage("Loaded the current architect canvas draft.");
+      return;
+    }
+
     const pendingScenario = loadPendingArchitectScenario();
     if (!pendingScenario) {
       return;
@@ -516,7 +718,7 @@ export function ArchitectWorkspace() {
     setAgentMessage(nextPlan.summary);
     setImportMessage(`Imported "${pendingScenario.name}" into Agent Architect.`);
     clearPendingArchitectScenario();
-  }, []);
+  }, [canvasOnly]);
 
   const nodeLookup = useMemo(() => {
     return plan.nodes.reduce<Record<string, DiagramNode>>((accumulator, node) => {
@@ -528,6 +730,67 @@ export function ArchitectWorkspace() {
   const selectedNode = selectedNodeId ? nodeLookup[selectedNodeId] ?? null : null;
   const selectedEdge = selectedEdgeId ? plan.edges.find((edge) => edge.id === selectedEdgeId) ?? null : null;
   const laneWidth = getProviderLaneWidth(plan.providers.length);
+  const canvasWidth = Math.max(CANVAS_WIDTH, PROVIDER_LANE_START + plan.providers.length * laneWidth + 60);
+  const canvasZones = useMemo(() => {
+    const zones: Array<{ id: string; label: string; x: number; y: number; width: number; height: number; stroke: string; fill: string }> = [];
+    const sharedBounds = getBounds(plan.nodes.filter((node) => node.provider === "shared"));
+    if (sharedBounds) {
+      zones.push({
+        id: "shared-zone",
+        label: diagramStyle === "workflow" ? "Shared flow services" : "Shared services",
+        ...sharedBounds,
+        stroke: "#7aa0df",
+        fill: "rgba(237, 244, 255, 0.45)"
+      });
+    }
+
+    plan.providers.forEach((provider) => {
+      const providerNodes = plan.nodes.filter((node) => node.provider === provider);
+      const appBounds = getBounds(
+        providerNodes.filter((node) =>
+          ["networking", "compute", "security", "identity", "integration"].includes(node.category)
+        )
+      );
+      const dataBounds = getBounds(
+        providerNodes.filter((node) =>
+          ["database", "storage", "analytics", "ai_ml", "observability"].includes(node.category)
+        )
+      );
+
+      if (appBounds) {
+        zones.push({
+          id: `${provider}-app-zone`,
+          label: diagramStyle === "network" ? "Application subnet" : "Application component",
+          ...appBounds,
+          stroke: providerColors[provider].stroke,
+          fill: "rgba(255,255,255,0.22)"
+        });
+      }
+
+      if (dataBounds) {
+        zones.push({
+          id: `${provider}-data-zone`,
+          label: diagramStyle === "workflow" ? "Data and automation component" : "Data component",
+          ...dataBounds,
+          stroke: providerColors[provider].stroke,
+          fill: "rgba(255,255,255,0.16)"
+        });
+      }
+    });
+
+    return zones;
+  }, [diagramStyle, plan.nodes, plan.providers]);
+  const legendItems = useMemo(() => {
+    if (diagramStyle === "network") {
+      return ["HTTPS traffic", "Private connection", "Outbound traffic", "Virtual network link"];
+    }
+
+    if (diagramStyle === "workflow") {
+      return ["User flow", "Control plane", "Data sync", "Automation path"];
+    }
+
+    return ["Application component", "Data component", "Shared services", "Numbered flow steps"];
+  }, [diagramStyle]);
 
   function pointerToCanvas(event: { clientX: number; clientY: number }) {
     const svg = svgRef.current;
@@ -536,8 +799,8 @@ export function ArchitectWorkspace() {
     }
 
     const rect = svg.getBoundingClientRect();
-    return {
-      x: ((event.clientX - rect.left) / rect.width) * CANVAS_WIDTH,
+      return {
+      x: ((event.clientX - rect.left) / rect.width) * canvasWidth,
       y: ((event.clientY - rect.top) / rect.height) * CANVAS_HEIGHT
     };
   }
@@ -551,7 +814,7 @@ export function ArchitectWorkspace() {
     setConnectFromId(null);
   }
 
-  function toggleProvider(provider: CloudProvider) {
+  function toggleProvider(provider: ArchitectureCloudProvider) {
     setSelectedProviders((current) =>
       current.includes(provider) ? current.filter((item) => item !== provider) : [...current, provider]
     );
@@ -598,7 +861,7 @@ export function ArchitectWorkspace() {
         node.id === dragState.nodeId
           ? {
               ...node,
-              x: Math.min(Math.max(point.x - dragState.offsetX, 16), CANVAS_WIDTH - node.width - 16),
+              x: Math.min(Math.max(point.x - dragState.offsetX, 16), canvasWidth - node.width - 16),
               y: Math.min(Math.max(point.y - dragState.offsetY, 16), CANVAS_HEIGHT - node.height - 16)
             }
           : node
@@ -678,6 +941,415 @@ export function ArchitectWorkspace() {
     URL.revokeObjectURL(url);
   }
 
+  function openCanvasPage() {
+    storeArchitectCanvasDraft({
+      prompt,
+      selected_providers: selectedProviders,
+      diagram_style: diagramStyle,
+      request_context: requestContext,
+      plan: plan as unknown as Record<string, unknown>,
+      saved_at: new Date().toISOString()
+    });
+    router.push("/architect/canvas");
+  }
+
+  if (canvasOnly) {
+    return (
+      <Box sx={{ py: { xs: 3, md: 4 }, minHeight: "100vh" }}>
+        <Container maxWidth={false} sx={{ px: { xs: 2, md: 4 } }}>
+          <Stack spacing={3}>
+            <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none", background: "var(--hero)" }}>
+              <CardContent sx={{ p: { xs: 3, md: 4 } }}>
+                <Stack direction={{ xs: "column", lg: "row" }} justifyContent="space-between" spacing={2}>
+                  <Box>
+                    <Typography variant="overline" sx={{ color: "var(--muted)", letterSpacing: "0.12em" }}>
+                      Agent Architect Canvas
+                    </Typography>
+                    <Typography variant="h4" sx={{ mt: 0.5 }}>
+                      Full-page diagram editor
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "var(--muted)", mt: 1 }}>
+                      Edit the current architecture draft on a dedicated page, then return to the workspace when done.
+                    </Typography>
+                  </Box>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                    <Button component={Link} href="/architect" variant="outlined" sx={{ borderColor: "var(--line)", color: "var(--text)" }}>
+                      Back To Workspace
+                    </Button>
+                    <Button variant="outlined" onClick={downloadSvg} sx={{ borderColor: "var(--line)", color: "var(--text)" }}>
+                      Export SVG
+                    </Button>
+                  </Stack>
+                </Stack>
+              </CardContent>
+            </Card>
+
+            <Grid container spacing={3}>
+              <Grid item xs={12} xl={3}>
+                <Stack spacing={3}>
+                  <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
+                    <CardContent sx={{ p: 3 }}>
+                      <Stack spacing={2}>
+                        <Typography variant="h6">Architect Assistant</Typography>
+                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                          Describe the target architecture and choose the diagram style. The assistant will generate
+                          layered component views closer to the reference diagrams you shared.
+                        </Typography>
+                        <TextField
+                          label="Architecture brief"
+                          multiline
+                          minRows={6}
+                          value={prompt}
+                          onChange={(event) => setPrompt(event.target.value)}
+                        />
+                        <FormControl fullWidth>
+                          <InputLabel id="diagram-style-label">Diagram style</InputLabel>
+                          <Select
+                            labelId="diagram-style-label"
+                            value={diagramStyle}
+                            label="Diagram style"
+                            onChange={(event) => setDiagramStyle(event.target.value as DiagramStyle)}
+                          >
+                            <MenuItem value="reference">Reference architecture</MenuItem>
+                            <MenuItem value="network">Network topology</MenuItem>
+                            <MenuItem value="workflow">Workflow diagram</MenuItem>
+                          </Select>
+                        </FormControl>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          {quickPrompts.map((item) => (
+                            <Chip
+                              key={item}
+                              label={item}
+                              onClick={() => setPrompt(item)}
+                              sx={{ maxWidth: "100%", bgcolor: "var(--panel-soft)", border: "1px solid var(--line)" }}
+                            />
+                          ))}
+                        </Stack>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          {architectureProviderOptions.map((provider) => (
+                            <Chip
+                              key={provider}
+                              label={providerLabels[provider]}
+                              onClick={() => toggleProvider(provider)}
+                              sx={{
+                                fontWeight: 700,
+                                border: "1px solid",
+                                borderColor: selectedProviders.includes(provider) ? "var(--line-strong)" : "var(--line)",
+                                bgcolor: selectedProviders.includes(provider) ? "var(--accent-soft)" : "transparent"
+                              }}
+                            />
+                          ))}
+                        </Stack>
+                        <Button
+                          variant="contained"
+                          onClick={() => regenerateDiagram()}
+                          sx={{ bgcolor: "var(--accent)", color: "#ffffff", "&:hover": { bgcolor: "#265db8" } }}
+                        >
+                          Generate Assisted Diagram
+                        </Button>
+                        <Alert severity="info">{agentMessage}</Alert>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                </Stack>
+              </Grid>
+
+              <Grid item xs={12} xl={6}>
+                <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
+                  <CardContent sx={{ p: { xs: 1.5, md: 2.5 } }}>
+                    <Box
+                      sx={{
+                        width: "100%",
+                        overflowX: "auto",
+                        borderRadius: 4,
+                        border: "1px solid var(--line)",
+                        bgcolor: "#f8fbff"
+                      }}
+                    >
+                      <svg
+                        ref={svgRef}
+                        viewBox={`0 0 ${canvasWidth} ${CANVAS_HEIGHT}`}
+                        width="100%"
+                        role="img"
+                        aria-label="Architecture diagram editor"
+                        onPointerMove={handleCanvasPointerMove}
+                        onPointerUp={handleCanvasPointerUp}
+                        onPointerLeave={handleCanvasPointerUp}
+                        onClick={() => {
+                          setSelectedNodeId(null);
+                          setSelectedEdgeId(null);
+                        }}
+                      >
+                        <defs>
+                          <marker
+                            id="architect-arrow"
+                            markerWidth="12"
+                            markerHeight="12"
+                            refX="10"
+                            refY="6"
+                            orient="auto"
+                            markerUnits="strokeWidth"
+                          >
+                            <path d="M 0 0 L 12 6 L 0 12 z" fill="#316fd6" />
+                          </marker>
+                        </defs>
+
+                        <rect x="0" y="0" width={canvasWidth} height={CANVAS_HEIGHT} fill="#f8fbff" />
+                        <rect x="28" y="40" width="250" height="700" rx="24" fill="#eef4ff" stroke="rgba(49, 111, 214, 0.14)" />
+                        <text x="48" y="78" fontSize="22" fontWeight="700" fill="#17315c">
+                          Shared services
+                        </text>
+
+                        {canvasZones.map((zone) => (
+                          <g key={zone.id}>
+                            <rect
+                              x={zone.x}
+                              y={zone.y}
+                              width={zone.width}
+                              height={zone.height}
+                              rx="22"
+                              fill={zone.fill}
+                              stroke={zone.stroke}
+                              strokeDasharray={diagramStyle === "network" ? "8 8" : "10 6"}
+                              strokeOpacity="0.75"
+                            />
+                            <text x={zone.x + 16} y={zone.y + 22} fontSize="16" fontWeight="700" fill="#17315c">
+                              {zone.label}
+                            </text>
+                          </g>
+                        ))}
+
+                        {plan.providers.map((provider, index) => {
+                          const laneX = PROVIDER_LANE_START + index * laneWidth;
+                          return (
+                            <g key={`lane-${provider}`}>
+                              <rect
+                                x={laneX - 18}
+                                y="40"
+                                width={laneWidth - 14}
+                                height="700"
+                                rx="24"
+                                fill={providerColors[provider].fill}
+                                stroke={providerColors[provider].stroke}
+                                strokeOpacity="0.18"
+                              />
+                              <text x={laneX} y="78" fontSize="22" fontWeight="700" fill={providerColors[provider].text}>
+                                {providerLabels[provider]}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        {plan.edges.map((edge) => {
+                          const source = nodeLookup[edge.from];
+                          const target = nodeLookup[edge.to];
+                          if (!source || !target) {
+                            return null;
+                          }
+
+                          const startX = source.x + source.width;
+                          const startY = source.y + source.height / 2;
+                          const endX = target.x;
+                          const endY = target.y + target.height / 2;
+                          const controlX = startX + (endX - startX) / 2;
+                          const selected = edge.id === selectedEdgeId;
+
+                          return (
+                            <g
+                              key={edge.id}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedEdgeId(edge.id);
+                                setSelectedNodeId(null);
+                              }}
+                            >
+                              <path
+                                d={`M ${startX} ${startY} C ${controlX} ${startY}, ${controlX} ${endY}, ${endX} ${endY}`}
+                                fill="none"
+                                stroke={selected ? "#17315c" : "#316fd6"}
+                                strokeWidth={selected ? 5 : 3.5}
+                                markerEnd="url(#architect-arrow)"
+                                opacity={0.9}
+                              />
+                              {edge.label ? (
+                                <text
+                                  x={(startX + endX) / 2}
+                                  y={(startY + endY) / 2 - 10}
+                                  fontSize="12"
+                                  fill="#60779c"
+                                  textAnchor="middle"
+                                >
+                                  {edge.label}
+                                </text>
+                              ) : null}
+                            </g>
+                          );
+                        })}
+
+                        {plan.nodes.map((node) => {
+                          const palette = providerColors[node.provider];
+                          const selected = node.id === selectedNodeId;
+                          const connectSource = node.id === connectFromId;
+                          return (
+                            <g
+                              key={node.id}
+                              onPointerDown={(event) => handleNodePointerDown(event as ReactPointerEvent<SVGRectElement>, node)}
+                              onClick={(event) => event.stopPropagation()}
+                              style={{ cursor: "grab" }}
+                            >
+                              <rect
+                                x={node.x}
+                                y={node.y}
+                                width={node.width}
+                                height={node.height}
+                                rx="18"
+                                fill={palette.fill}
+                                stroke={selected || connectSource ? "#17315c" : palette.stroke}
+                                strokeWidth={selected || connectSource ? 3.5 : 2}
+                                style={{ cursor: "grab", touchAction: "none" }}
+                              />
+                              <text x={node.x + 18} y={node.y + 32} fontSize="17" fontWeight="700" fill="#17315c" pointerEvents="none">
+                                {node.title}
+                              </text>
+                              <text x={node.x + 18} y={node.y + 56} fontSize="12.5" fill="#60779c" pointerEvents="none">
+                                {node.subtitle}
+                              </text>
+                              <text x={node.x + 18} y={node.y + 74} fontSize="11.5" fill={palette.text} pointerEvents="none">
+                                {node.provider === "shared" ? "SHARED" : providerLabels[node.provider]}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              <Grid item xs={12} xl={3}>
+                <Stack spacing={3}>
+                  <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
+                    <CardContent sx={{ p: 3 }}>
+                      <Stack spacing={1.5}>
+                        <Typography variant="h6">Tools Panel</Typography>
+                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                          Use these tools like a lightweight Lucidchart sidebar: create services, connect them,
+                          and refine the current diagram.
+                        </Typography>
+                        <FormControl fullWidth>
+                          <InputLabel id="canvas-manual-provider-label">Node provider</InputLabel>
+                          <Select
+                            labelId="canvas-manual-provider-label"
+                            value={manualProvider}
+                            label="Node provider"
+                            onChange={(event) => setManualProvider(event.target.value as DiagramProvider)}
+                          >
+                            <MenuItem value="shared">Shared</MenuItem>
+                            {architectureProviderOptions.map((provider) => (
+                              <MenuItem key={provider} value={provider}>
+                                {providerLabels[provider]}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                        <FormControl fullWidth>
+                          <InputLabel id="canvas-manual-category-label">Node category</InputLabel>
+                          <Select
+                            labelId="canvas-manual-category-label"
+                            value={manualCategory}
+                            label="Node category"
+                            onChange={(event) => setManualCategory(event.target.value as DiagramCategory)}
+                          >
+                            {categoryOptions.map((category) => (
+                              <MenuItem key={category} value={category}>
+                                {getCategoryLabel(category)}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                        <TextField label="Node title" value={manualTitle} onChange={(event) => setManualTitle(event.target.value)} />
+                        <TextField label="Node subtitle" value={manualSubtitle} onChange={(event) => setManualSubtitle(event.target.value)} />
+                        <Button
+                          variant="contained"
+                          onClick={handleAddNode}
+                          sx={{ bgcolor: "#17315c", color: "#ffffff", "&:hover": { bgcolor: "#102443" } }}
+                        >
+                          Add Tool Shape
+                        </Button>
+                        <Button
+                          variant={connectFromId ? "contained" : "outlined"}
+                          onClick={() => setConnectFromId((current) => (current ? null : selectedNodeId))}
+                          disabled={!selectedNodeId && !connectFromId}
+                          sx={{ borderColor: "var(--line)", color: connectFromId ? "#ffffff" : "var(--text)", bgcolor: connectFromId ? "var(--accent)" : "transparent" }}
+                        >
+                          {connectFromId ? "Pick target node" : "Connect selected node"}
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          onClick={handleDeleteSelection}
+                          disabled={!selectedNodeId && !selectedEdgeId}
+                          sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                        >
+                          Delete Selection
+                        </Button>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+
+                  <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
+                    <CardContent sx={{ p: 3 }}>
+                      <Stack spacing={2}>
+                        <Typography variant="h6">Selection</Typography>
+                        {selectedNode ? (
+                          <>
+                            <TextField
+                              label="Selected node title"
+                              value={selectedNode.title}
+                              onChange={(event) => updateSelectedNode("title", event.target.value)}
+                            />
+                            <TextField
+                              label="Selected node subtitle"
+                              value={selectedNode.subtitle}
+                              onChange={(event) => updateSelectedNode("subtitle", event.target.value)}
+                            />
+                            <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                              Provider: {selectedNode.provider === "shared" ? "Shared" : providerLabels[selectedNode.provider]} | Category:{" "}
+                              {getCategoryLabel(selectedNode.category)}
+                            </Typography>
+                          </>
+                        ) : selectedEdge ? (
+                          <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                            Edge selected between {nodeLookup[selectedEdge.from]?.title ?? "source"} and{" "}
+                            {nodeLookup[selectedEdge.to]?.title ?? "target"}.
+                          </Typography>
+                        ) : (
+                          <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                            Select a node to rename it, or select an edge and remove it.
+                          </Typography>
+                        )}
+                      </Stack>
+                    </CardContent>
+                  </Card>
+
+                  <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
+                    <CardContent sx={{ p: 3 }}>
+                      <Stack spacing={1.3}>
+                        <Typography variant="h6">Agent Notes</Typography>
+                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                          {plan.summary}
+                        </Typography>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                </Stack>
+              </Grid>
+            </Grid>
+          </Stack>
+        </Container>
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ py: { xs: 4, md: 6 }, minHeight: "100vh" }}>
       <Container maxWidth="xl">
@@ -745,7 +1417,7 @@ export function ArchitectWorkspace() {
                       <Stack spacing={1}>
                         <Typography variant="subtitle2">Cloud targets</Typography>
                         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                          {optionSets.providers.map((provider) => {
+                          {architectureProviderOptions.map((provider) => {
                             const active = selectedProviders.includes(provider);
                             return (
                               <Chip
@@ -764,6 +1436,10 @@ export function ArchitectWorkspace() {
                           })}
                         </Stack>
                       </Stack>
+                      <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                        Agent Architect now includes a broader market cloud library for diagramming. Cost estimation and
+                        recommendation APIs still price AWS, Azure, and GCP.
+                      </Typography>
                       <Stack spacing={1}>
                         <Typography variant="subtitle2">Quick prompts</Typography>
                         <Stack spacing={1}>
@@ -845,7 +1521,7 @@ export function ArchitectWorkspace() {
                           onChange={(event) => setManualProvider(event.target.value as DiagramProvider)}
                         >
                           <MenuItem value="shared">Shared</MenuItem>
-                          {optionSets.providers.map((provider) => (
+                          {architectureProviderOptions.map((provider) => (
                             <MenuItem key={provider} value={provider}>
                               {providerLabels[provider]}
                             </MenuItem>
@@ -977,13 +1653,22 @@ export function ArchitectWorkspace() {
                             Drag nodes to reposition them. Select a node and use connect mode to wire new paths.
                           </Typography>
                         </Box>
-                        <Button
-                          variant="outlined"
-                          onClick={downloadSvg}
-                          sx={{ borderColor: "var(--line)", color: "var(--text)" }}
-                        >
-                          Export SVG
-                        </Button>
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                          <Button
+                            variant="outlined"
+                            onClick={openCanvasPage}
+                            sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                          >
+                            Open Separate Canvas
+                          </Button>
+                          <Button
+                            variant="outlined"
+                            onClick={downloadSvg}
+                            sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                          >
+                            Export SVG
+                          </Button>
+                        </Stack>
                       </Stack>
                       <Box
                         sx={{
@@ -996,7 +1681,7 @@ export function ArchitectWorkspace() {
                       >
                         <svg
                           ref={svgRef}
-                          viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+                          viewBox={`0 0 ${canvasWidth} ${CANVAS_HEIGHT}`}
                           width="100%"
                           role="img"
                           aria-label="Architecture diagram editor"
@@ -1022,7 +1707,7 @@ export function ArchitectWorkspace() {
                             </marker>
                           </defs>
 
-                          <rect x="0" y="0" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} fill="#f8fbff" />
+                          <rect x="0" y="0" width={canvasWidth} height={CANVAS_HEIGHT} fill="#f8fbff" />
                           <rect
                             x="28"
                             y="40"
@@ -1099,6 +1784,21 @@ export function ArchitectWorkspace() {
                                     {edge.label}
                                   </text>
                                 ) : null}
+                                {diagramStyle !== "network" ? (
+                                  <g>
+                                    <circle cx={(startX + endX) / 2} cy={(startY + endY) / 2 + 16} r="13" fill="#0f172a" />
+                                    <text
+                                      x={(startX + endX) / 2}
+                                      y={(startY + endY) / 2 + 20}
+                                      fontSize="11"
+                                      fontWeight="700"
+                                      fill="#ffffff"
+                                      textAnchor="middle"
+                                    >
+                                      {plan.edges.findIndex((item) => item.id === edge.id) + 1}
+                                    </text>
+                                  </g>
+                                ) : null}
                               </g>
                             );
                           })}
@@ -1108,7 +1808,12 @@ export function ArchitectWorkspace() {
                             const selected = node.id === selectedNodeId;
                             const connectSource = node.id === connectFromId;
                             return (
-                              <g key={node.id}>
+                              <g
+                                key={node.id}
+                                onPointerDown={(event) => handleNodePointerDown(event as ReactPointerEvent<SVGRectElement>, node)}
+                                onClick={(event) => event.stopPropagation()}
+                                style={{ cursor: "grab" }}
+                              >
                                 <rect
                                   x={node.x}
                                   y={node.y}
@@ -1118,21 +1823,53 @@ export function ArchitectWorkspace() {
                                   fill={palette.fill}
                                   stroke={selected || connectSource ? "#17315c" : palette.stroke}
                                   strokeWidth={selected || connectSource ? 3.5 : 2}
-                                  onPointerDown={(event) => handleNodePointerDown(event, node)}
-                                  style={{ cursor: "grab" }}
+                                  style={{ cursor: "grab", touchAction: "none" }}
                                 />
-                                <text x={node.x + 18} y={node.y + 32} fontSize="17" fontWeight="700" fill="#17315c">
+                                <text
+                                  x={node.x + 18}
+                                  y={node.y + 32}
+                                  fontSize="17"
+                                  fontWeight="700"
+                                  fill="#17315c"
+                                  pointerEvents="none"
+                                >
                                   {node.title}
                                 </text>
-                                <text x={node.x + 18} y={node.y + 56} fontSize="12.5" fill="#60779c">
+                                <text
+                                  x={node.x + 18}
+                                  y={node.y + 56}
+                                  fontSize="12.5"
+                                  fill="#60779c"
+                                  pointerEvents="none"
+                                >
                                   {node.subtitle}
                                 </text>
-                                <text x={node.x + 18} y={node.y + 74} fontSize="11.5" fill={palette.text}>
+                                <text
+                                  x={node.x + 18}
+                                  y={node.y + 74}
+                                  fontSize="11.5"
+                                  fill={palette.text}
+                                  pointerEvents="none"
+                                >
                                   {node.provider === "shared" ? "SHARED" : providerLabels[node.provider]}
                                 </text>
                               </g>
                             );
                           })}
+                          <g transform={`translate(${canvasWidth - 252}, ${CANVAS_HEIGHT - 138})`}>
+                            <rect x="0" y="0" width="220" height="104" rx="18" fill="#ffffff" stroke="rgba(49, 111, 214, 0.2)" />
+                            <text x="16" y="24" fontSize="15" fontWeight="700" fill="#17315c">
+                              Legend
+                            </text>
+                            {legendItems.map((item, index) => (
+                              <g key={item} transform={`translate(0, ${index * 18})`}>
+                                <circle cx="20" cy="40" r="4" fill={index % 2 === 0 ? "#316fd6" : "#17315c"} />
+                                <text x="34" y="44" fontSize="11.5" fill="#60779c">
+                                  {item}
+                                </text>
+                              </g>
+                            ))}
+                          </g>
                         </svg>
                       </Box>
                     </Stack>

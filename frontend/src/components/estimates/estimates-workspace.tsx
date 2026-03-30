@@ -41,7 +41,19 @@ const budgetPreferences = new Set<RecommendationRequest["budget_preference"]>([
   "balanced",
   "enterprise"
 ]);
-const providers = new Set<RecommendationRequest["preferred_providers"][number]>(["aws", "azure", "gcp"]);
+const providers = new Set<RecommendationRequest["preferred_providers"][number]>([
+  "aws",
+  "azure",
+  "gcp",
+  "oracle",
+  "alibaba",
+  "ibm",
+  "tencent",
+  "digitalocean",
+  "akamai",
+  "ovhcloud",
+  "cloudflare"
+]);
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

@@ -1,6 +1,17 @@
 __pycache__/
 *.py[cod]
 .venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
 frontend/node_modules/
 frontend/.next/
+frontend/out/
+frontend/.vercel/
 frontend/.env.local
+coverage/
+dist/
+build/

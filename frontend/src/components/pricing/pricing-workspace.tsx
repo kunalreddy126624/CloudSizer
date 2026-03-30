@@ -25,6 +25,7 @@ import {
 } from "@mui/material";
 
 import { calculateServicePricing, createSavedEstimate, getCatalogServices } from "@/lib/api";
+import { formatProviderLabel, providerOptions } from "@/lib/cloud-providers";
 import type {
   CatalogService,
   CloudProvider,
@@ -33,12 +34,6 @@ import type {
   ServicePricingRequest,
   ServicePricingResponse
 } from "@/lib/types";
-
-const providerOptions: { value: CloudProvider; label: string }[] = [
-  { value: "aws", label: "AWS" },
-  { value: "azure", label: "Azure" },
-  { value: "gcp", label: "GCP" }
-];
 
 const categoryOptions: { value: ServiceCategory | "all"; label: string }[] = [
   { value: "all", label: "All categories" },
@@ -171,7 +166,7 @@ export function PricingWorkspace() {
       return;
     }
 
-    setSaveName(`${provider.toUpperCase()} pricing estimate`);
+    setSaveName(`${formatProviderLabel(provider)} pricing estimate`);
   }, [pricingResult, provider]);
 
   const selectedServiceCodes = useMemo(
@@ -253,7 +248,7 @@ export function PricingWorkspace() {
         estimate_type: "pricing_calculation",
         provider,
         estimated_monthly_cost_usd: pricingResult.estimated_monthly_cost_usd,
-        summary: `Pricing estimate for ${pricingResult.items.length} ${provider.toUpperCase()} service lines.`,
+        summary: `Pricing estimate for ${pricingResult.items.length} ${formatProviderLabel(provider)} service lines.`,
         payload: {
           request: {
             provider,
@@ -295,10 +290,10 @@ export function PricingWorkspace() {
                       sx={{ width: "fit-content", bgcolor: "rgba(12, 107, 88, 0.12)", color: "var(--accent)" }}
                     />
                     <Typography variant="h2" sx={{ fontSize: { xs: "2.3rem", md: "3.8rem" }, lineHeight: 0.98 }}>
-                      Calculate cloud services one line item at a time.
+                      Explore and calculate cloud services one line item at a time.
                     </Typography>
                     <Typography variant="body1" sx={{ color: "var(--muted)", maxWidth: 760 }}>
-                      Browse the service catalog by provider and category, tune usage dimensions, and build a
+                      Browse comparable services across all supported providers, tune usage dimensions, and build a
                       multi-line estimate for the exact services you want to compare.
                     </Typography>
                   </Stack>
@@ -351,7 +346,8 @@ export function PricingWorkspace() {
                     <Stack spacing={1.5} sx={{ mb: 3 }}>
                       <Typography variant="h5">Service Catalog</Typography>
                       <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                        Add services to the estimate builder. Switching provider resets the current draft.
+                        Add services to the estimate builder. Switching provider resets the current draft so you can
+                        explore one cloud service stack at a time.
                       </Typography>
                     </Stack>
                     {loadingCatalog ? (
@@ -385,7 +381,7 @@ export function PricingWorkspace() {
                             Configure usage values for selected services.
                           </Typography>
                         </Box>
-                        <Chip label={provider.toUpperCase()} />
+                        <Chip label={formatProviderLabel(provider)} />
                       </Stack>
                       {selectedItems.length ? (
                         selectedItems.map((item, index) => {
@@ -473,7 +469,7 @@ export function PricingWorkspace() {
                         <>
                           <Typography variant="h3">${pricingResult.estimated_monthly_cost_usd.toFixed(2)}</Typography>
                           <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                            Estimated monthly total for the selected {pricingResult.provider.toUpperCase()} services.
+                            Estimated monthly total for the selected {formatProviderLabel(pricingResult.provider)} services.
                           </Typography>
                           <Divider />
                           <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "var(--panel-strong)" }}>

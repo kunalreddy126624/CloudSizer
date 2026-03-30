@@ -32,10 +32,20 @@ export interface PendingArchitectScenario {
   imported_at: string;
 }
 
+export interface ArchitectCanvasDraft {
+  prompt: string;
+  selected_providers: string[];
+  diagram_style?: string;
+  request_context: RecommendationRequest | null;
+  plan: Record<string, unknown>;
+  saved_at: string;
+}
+
 const SAVED_SCENARIOS_KEY = "cloudsizer.saved-scenarios";
 const HISTORY_KEY = "cloudsizer.comparison-history";
 const PENDING_ESTIMATOR_SCENARIO_KEY = "cloudsizer.pending-estimator-scenario";
 const PENDING_ARCHITECT_SCENARIO_KEY = "cloudsizer.pending-architect-scenario";
+const ARCHITECT_CANVAS_DRAFT_KEY = "cloudsizer.architect-canvas-draft";
 
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) {
@@ -93,4 +103,19 @@ export function storePendingArchitectScenario(scenario: PendingArchitectScenario
 
 export function clearPendingArchitectScenario() {
   window.localStorage.removeItem(PENDING_ARCHITECT_SCENARIO_KEY);
+}
+
+export function loadArchitectCanvasDraft() {
+  return parseJson<ArchitectCanvasDraft | null>(
+    window.localStorage.getItem(ARCHITECT_CANVAS_DRAFT_KEY),
+    null
+  );
+}
+
+export function storeArchitectCanvasDraft(draft: ArchitectCanvasDraft) {
+  window.localStorage.setItem(ARCHITECT_CANVAS_DRAFT_KEY, JSON.stringify(draft));
+}
+
+export function clearArchitectCanvasDraft() {
+  window.localStorage.removeItem(ARCHITECT_CANVAS_DRAFT_KEY);
 }

@@ -1,7 +1,18 @@
 export type WorkloadType = "erp" | "application" | "crm";
 export type AvailabilityTier = "standard" | "high" | "mission_critical";
 export type BudgetPreference = "lowest_cost" | "balanced" | "enterprise";
-export type CloudProvider = "aws" | "azure" | "gcp";
+export type CloudProvider =
+  | "aws"
+  | "azure"
+  | "gcp"
+  | "oracle"
+  | "alibaba"
+  | "ibm"
+  | "tencent"
+  | "digitalocean"
+  | "akamai"
+  | "ovhcloud"
+  | "cloudflare";
 export type ServiceCategory =
   | "compute"
   | "storage"
