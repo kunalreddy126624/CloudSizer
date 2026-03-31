@@ -19,7 +19,7 @@ export interface ComparisonHistoryEntry {
 export interface PendingEstimatorScenario {
   name: string;
   request: RecommendationRequest;
-  source: "saved_estimate";
+  source: "advisor" | "saved_estimate";
   estimate_id?: number;
   imported_at: string;
 }
@@ -29,6 +29,7 @@ export interface PendingArchitectScenario {
   request: RecommendationRequest;
   source: "estimator" | "saved_estimate";
   estimate_id?: number;
+  prompt_override?: string;
   imported_at: string;
 }
 
@@ -38,6 +39,8 @@ export interface ArchitectCanvasDraft {
   diagram_style?: string;
   request_context: RecommendationRequest | null;
   plan: Record<string, unknown>;
+  zone_overrides?: Record<string, unknown>;
+  lane_overrides?: Record<string, unknown>;
   saved_at: string;
 }
 
