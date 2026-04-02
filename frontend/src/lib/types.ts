@@ -1,4 +1,14 @@
-export type WorkloadType = "erp" | "application" | "crm";
+export type WorkloadType =
+  | "erp"
+  | "application"
+  | "crm"
+  | "ecommerce"
+  | "analytics"
+  | "ai_ml"
+  | "vdi"
+  | "dev_test"
+  | "web_api"
+  | "saas";
 export type AvailabilityTier = "standard" | "high" | "mission_critical";
 export type BudgetPreference = "lowest_cost" | "balanced" | "enterprise";
 export type CloudProvider =
@@ -22,6 +32,7 @@ export type ServiceCategory =
   | "ai_ml"
   | "security";
 export type EstimateType = "advisor_plan" | "pricing_calculation" | "workload_recommendation";
+export type PricingSource = "catalog_snapshot" | "live_api" | "generated";
 
 export interface AuthenticatedUser {
   id: number;
@@ -57,9 +68,34 @@ export interface RecommendationRequest {
 }
 
 export interface ServiceEstimate {
+  service_code?: string | null;
   name: string;
   purpose: string;
   estimated_monthly_cost_usd: number;
+  pricing_source: PricingSource;
+  last_validated_at?: string | null;
+  accuracy?: ServiceAccuracy | null;
+}
+
+export interface EstimateAccuracy {
+  confidence_score: number;
+  confidence_label: string;
+  compared_actuals_count: number;
+  mean_absolute_percentage_error?: number | null;
+  median_absolute_percentage_error?: number | null;
+  live_pricing_coverage_percent: number;
+  pricing_sources: PricingSource[];
+  caveats: string[];
+}
+
+export interface ServiceAccuracy {
+  confidence_score: number;
+  confidence_label: string;
+  compared_actuals_count: number;
+  mean_absolute_percentage_error?: number | null;
+  pricing_source: PricingSource;
+  live_pricing_available: boolean;
+  caveats: string[];
 }
 
 export interface ArchitectureRecommendation {
@@ -69,6 +105,7 @@ export interface ArchitectureRecommendation {
   estimated_monthly_cost_usd: number;
   rationale: string[];
   services: ServiceEstimate[];
+  accuracy?: EstimateAccuracy | null;
 }
 
 export interface RecommendationResponse {
@@ -101,6 +138,8 @@ export interface CatalogService {
   default_region: string;
   base_monthly_cost_usd: number;
   dimensions: PricingDimension[];
+  pricing_source: PricingSource;
+  last_validated_at?: string | null;
 }
 
 export interface ServiceComparisonGroup {
@@ -197,12 +236,16 @@ export interface CalculatedLineItem {
   base_monthly_cost_usd: number;
   dimensions: CalculatedDimension[];
   estimated_monthly_cost_usd: number;
+  pricing_source: PricingSource;
+  last_validated_at?: string | null;
+  accuracy?: ServiceAccuracy | null;
 }
 
 export interface ServicePricingResponse {
   provider: CloudProvider;
   items: CalculatedLineItem[];
   estimated_monthly_cost_usd: number;
+  accuracy?: EstimateAccuracy | null;
 }
 
 export interface SavedEstimateCreate {
@@ -223,4 +266,66 @@ export interface SavedEstimateRecord {
   summary: string;
   payload: Record<string, unknown>;
   created_at: string;
+}
+
+export interface EstimateActualCreate {
+  estimate_id?: number | null;
+  provider: CloudProvider;
+  workload_type?: WorkloadType | null;
+  service_code?: string | null;
+  service_name?: string | null;
+  region?: string | null;
+  billing_period_start: string;
+  billing_period_end: string;
+  estimated_monthly_cost_usd?: number | null;
+  actual_monthly_cost_usd: number;
+  notes?: string;
+  observed_usage: Record<string, number>;
+}
+
+export interface EstimateActualRecord {
+  id: number;
+  estimate_id?: number | null;
+  provider: CloudProvider;
+  workload_type?: WorkloadType | null;
+  service_code?: string | null;
+  service_name?: string | null;
+  region?: string | null;
+  billing_period_start: string;
+  billing_period_end: string;
+  estimated_monthly_cost_usd?: number | null;
+  actual_monthly_cost_usd: number;
+  notes: string;
+  observed_usage: Record<string, number>;
+  created_at: string;
+}
+
+export interface LivePricingRefreshRequest {
+  providers: CloudProvider[];
+}
+
+export interface LivePricingRefreshResult {
+  provider: CloudProvider;
+  updated_services: number;
+  skipped_services: number;
+  warnings: string[];
+}
+
+export interface LivePricingRefreshResponse {
+  refreshed_at: string;
+  results: LivePricingRefreshResult[];
+}
+
+export interface BillingImportRequest {
+  snapshot_path: string;
+  provider?: CloudProvider | null;
+  estimate_id?: number | null;
+  workload_type?: WorkloadType | null;
+}
+
+export interface BillingImportResponse {
+  snapshot_path: string;
+  imported_records: number;
+  provider_counts: Record<string, number>;
+  warnings: string[];
 }

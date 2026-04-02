@@ -2,11 +2,19 @@ from app.models import (
     ArchitectureRecommendation,
     AvailabilityTier,
     BudgetPreference,
+    CatalogService,
     CloudProvider,
+    PricingDimension,
     RecommendationRequest,
     ServiceEstimate,
     WorkloadType,
 )
+from app.services.catalog import get_catalog_services
+from app.services.verification import build_accuracy_summary, build_service_accuracy
+
+
+def format_workload_label(workload: WorkloadType) -> str:
+    return workload.value.replace("_", " ").title()
 
 
 PROVIDER_SERVICES: dict[
@@ -216,11 +224,70 @@ PROVIDER_WEIGHT: dict[CloudProvider, dict[WorkloadType, float]] = {
     CloudProvider.CLOUDFLARE: {WorkloadType.ERP: 0.8, WorkloadType.APPLICATION: 1.06, WorkloadType.CRM: 0.85},
 }
 
+WORKLOAD_ARCHETYPE: dict[WorkloadType, WorkloadType] = {
+    WorkloadType.ERP: WorkloadType.ERP,
+    WorkloadType.APPLICATION: WorkloadType.APPLICATION,
+    WorkloadType.CRM: WorkloadType.CRM,
+    WorkloadType.ECOMMERCE: WorkloadType.APPLICATION,
+    WorkloadType.ANALYTICS: WorkloadType.ERP,
+    WorkloadType.AI_ML: WorkloadType.APPLICATION,
+    WorkloadType.VDI: WorkloadType.ERP,
+    WorkloadType.DEV_TEST: WorkloadType.APPLICATION,
+    WorkloadType.WEB_API: WorkloadType.APPLICATION,
+    WorkloadType.SAAS: WorkloadType.CRM,
+}
+
+WORKLOAD_COST_MULTIPLIER: dict[WorkloadType, float] = {
+    WorkloadType.ERP: 1.0,
+    WorkloadType.APPLICATION: 1.0,
+    WorkloadType.CRM: 1.0,
+    WorkloadType.ECOMMERCE: 1.14,
+    WorkloadType.ANALYTICS: 1.18,
+    WorkloadType.AI_ML: 1.24,
+    WorkloadType.VDI: 1.2,
+    WorkloadType.DEV_TEST: 0.76,
+    WorkloadType.WEB_API: 0.92,
+    WorkloadType.SAAS: 1.08,
+}
+
+WORKLOAD_SERVICE_FAMILIES: dict[WorkloadType, list[str]] = {
+    WorkloadType.ERP: ["containers_managed", "relational_database", "object_storage"],
+    WorkloadType.APPLICATION: ["serverless_runtime", "relational_database", "content_delivery"],
+    WorkloadType.CRM: ["containers_managed", "relational_database", "object_storage"],
+}
+
+FAMILY_PURPOSE_OVERRIDES: dict[str, str] = {
+    "virtual_machine": "General-purpose workload compute tier",
+    "containers_managed": "Managed application execution tier",
+    "serverless_runtime": "Elastic request-driven application tier",
+    "object_storage": "Backups, attachments, and unstructured storage",
+    "block_storage": "Persistent block storage for attached compute",
+    "relational_database": "Primary transactional data tier",
+    "nosql_database": "High-scale key-value or document persistence",
+    "load_balancer": "Traffic distribution and high-availability entry point",
+    "content_delivery": "Edge acceleration and caching layer",
+    "data_warehouse": "Analytical storage and reporting tier",
+    "stream_analytics": "Streaming ingest and event processing",
+    "generative_ai": "Generative AI request processing",
+    "vision_ai": "Image and OCR processing",
+    "key_management": "Encryption and key lifecycle management",
+    "web_application_firewall": "Public web protection controls",
+}
+
+
+def resolve_workload_archetype(workload: WorkloadType) -> WorkloadType:
+    return WORKLOAD_ARCHETYPE[workload]
+
 
 def estimate_services(
     request: RecommendationRequest, provider: CloudProvider
 ) -> list[ServiceEstimate]:
-    base_services = PROVIDER_SERVICES[provider][request.workload_type]
+    archetype = resolve_workload_archetype(request.workload_type)
+    catalog_services = _estimate_catalog_services(request, provider, archetype)
+    if catalog_services:
+        return catalog_services
+
+    base_services = PROVIDER_SERVICES[provider][archetype]
     scaled_services: list[ServiceEstimate] = []
 
     usage_factor = max(request.concurrent_users / 50, 1.0)
@@ -235,6 +302,7 @@ def estimate_services(
 
     database_multiplier = 1.0 if request.requires_managed_database else 0.7
     disaster_recovery_multiplier = 1.15 if request.requires_disaster_recovery else 1.0
+    workload_multiplier = WORKLOAD_COST_MULTIPLIER[request.workload_type]
 
     for name, purpose, base_cost in base_services:
         service_multiplier = availability_multiplier * disaster_recovery_multiplier
@@ -249,9 +317,10 @@ def estimate_services(
 
         scaled_services.append(
             ServiceEstimate(
+                service_code=None,
                 name=name,
                 purpose=purpose,
-                estimated_monthly_cost_usd=round(base_cost * service_multiplier, 2),
+                estimated_monthly_cost_usd=round(base_cost * service_multiplier * workload_multiplier, 2),
             )
         )
 
@@ -281,7 +350,7 @@ def score_recommendation(
         AvailabilityTier.MISSION_CRITICAL: 12.0,
     }[request.availability_tier]
 
-    provider_fit = PROVIDER_WEIGHT[provider][request.workload_type] * 20
+    provider_fit = PROVIDER_WEIGHT[provider][resolve_workload_archetype(request.workload_type)] * 20
     cost_component = max(0.0, 100 - (monthly_cost * budget_bias / 10))
     return round(provider_fit + cost_component + reliability_bonus, 2)
 
@@ -290,13 +359,25 @@ def build_architecture(
     request: RecommendationRequest, provider: CloudProvider
 ) -> ArchitectureRecommendation:
     services = estimate_services(request, provider)
+    services = [
+        service.model_copy(
+            update={"accuracy": build_service_accuracy(provider, request.workload_type, service)}
+        )
+        for service in services
+    ]
     total_cost = round(sum(item.estimated_monthly_cost_usd for item in services), 2)
     score = score_recommendation(request, provider, total_cost)
+    accuracy = build_accuracy_summary(provider, request.workload_type, services)
 
     rationale = [
         f"Estimated monthly cost reflects {request.concurrent_users} concurrent users and {request.storage_gb} GB of storage.",
-        f"{provider.value.upper()} fit score is tuned for {request.workload_type.value} workloads.",
+        f"{provider.value.upper()} fit score is tuned for {format_workload_label(request.workload_type)} workloads.",
     ]
+    archetype = resolve_workload_archetype(request.workload_type)
+    if archetype != request.workload_type:
+        rationale.append(
+            f"Service selection is adapted from the {format_workload_label(archetype)} archetype for this workload profile."
+        )
     if request.requires_disaster_recovery:
         rationale.append("Pricing includes a disaster recovery overhead.")
     if request.requires_managed_database:
@@ -309,4 +390,87 @@ def build_architecture(
         estimated_monthly_cost_usd=total_cost,
         rationale=rationale,
         services=services,
+        accuracy=accuracy,
     )
+
+
+def _estimate_catalog_services(
+    request: RecommendationRequest,
+    provider: CloudProvider,
+    archetype: WorkloadType,
+) -> list[ServiceEstimate]:
+    catalog = get_catalog_services(provider=provider)
+    if not catalog:
+        return []
+
+    family_map = {service.service_family: service for service in catalog}
+    service_families = WORKLOAD_SERVICE_FAMILIES.get(archetype, [])
+    selected_services: list[CatalogService] = [
+        family_map[family]
+        for family in service_families
+        if family in family_map
+    ]
+    if not selected_services:
+        return []
+    if any(service.pricing_source.value == "generated" for service in selected_services):
+        # Generated catalog entries are synthetic comparison placeholders, not
+        # provider-backed price points. Fall back to the explicit provider
+        # workload profiles instead of treating generated services as real.
+        return []
+
+    return [
+        ServiceEstimate(
+            service_code=service.service_code,
+            name=service.name,
+            purpose=FAMILY_PURPOSE_OVERRIDES.get(service.service_family, service.summary),
+            estimated_monthly_cost_usd=round(_estimate_catalog_service_monthly_cost(request, service), 2),
+            pricing_source=service.pricing_source,
+            last_validated_at=service.last_validated_at,
+        )
+        for service in selected_services
+    ]
+
+
+def _estimate_catalog_service_monthly_cost(
+    request: RecommendationRequest,
+    service: CatalogService,
+) -> float:
+    estimated_cost = service.base_monthly_cost_usd
+    for dimension in service.dimensions:
+        quantity = _dimension_quantity(request, service, dimension)
+        estimated_cost += quantity * dimension.rate_per_unit_usd
+
+    availability_multiplier = {
+        AvailabilityTier.STANDARD: 1.0,
+        AvailabilityTier.HIGH: 1.12,
+        AvailabilityTier.MISSION_CRITICAL: 1.28,
+    }[request.availability_tier]
+    if request.requires_disaster_recovery:
+        availability_multiplier *= 1.15
+    if service.service_family == "relational_database" and not request.requires_managed_database:
+        availability_multiplier *= 0.82
+
+    return estimated_cost * availability_multiplier * WORKLOAD_COST_MULTIPLIER[request.workload_type]
+
+
+def _dimension_quantity(
+    request: RecommendationRequest,
+    service: CatalogService,
+    dimension: PricingDimension,
+) -> float:
+    key = dimension.key
+    if key in {"storage_gb", "memory_gb"}:
+        return max(dimension.suggested_value, float(request.storage_gb if key == "storage_gb" else max(request.concurrent_users / 8, 8)))
+    if key in {"retrieval_gb"}:
+        return max(dimension.suggested_value, float(request.storage_gb) * 0.2)
+    if key in {"requests_million"}:
+        return max(dimension.suggested_value, request.monthly_requests_million)
+    if key in {"gb_seconds_million", "memory_gb_seconds_million"}:
+        return max(dimension.suggested_value, round(request.monthly_requests_million * max(request.concurrent_users / 50, 1.0), 2))
+    if key in {"vcpu_seconds_million"}:
+        return max(dimension.suggested_value, round(request.monthly_requests_million * max(request.concurrent_users / 80, 0.5), 2))
+    if key in {"instance_hours", "cluster_hours", "node_hours", "vcpu_hours"}:
+        return max(dimension.suggested_value, 730.0 * max(request.concurrent_users / 50, 1.0))
+    if key in {"vcpu_count"}:
+        return max(dimension.suggested_value, float(max(round(request.concurrent_users / 40), 2)))
+    return dimension.suggested_value

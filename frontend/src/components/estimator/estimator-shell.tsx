@@ -31,8 +31,10 @@ import {
 } from "@mui/material";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { useAuth } from "@/components/auth/auth-provider";
 import { getProviders, getRecommendations } from "@/lib/api";
 import { DEFAULT_REQUEST, optionSets } from "@/lib/defaults";
+import { MAX_GUEST_RUNS, loadGuestUsageSummary, recordGuestUsage } from "@/lib/guest-usage";
 import { buildRecommendationDetailHref } from "@/lib/query";
 import {
   clearPendingEstimatorScenario,
@@ -52,6 +54,7 @@ import {
   type RecommendationRequest,
   type RecommendationResponse
 } from "@/lib/types";
+import { formatWorkloadLabel } from "@/lib/workloads";
 
 function ProviderSummaryCard({ provider }: { provider: ProviderSummary }) {
   return (
@@ -113,7 +116,11 @@ function RecommendationCard({
               <ListItem key={service.name} disableGutters sx={{ py: 1.2 }}>
                 <ListItemText
                   primary={service.name}
-                  secondary={service.purpose}
+                  secondary={
+                    service.accuracy
+                      ? `${service.purpose} | ${service.accuracy.confidence_label} confidence ${service.accuracy.confidence_score}%`
+                      : service.purpose
+                  }
                   primaryTypographyProps={{ fontWeight: 700 }}
                   secondaryTypographyProps={{ color: "var(--muted)" }}
                 />
@@ -129,6 +136,30 @@ function RecommendationCard({
               </Typography>
             ))}
           </Stack>
+          {recommendation.accuracy ? (
+            <>
+              <Divider />
+              <Stack spacing={1}>
+                <Typography variant="subtitle2">
+                  Verification: {recommendation.accuracy.confidence_label} confidence ({recommendation.accuracy.confidence_score}%)
+                </Typography>
+                <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                  Actual comparisons: {recommendation.accuracy.compared_actuals_count} | Live pricing coverage:{" "}
+                  {recommendation.accuracy.live_pricing_coverage_percent}%
+                </Typography>
+                {recommendation.accuracy.mean_absolute_percentage_error != null ? (
+                  <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                    Mean billing error: {recommendation.accuracy.mean_absolute_percentage_error.toFixed(2)}%
+                  </Typography>
+                ) : null}
+                {recommendation.accuracy.caveats.map((caveat) => (
+                  <Typography key={caveat} variant="caption" sx={{ color: "var(--muted)" }}>
+                    {caveat}
+                  </Typography>
+                ))}
+              </Stack>
+            </>
+          ) : null}
           <Button
             component={Link}
             href={detailHref}
@@ -174,7 +205,7 @@ function CostChart({ recommendations }: { recommendations: ArchitectureRecommend
 }
 
 function buildScenarioLabel(request: RecommendationRequest) {
-  return `${request.workload_type.toUpperCase()} | ${request.region}`;
+  return `${formatWorkloadLabel(request.workload_type)} | ${request.region}`;
 }
 
 function formatTimestamp(value: string) {
@@ -214,6 +245,7 @@ function validateRequest(request: RecommendationRequest) {
 
 export function EstimatorShell() {
   const router = useRouter();
+  const { isAuthenticated } = useAuth();
   const [request, setRequest] = useState<RecommendationRequest>(DEFAULT_REQUEST);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [result, setResult] = useState<RecommendationResponse | null>(null);
@@ -224,6 +256,11 @@ export function EstimatorShell() {
   const [scenarioName, setScenarioName] = useState("");
   const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>([]);
   const [history, setHistory] = useState<ComparisonHistoryEntry[]>([]);
+  const [guestSummary, setGuestSummary] = useState(loadGuestUsageSummary);
+
+  useEffect(() => {
+    setGuestSummary(loadGuestUsageSummary());
+  }, [isAuthenticated]);
 
   useEffect(() => {
     let active = true;
@@ -265,7 +302,11 @@ export function EstimatorShell() {
     setScenarioName(pendingScenario.name);
     setResult(null);
     setError(null);
-    setImportMessage(`Loaded "${pendingScenario.name}" from saved estimates.`);
+    setImportMessage(
+      pendingScenario.source === "advisor"
+        ? `Loaded "${pendingScenario.name}" from the estimation agent.`
+        : `Loaded "${pendingScenario.name}" from saved estimates.`
+    );
     clearPendingEstimatorScenario();
   }, []);
 
@@ -276,6 +317,11 @@ export function EstimatorShell() {
     const validationError = validateRequest(request);
     if (validationError) {
       setError(validationError);
+      return;
+    }
+
+    if (!isAuthenticated && loadGuestUsageSummary().remaining <= 0) {
+      setError(`Guest access is limited to ${MAX_GUEST_RUNS} estimate runs. Sign in to continue.`);
       return;
     }
 
@@ -301,6 +347,9 @@ export function EstimatorShell() {
         storeComparisonHistory(next);
         return next;
       });
+      if (!isAuthenticated) {
+        setGuestSummary(recordGuestUsage("estimator"));
+      }
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to generate recommendations.");
     } finally {
@@ -411,9 +460,9 @@ export function EstimatorShell() {
                       <Card sx={{ borderRadius: 4, boxShadow: "none", bgcolor: "var(--panel-strong)" }}>
                         <CardContent>
                           <Typography variant="overline">Workloads</Typography>
-                          <Typography variant="h4">3</Typography>
+                          <Typography variant="h4">{optionSets.workloadTypes.length}</Typography>
                           <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                            ERP, CRM, application
+                            ERP plus specialized workload profiles
                           </Typography>
                         </CardContent>
                       </Card>
@@ -422,9 +471,9 @@ export function EstimatorShell() {
                       <Card sx={{ borderRadius: 4, boxShadow: "none", bgcolor: "var(--panel-strong)" }}>
                         <CardContent>
                           <Typography variant="overline">Providers</Typography>
-                          <Typography variant="h4">3</Typography>
+                          <Typography variant="h4">{optionSets.providers.length}</Typography>
                           <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                            AWS, Azure, GCP
+                            AWS, Azure, GCP, and expanded cloud coverage
                           </Typography>
                         </CardContent>
                       </Card>
@@ -491,6 +540,20 @@ export function EstimatorShell() {
 
           {importMessage ? <Alert severity="success">{importMessage}</Alert> : null}
           {error ? <Alert severity="error">{error}</Alert> : null}
+          {result?.recommendations[0]?.accuracy ? (
+            <Alert severity={result.recommendations[0].accuracy.confidence_score >= 70 ? "success" : "warning"}>
+              Top estimate confidence is {result.recommendations[0].accuracy.confidence_label} at{" "}
+              {result.recommendations[0].accuracy.confidence_score}%. Live pricing coverage is{" "}
+              {result.recommendations[0].accuracy.live_pricing_coverage_percent}% and billing backtests cover{" "}
+              {result.recommendations[0].accuracy.compared_actuals_count} prior actuals.
+            </Alert>
+          ) : null}
+          {!isAuthenticated ? (
+            <Alert severity={guestSummary.remaining > 0 ? "info" : "warning"}>
+              Guest access is limited to {MAX_GUEST_RUNS} estimate runs total. You have {guestSummary.remaining}{" "}
+              remaining.
+            </Alert>
+          ) : null}
 
           <Grid container spacing={3}>
             <Grid item xs={12} lg={4}>
@@ -603,18 +666,45 @@ export function EstimatorShell() {
                         </Select>
                       </FormControl>
                       <Stack spacing={0.5}>
-                        <Typography variant="subtitle2">Preferred providers</Typography>
-                        <Stack direction="row" spacing={1} flexWrap="wrap">
-                          {optionSets.providers.map((provider) => (
-                            <Chip
-                              key={provider}
-                              label={provider.toUpperCase()}
-                              color={request.preferred_providers.includes(provider) ? "primary" : "default"}
-                              onClick={() => toggleProvider(provider)}
-                              sx={{ fontWeight: 700 }}
-                            />
-                          ))}
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1.5}>
+                          <Typography variant="subtitle2">Preferred providers</Typography>
+                          <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                            {request.preferred_providers.length} selected
+                          </Typography>
                         </Stack>
+                        <Box
+                          sx={{
+                            display: "grid",
+                            gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: "repeat(3, minmax(0, 1fr))" },
+                            gap: 1.2
+                          }}
+                        >
+                          {optionSets.providers.map((provider) => (
+                            <Button
+                              key={provider}
+                              onClick={() => toggleProvider(provider)}
+                              variant={request.preferred_providers.includes(provider) ? "contained" : "outlined"}
+                              size="small"
+                              sx={{
+                                minHeight: 44,
+                                borderRadius: 3,
+                                fontWeight: 800,
+                                justifyContent: "center",
+                                borderColor: "var(--line)",
+                                color: request.preferred_providers.includes(provider) ? "#ffffff" : "var(--text)",
+                                bgcolor: request.preferred_providers.includes(provider) ? "var(--accent)" : "transparent",
+                                "&:hover": {
+                                  borderColor: "var(--line-strong)",
+                                  bgcolor: request.preferred_providers.includes(provider)
+                                    ? "#265db8"
+                                    : "rgba(49, 111, 214, 0.08)"
+                                }
+                              }}
+                            >
+                              {provider.toUpperCase()}
+                            </Button>
+                          ))}
+                        </Box>
                       </Stack>
                       <FormControlLabel
                         control={
@@ -700,7 +790,7 @@ export function EstimatorShell() {
                                   {scenario.name}
                                 </Typography>
                                 <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                                  {scenario.request.workload_type.toUpperCase()} | {scenario.request.region} | {scenario.request.user_count} users
+                                  {formatWorkloadLabel(scenario.request.workload_type)} | {scenario.request.region} | {scenario.request.user_count} users
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: "var(--muted)" }}>
                                   Updated {formatTimestamp(scenario.updated_at)}
@@ -815,7 +905,7 @@ export function EstimatorShell() {
                       <Stack spacing={1.5}>
                         <Typography variant="h5">No recommendation generated yet</Typography>
                         <Typography variant="body1" sx={{ color: "var(--muted)", maxWidth: 720 }}>
-                          Start with the default ERP profile or tailor the requirement inputs. The dashboard
+                          Start with the default workload profile or tailor the requirement inputs. The dashboard
                           will rank providers, estimate monthly cost, and break the architecture down by service.
                         </Typography>
                       </Stack>

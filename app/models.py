@@ -8,6 +8,13 @@ class WorkloadType(str, Enum):
     ERP = "erp"
     APPLICATION = "application"
     CRM = "crm"
+    ECOMMERCE = "ecommerce"
+    ANALYTICS = "analytics"
+    AI_ML = "ai_ml"
+    VDI = "vdi"
+    DEV_TEST = "dev_test"
+    WEB_API = "web_api"
+    SAAS = "saas"
 
 
 class AvailabilityTier(str, Enum):
@@ -52,6 +59,12 @@ class EstimateType(str, Enum):
     WORKLOAD_RECOMMENDATION = "workload_recommendation"
 
 
+class PricingSource(str, Enum):
+    CATALOG_SNAPSHOT = "catalog_snapshot"
+    LIVE_API = "live_api"
+    GENERATED = "generated"
+
+
 class RecommendationRequest(BaseModel):
     workload_type: WorkloadType
     region: str = Field(..., examples=["ap-south-1", "centralindia"])
@@ -81,9 +94,34 @@ class RecommendationRequest(BaseModel):
 
 
 class ServiceEstimate(BaseModel):
+    service_code: str | None = None
     name: str
     purpose: str
     estimated_monthly_cost_usd: float
+    pricing_source: PricingSource = PricingSource.CATALOG_SNAPSHOT
+    last_validated_at: str | None = None
+    accuracy: "ServiceAccuracy | None" = None
+
+
+class EstimateAccuracy(BaseModel):
+    confidence_score: float = Field(ge=0.0, le=100.0)
+    confidence_label: str
+    compared_actuals_count: int = Field(default=0, ge=0)
+    mean_absolute_percentage_error: float | None = Field(default=None, ge=0.0)
+    median_absolute_percentage_error: float | None = Field(default=None, ge=0.0)
+    live_pricing_coverage_percent: float = Field(default=0.0, ge=0.0, le=100.0)
+    pricing_sources: list[PricingSource] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class ServiceAccuracy(BaseModel):
+    confidence_score: float = Field(ge=0.0, le=100.0)
+    confidence_label: str
+    compared_actuals_count: int = Field(default=0, ge=0)
+    mean_absolute_percentage_error: float | None = Field(default=None, ge=0.0)
+    pricing_source: PricingSource
+    live_pricing_available: bool = False
+    caveats: list[str] = Field(default_factory=list)
 
 
 class ArchitectureRecommendation(BaseModel):
@@ -93,6 +131,7 @@ class ArchitectureRecommendation(BaseModel):
     estimated_monthly_cost_usd: float
     rationale: list[str]
     services: list[ServiceEstimate]
+    accuracy: EstimateAccuracy | None = None
 
 
 class RecommendationResponse(BaseModel):
@@ -125,6 +164,8 @@ class CatalogService(BaseModel):
     default_region: str
     base_monthly_cost_usd: float = Field(ge=0.0)
     dimensions: list[PricingDimension] = Field(default_factory=list)
+    pricing_source: PricingSource = PricingSource.CATALOG_SNAPSHOT
+    last_validated_at: str | None = None
 
 
 class ServiceComparisonGroup(BaseModel):
@@ -162,12 +203,16 @@ class CalculatedLineItem(BaseModel):
     base_monthly_cost_usd: float
     dimensions: list[CalculatedDimension]
     estimated_monthly_cost_usd: float
+    pricing_source: PricingSource = PricingSource.CATALOG_SNAPSHOT
+    last_validated_at: str | None = None
+    accuracy: ServiceAccuracy | None = None
 
 
 class ServicePricingResponse(BaseModel):
     provider: CloudProvider
     items: list[CalculatedLineItem]
     estimated_monthly_cost_usd: float
+    accuracy: EstimateAccuracy | None = None
 
 
 class EstimationAdvisorRequest(BaseModel):
@@ -275,6 +320,74 @@ class SavedEstimateRecord(BaseModel):
     summary: str
     payload: dict[str, Any]
     created_at: str
+
+
+class EstimateActualCreate(BaseModel):
+    estimate_id: int | None = None
+    provider: CloudProvider
+    workload_type: WorkloadType | None = None
+    service_code: str | None = None
+    service_name: str | None = None
+    region: str | None = None
+    billing_period_start: str
+    billing_period_end: str
+    estimated_monthly_cost_usd: float | None = Field(default=None, ge=0.0)
+    actual_monthly_cost_usd: float = Field(gt=0.0)
+    notes: str = Field(default="", max_length=500)
+    observed_usage: dict[str, float] = Field(default_factory=dict)
+
+
+class EstimateActualRecord(BaseModel):
+    id: int
+    estimate_id: int | None = None
+    provider: CloudProvider
+    workload_type: WorkloadType | None = None
+    service_code: str | None = None
+    service_name: str | None = None
+    region: str | None = None
+    billing_period_start: str
+    billing_period_end: str
+    estimated_monthly_cost_usd: float | None = None
+    actual_monthly_cost_usd: float
+    notes: str
+    observed_usage: dict[str, float]
+    created_at: str
+
+
+class LivePricingRefreshRequest(BaseModel):
+    providers: list[CloudProvider] = Field(
+        default_factory=lambda: [
+            CloudProvider.AWS,
+            CloudProvider.AZURE,
+            CloudProvider.GCP,
+        ]
+    )
+
+
+class LivePricingRefreshResult(BaseModel):
+    provider: CloudProvider
+    updated_services: int = Field(default=0, ge=0)
+    skipped_services: int = Field(default=0, ge=0)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class LivePricingRefreshResponse(BaseModel):
+    refreshed_at: str
+    results: list[LivePricingRefreshResult]
+
+
+class BillingImportRequest(BaseModel):
+    snapshot_path: str
+    provider: CloudProvider | None = None
+    estimate_id: int | None = None
+    workload_type: WorkloadType | None = None
+
+
+class BillingImportResponse(BaseModel):
+    snapshot_path: str
+    imported_records: int = Field(ge=0)
+    provider_counts: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AuthenticatedUser(BaseModel):

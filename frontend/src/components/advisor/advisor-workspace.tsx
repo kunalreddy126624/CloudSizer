@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import {
   Alert,
@@ -18,8 +19,12 @@ import {
   Typography
 } from "@mui/material";
 
+import { useAuth } from "@/components/auth/auth-provider";
 import { advisorChat, createSavedEstimate } from "@/lib/api";
+import { MAX_GUEST_RUNS, loadGuestUsageSummary, recordGuestUsage } from "@/lib/guest-usage";
 import { buildRecommendationDetailHref } from "@/lib/query";
+import { storePendingEstimatorScenario } from "@/lib/scenario-store";
+import { formatWorkloadLabel } from "@/lib/workloads";
 import type {
   AdvisorChatMessage,
   CloudProvider,
@@ -104,6 +109,8 @@ function metricCard(label: string, value: string, accent: "primary" | "success" 
 }
 
 export function AdvisorWorkspace() {
+  const router = useRouter();
+  const { isAuthenticated } = useAuth();
   const [draftMessage, setDraftMessage] = useState(
     "We need ERP for 800 users in India, PostgreSQL, 2 TB storage, backups, public web access, and disaster recovery in a second region."
   );
@@ -119,6 +126,11 @@ export function AdvisorWorkspace() {
   const [saveName, setSaveName] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [guestSummary, setGuestSummary] = useState(loadGuestUsageSummary);
+
+  useEffect(() => {
+    setGuestSummary(loadGuestUsageSummary());
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!estimate) {
@@ -180,6 +192,11 @@ export function AdvisorWorkspace() {
       return;
     }
 
+    if (!isAuthenticated && loadGuestUsageSummary().remaining <= 0) {
+      setError(`Guest access is limited to ${MAX_GUEST_RUNS} estimate runs. Sign in to continue.`);
+      return;
+    }
+
     const nextUserMessage: AdvisorChatMessage = {
       role: "user",
       content: draftMessage.trim()
@@ -210,6 +227,9 @@ export function AdvisorWorkspace() {
       setEstimate(response.estimate ?? null);
       setInferredRequest(response.inferred_request ?? null);
       setRecommendation(response.recommendation ?? null);
+      if (!isAuthenticated) {
+        setGuestSummary(recordGuestUsage("advisor"));
+      }
     } catch (chatError) {
       setError(chatError instanceof Error ? chatError.message : "Failed to contact the advisor.");
     } finally {
@@ -227,6 +247,25 @@ export function AdvisorWorkspace() {
     setError(null);
     setSaveMessage(null);
     setSaveName("");
+  }
+
+  function handleOpenFormEstimator() {
+    if (inferredRequest) {
+      const workload = formatWorkloadLabel(inferredRequest.workload_type);
+      const providerLabel =
+        recommendation?.recommendations[0]?.provider?.toUpperCase() ??
+        estimate?.recommended_provider?.toUpperCase() ??
+        "MULTI-CLOUD";
+
+      storePendingEstimatorScenario({
+        name: `Advisor handoff for ${workload} on ${providerLabel}`,
+        request: inferredRequest,
+        source: "advisor",
+        imported_at: new Date().toISOString()
+      });
+    }
+
+    router.push("/estimator");
   }
 
   async function handleSaveEstimate() {
@@ -257,7 +296,7 @@ export function AdvisorWorkspace() {
           estimate.provider_plans[0]?.estimated_monthly_cost_usd ??
           null,
         summary: recommendation?.recommendations[0]
-          ? `Agent-produced end-to-end estimate for ${recommendation.workload_type.toUpperCase()} workload.`
+          ? `Agent-produced end-to-end estimate for ${formatWorkloadLabel(recommendation.workload_type)} workload.`
           : estimate.summary,
         payload: {
           conversation_summary: conversationSummary,
@@ -335,21 +374,22 @@ export function AdvisorWorkspace() {
                 Saved Estimates
               </Button>
               <Button
-                component={Link}
-                href="/estimator"
+                onClick={handleOpenFormEstimator}
                 variant="contained"
                 sx={{
                   minWidth: 210,
                   px: 3,
                   py: 1.5,
                   borderRadius: 999,
-                  bgcolor: "var(--accent)",
+                  bgcolor: "#1f58bf",
+                  border: "2px solid #ffffff",
                   color: "#ffffff",
                   fontWeight: 800,
-                  boxShadow: "0 14px 28px rgba(49, 111, 214, 0.24)",
+                  boxShadow: "0 16px 32px rgba(31, 88, 191, 0.34), 0 0 0 4px rgba(31, 88, 191, 0.14)",
+                  textShadow: "0 1px 1px rgba(0, 0, 0, 0.15)",
                   "&:hover": {
-                    bgcolor: "#265db8",
-                    boxShadow: "0 16px 30px rgba(49, 111, 214, 0.3)"
+                    bgcolor: "#18479b",
+                    boxShadow: "0 18px 34px rgba(31, 88, 191, 0.4), 0 0 0 4px rgba(31, 88, 191, 0.18)"
                   }
                 }}
               >
@@ -359,6 +399,12 @@ export function AdvisorWorkspace() {
           </Stack>
 
           {error ? <Alert severity="error">{error}</Alert> : null}
+          {!isAuthenticated ? (
+            <Alert severity={guestSummary.remaining > 0 ? "info" : "warning"}>
+              Guest access is limited to {MAX_GUEST_RUNS} estimate runs total. You have {guestSummary.remaining}{" "}
+              remaining.
+            </Alert>
+          ) : null}
 
           <Grid container spacing={3}>
             <Grid item xs={12} lg={5}>
@@ -609,7 +655,7 @@ export function AdvisorWorkspace() {
                         </Typography>
                         <Grid container spacing={1.5}>
                           <Grid item xs={6} md={4}>
-                            <Chip label={`Workload: ${inferredRequest.workload_type.toUpperCase()}`} />
+                            <Chip label={`Workload: ${formatWorkloadLabel(inferredRequest.workload_type)}`} />
                           </Grid>
                           <Grid item xs={6} md={4}>
                             <Chip label={`Region: ${inferredRequest.region}`} />
@@ -677,6 +723,12 @@ export function AdvisorWorkspace() {
                                       label={`Score ${item.score}`}
                                       sx={{ bgcolor: "var(--accent-soft)", color: "var(--accent)" }}
                                     />
+                                    {item.accuracy ? (
+                                      <Chip
+                                        label={`Confidence ${item.accuracy.confidence_score}%`}
+                                        sx={{ bgcolor: "rgba(12, 107, 88, 0.12)", color: "var(--success)" }}
+                                      />
+                                    ) : null}
                                     <Typography variant="h5" sx={{ color: "var(--accent)" }}>
                                       {formatCurrency(item.estimated_monthly_cost_usd)}
                                     </Typography>
@@ -685,6 +737,12 @@ export function AdvisorWorkspace() {
                                 <Typography variant="body2" sx={{ color: "var(--muted)", lineHeight: 1.6 }}>
                                   {item.rationale.join(" ")}
                                 </Typography>
+                                {item.accuracy ? (
+                                  <Typography variant="caption" sx={{ color: "var(--muted)", lineHeight: 1.5 }}>
+                                    Actual comparisons: {item.accuracy.compared_actuals_count} | Live pricing coverage:{" "}
+                                    {item.accuracy.live_pricing_coverage_percent}%
+                                  </Typography>
+                                ) : null}
                                 <Typography variant="caption" sx={{ color: "var(--muted)", lineHeight: 1.5 }}>
                                   {item.services.map((service) => `${service.name} (${formatCurrency(service.estimated_monthly_cost_usd)})`).join(" | ")}
                                 </Typography>

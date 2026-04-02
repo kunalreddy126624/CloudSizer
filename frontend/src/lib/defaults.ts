@@ -30,7 +30,14 @@ export const optionSets = {
   workloadTypes: [
     { value: "erp", label: "ERP" },
     { value: "crm", label: "CRM" },
-    { value: "application", label: "Application" }
+    { value: "application", label: "Application" },
+    { value: "ecommerce", label: "E-Commerce" },
+    { value: "analytics", label: "Analytics / BI" },
+    { value: "ai_ml", label: "AI / ML" },
+    { value: "vdi", label: "VDI" },
+    { value: "dev_test", label: "Dev / Test" },
+    { value: "web_api", label: "Web / API" },
+    { value: "saas", label: "SaaS Platform" }
   ],
   availabilityTiers: [
     { value: "standard", label: "Standard" },

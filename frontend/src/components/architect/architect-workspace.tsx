@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -32,7 +32,6 @@ import { ArchitectFlowCanvas, type CanvasSelection } from "@/components/architec
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
-  DEFAULT_ARCHITECT_PROVIDERS,
   MIN_LANE_FONT_SIZE,
   MIN_LANE_HEIGHT,
   MIN_LANE_WIDTH,
@@ -46,6 +45,8 @@ import {
   MIN_ZONE_HEIGHT,
   MIN_ZONE_WIDTH,
   PROVIDER_LANE_START,
+  architecturePatterns,
+  architectureScenarios,
   architectureProviderOptions,
   buildAgentMessage,
   buildArchitecturePlan,
@@ -56,13 +57,16 @@ import {
   buildPromptFromRequest,
   categoryOptions,
   createId,
-  detectProviders,
+  detectArchitecturePattern,
+  detectArchitectureScenario,
   findNextPosition,
   getCategoryLabel,
   getLegendItems,
   getProviderLaneWidth,
   providerLabels,
   quickPrompts,
+  type ArchitecturePatternId,
+  type ArchitectureScenarioId,
   type ArchitectureCloudProvider,
   type CanvasLane,
   type CanvasZone,
@@ -78,19 +82,56 @@ interface ArchitectWorkspaceProps {
   canvasOnly?: boolean;
 }
 
+const emptyCanvasSelection: CanvasSelection = {
+  nodeIds: [],
+  edgeIds: [],
+  zoneIds: [],
+  laneIds: []
+};
+
+function areSelectionsEqual(left: CanvasSelection, right: CanvasSelection) {
+  return (
+    left.nodeIds.length === right.nodeIds.length &&
+    left.edgeIds.length === right.edgeIds.length &&
+    left.zoneIds.length === right.zoneIds.length &&
+    left.laneIds.length === right.laneIds.length &&
+    left.nodeIds.every((id, index) => id === right.nodeIds[index]) &&
+    left.edgeIds.every((id, index) => id === right.edgeIds[index]) &&
+    left.zoneIds.every((id, index) => id === right.zoneIds[index]) &&
+    left.laneIds.every((id, index) => id === right.laneIds[index])
+  );
+}
+
+function normalizeSelection(selection: CanvasSelection): CanvasSelection {
+  return {
+    nodeIds: [...new Set(selection.nodeIds)].sort(),
+    edgeIds: [...new Set(selection.edgeIds)].sort(),
+    zoneIds: [...new Set(selection.zoneIds)].sort(),
+    laneIds: [...new Set(selection.laneIds)].sort()
+  };
+}
+
 export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspaceProps) {
   const router = useRouter();
   const [prompt, setPrompt] = useState(quickPrompts[0]);
-  const [selectedProviders, setSelectedProviders] = useState<ArchitectureCloudProvider[]>(DEFAULT_ARCHITECT_PROVIDERS);
+  const [selectedPattern, setSelectedPattern] = useState<ArchitecturePatternId>(() => detectArchitecturePattern(quickPrompts[0], architecturePatterns[0].id));
+  const [selectedScenario, setSelectedScenario] = useState<ArchitectureScenarioId>(() => detectArchitectureScenario(quickPrompts[0], architectureScenarios[0].id));
+  const [selectedProviders, setSelectedProviders] = useState<ArchitectureCloudProvider[]>(architecturePatterns[0].defaultProviders);
   const [requestContext, setRequestContext] = useState<RecommendationRequest | null>(null);
   const [plan, setPlan] = useState<DiagramPlan>(() =>
-    buildArchitecturePlan(quickPrompts[0], DEFAULT_ARCHITECT_PROVIDERS, null, "reference")
+    buildArchitecturePlan(
+      quickPrompts[0],
+      architecturePatterns[0].defaultProviders,
+      null,
+      architecturePatterns[0].defaultDiagramStyle,
+      architecturePatterns[0].id,
+      architectureScenarios[0].id
+    )
   );
   const [agentMessage, setAgentMessage] = useState(buildAgentMessage(plan));
   const [diagramStyle, setDiagramStyle] = useState<DiagramStyle>("reference");
   const [importMessage, setImportMessage] = useState<string | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<CanvasSelection>(emptyCanvasSelection);
   const [connectFromId, setConnectFromId] = useState<string | null>(null);
   const [manualProvider, setManualProvider] = useState<DiagramProvider>("shared");
   const [manualCategory, setManualCategory] = useState<DiagramCategory>("compute");
@@ -98,8 +139,6 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   const [manualSubtitle, setManualSubtitle] = useState("");
   const [zoneOverrides, setZoneOverrides] = useState<Record<string, Partial<CanvasZone>>>({});
   const [laneOverrides, setLaneOverrides] = useState<Record<string, Partial<CanvasLane>>>({});
-  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
-  const [selectedLaneId, setSelectedLaneId] = useState<string | null>(null);
   const [isGenerating, startGenerating] = useTransition();
 
   useEffect(() => {
@@ -110,6 +149,8 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
       }
 
       setPrompt(draft.prompt);
+      setSelectedPattern((draft.plan as unknown as DiagramPlan).pattern ?? architecturePatterns[0].id);
+      setSelectedScenario((draft.plan as unknown as DiagramPlan).scenario ?? architectureScenarios[0].id);
       setSelectedProviders(draft.selected_providers as ArchitectureCloudProvider[]);
       setDiagramStyle((draft.diagram_style as DiagramStyle | undefined) ?? "reference");
       setRequestContext(draft.request_context);
@@ -127,14 +168,20 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
 
     const nextPrompt =
       pendingScenario.prompt_override ?? buildPromptFromRequest(pendingScenario.request, pendingScenario.name);
+    const nextPattern = detectArchitecturePattern(nextPrompt, selectedPattern);
+    const nextScenario = detectArchitectureScenario(nextPrompt, selectedScenario);
     const nextPlan = buildArchitecturePlan(
       nextPrompt,
       pendingScenario.request.preferred_providers,
       pendingScenario.request,
-      diagramStyle
+      diagramStyle,
+      nextPattern,
+      nextScenario
     );
 
     setPrompt(nextPrompt);
+    setSelectedPattern(nextPattern);
+    setSelectedScenario(nextScenario);
     setSelectedProviders(nextPlan.providers);
     setRequestContext(pendingScenario.request);
     setPlan(nextPlan);
@@ -143,7 +190,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setAgentMessage(buildAgentMessage(nextPlan));
     setImportMessage(`Imported "${pendingScenario.name}" into Agent Architect.`);
     clearPendingArchitectScenario();
-  }, [canvasOnly, diagramStyle]);
+  }, [canvasOnly, diagramStyle, selectedPattern, selectedScenario]);
 
   const nodeLookup = useMemo(() => {
     return plan.nodes.reduce<Record<string, DiagramNode>>((accumulator, node) => {
@@ -152,47 +199,147 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     }, {});
   }, [plan.nodes]);
 
-  const selectedNode = selectedNodeId ? nodeLookup[selectedNodeId] ?? null : null;
-  const selectedEdge = selectedEdgeId ? plan.edges.find((edge) => edge.id === selectedEdgeId) ?? null : null;
+  const selectedNodeIds = selection.nodeIds;
+  const selectedEdgeIds = selection.edgeIds;
+  const selectedZoneIds = selection.zoneIds;
+  const selectedLaneIds = selection.laneIds;
+  const singleSelectedNodeId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : null;
+  const singleSelectedEdgeId = selectedEdgeIds.length === 1 ? selectedEdgeIds[0] : null;
   const laneWidth = getProviderLaneWidth(plan.providers.length);
   const canvasWidth = Math.max(CANVAS_WIDTH, PROVIDER_LANE_START + plan.providers.length * laneWidth + 60);
+  const canvasLanes = useMemo(() => buildCanvasLanes(plan, diagramStyle), [diagramStyle, plan]);
   const displayedCanvasLanes = useMemo(
     () => buildCanvasLanes(plan, diagramStyle, laneOverrides),
     [diagramStyle, laneOverrides, plan]
   );
   const canvasZones = useMemo(() => buildCanvasZones(plan, diagramStyle), [diagramStyle, plan]);
-  const displayedCanvasZones = useMemo(() => buildCanvasZones(plan, diagramStyle, zoneOverrides), [diagramStyle, plan, zoneOverrides]);
-  const selectedZone: CanvasZone | null = selectedZoneId
-    ? displayedCanvasZones.find((zone) => zone.id === selectedZoneId) ?? null
+  const displayedCanvasZones = useMemo(
+    () => buildCanvasZones(plan, diagramStyle, zoneOverrides),
+    [diagramStyle, plan, zoneOverrides]
+  );
+  const singleSelectedZoneId = selectedZoneIds.length === 1 ? selectedZoneIds[0] : null;
+  const singleSelectedLaneId = selectedLaneIds.length === 1 ? selectedLaneIds[0] : null;
+  const selectedNode = singleSelectedNodeId ? nodeLookup[singleSelectedNodeId] ?? null : null;
+  const selectedEdge = singleSelectedEdgeId ? plan.edges.find((edge) => edge.id === singleSelectedEdgeId) ?? null : null;
+  const selectedZone: CanvasZone | null = singleSelectedZoneId
+    ? displayedCanvasZones.find((zone) => zone.id === singleSelectedZoneId) ?? null
     : null;
-  const selectedLane: CanvasLane | null = selectedLaneId
-    ? displayedCanvasLanes.find((lane) => lane.id === selectedLaneId) ?? null
+  const selectedLane: CanvasLane | null = singleSelectedLaneId
+    ? displayedCanvasLanes.find((lane) => lane.id === singleSelectedLaneId) ?? null
     : null;
+  const totalSelectedCount =
+    selectedNodeIds.length + selectedEdgeIds.length + selectedZoneIds.length + selectedLaneIds.length;
+  const hasDeletableSelection = selectedNodeIds.length > 0 || selectedEdgeIds.length > 0;
+  const selectedSummary = [
+    selectedNodeIds.length ? `${selectedNodeIds.length} node${selectedNodeIds.length === 1 ? "" : "s"}` : null,
+    selectedEdgeIds.length ? `${selectedEdgeIds.length} edge${selectedEdgeIds.length === 1 ? "" : "s"}` : null,
+    selectedZoneIds.length ? `${selectedZoneIds.length} zone${selectedZoneIds.length === 1 ? "" : "s"}` : null,
+    selectedLaneIds.length ? `${selectedLaneIds.length} lane${selectedLaneIds.length === 1 ? "" : "s"}` : null
+  ]
+    .filter(Boolean)
+    .join(", ");
   const legendItems = useMemo(() => getLegendItems(diagramStyle), [diagramStyle]);
+  const applySelection = useCallback((nextSelection: CanvasSelection) => {
+    const normalized = normalizeSelection(nextSelection);
+    setSelection((current) => (areSelectionsEqual(current, normalized) ? current : normalized));
+  }, []);
+  const clearSelection = useCallback(() => {
+    applySelection(emptyCanvasSelection);
+  }, [applySelection]);
 
-  function clampCanvasLayout(x: number, y: number, width: number, height: number) {
+  const clampCanvasLayout = useCallback((x: number, y: number, width: number, height: number) => {
     return {
       x: Math.min(Math.max(x, 16), canvasWidth - width - 16),
       y: Math.min(Math.max(y, 16), CANVAS_HEIGHT - height - 16)
     };
-  }
+  }, [canvasWidth]);
 
   function regenerateDiagram(nextPrompt = prompt, nextProviders = selectedProviders, nextRequest = requestContext) {
     setImportMessage(null);
     setAgentMessage("Generating architecture diagram...");
     startGenerating(() => {
-      const nextPlan = buildArchitecturePlan(nextPrompt, nextProviders, nextRequest, diagramStyle);
+      const nextPlan = buildArchitecturePlan(
+        nextPrompt,
+        nextProviders,
+        nextRequest,
+        diagramStyle,
+        selectedPattern,
+        selectedScenario
+      );
       setPlan(nextPlan);
       setSelectedProviders(nextPlan.providers);
       setZoneOverrides({});
       setLaneOverrides({});
       setAgentMessage(buildAgentMessage(nextPlan));
-      setSelectedNodeId(null);
-      setSelectedEdgeId(null);
-      setSelectedZoneId(null);
-      setSelectedLaneId(null);
+      clearSelection();
       setConnectFromId(null);
     });
+  }
+
+  function stripScenarioPromptSuffix(currentPrompt: string) {
+    return architectureScenarios.reduce((value, entry) => {
+      return value.endsWith(` ${entry.promptSuffix}`) ? value.slice(0, -(entry.promptSuffix.length + 1)).trim() : value;
+    }, currentPrompt.trim());
+  }
+
+  function applyPattern(
+    patternId: ArchitecturePatternId,
+    nextRequestContext = requestContext,
+    nextScenarioId = selectedScenario
+  ) {
+    const entry = architecturePatterns.find((candidate) => candidate.id === patternId);
+    if (!entry) {
+      return;
+    }
+
+    const scenarioEntry = architectureScenarios.find((candidate) => candidate.id === nextScenarioId) ?? architectureScenarios[0];
+    const nextPrompt = `${entry.prompt} ${scenarioEntry.promptSuffix}`.trim();
+    const nextPlan = buildArchitecturePlan(
+      nextPrompt,
+      entry.defaultProviders,
+      nextRequestContext,
+      entry.defaultDiagramStyle,
+      patternId,
+      nextScenarioId
+    );
+    setSelectedPattern(patternId);
+    setSelectedScenario(nextScenarioId);
+    setPrompt(nextPrompt);
+    setSelectedProviders(entry.defaultProviders);
+    setDiagramStyle(entry.defaultDiagramStyle);
+    setImportMessage(null);
+    setPlan(nextPlan);
+    setAgentMessage(buildAgentMessage(nextPlan));
+    setZoneOverrides({});
+    setLaneOverrides({});
+    clearSelection();
+    setConnectFromId(null);
+  }
+
+  function applyScenario(scenarioId: ArchitectureScenarioId, nextRequestContext = requestContext) {
+    const entry = architectureScenarios.find((candidate) => candidate.id === scenarioId);
+    if (!entry) {
+      return;
+    }
+
+    const nextPrompt = `${stripScenarioPromptSuffix(prompt)} ${entry.promptSuffix}`.trim();
+    const nextPlan = buildArchitecturePlan(
+      nextPrompt,
+      selectedProviders,
+      nextRequestContext,
+      diagramStyle,
+      selectedPattern,
+      scenarioId
+    );
+    setSelectedScenario(scenarioId);
+    setPrompt(nextPrompt);
+    setImportMessage(null);
+    setPlan(nextPlan);
+    setAgentMessage(buildAgentMessage(nextPlan));
+    setZoneOverrides({});
+    setLaneOverrides({});
+    clearSelection();
+    setConnectFromId(null);
   }
 
   function toggleProvider(provider: ArchitectureCloudProvider) {
@@ -208,36 +355,106 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   useEffect(() => {
     const validZoneIds = new Set(canvasZones.map((zone) => zone.id));
     setZoneOverrides((current) =>
-      Object.fromEntries(Object.entries(current).filter(([zoneId]) => validZoneIds.has(zoneId)))
+      Object.keys(current).every((zoneId) => validZoneIds.has(zoneId))
+        ? current
+        : Object.fromEntries(Object.entries(current).filter(([zoneId]) => validZoneIds.has(zoneId)))
     );
-    if (selectedZoneId && !validZoneIds.has(selectedZoneId)) {
-      setSelectedZoneId(null);
-    }
-  }, [canvasZones, selectedZoneId]);
+    applySelection({
+      nodeIds: selectedNodeIds,
+      edgeIds: selectedEdgeIds,
+      zoneIds: selectedZoneIds.filter((zoneId) => validZoneIds.has(zoneId)),
+      laneIds: selectedLaneIds
+    });
+  }, [applySelection, canvasZones, selectedEdgeIds, selectedLaneIds, selectedNodeIds, selectedZoneIds]);
 
   useEffect(() => {
-    const validLaneIds = new Set(displayedCanvasLanes.map((lane) => lane.id));
+    const validLaneIds = new Set(canvasLanes.map((lane) => lane.id));
     setLaneOverrides((current) =>
-      Object.fromEntries(Object.entries(current).filter(([laneId]) => validLaneIds.has(laneId)))
+      Object.keys(current).every((laneId) => validLaneIds.has(laneId))
+        ? current
+        : Object.fromEntries(Object.entries(current).filter(([laneId]) => validLaneIds.has(laneId)))
     );
-    if (selectedLaneId && !validLaneIds.has(selectedLaneId)) {
-      setSelectedLaneId(null);
+    applySelection({
+      nodeIds: selectedNodeIds,
+      edgeIds: selectedEdgeIds,
+      zoneIds: selectedZoneIds,
+      laneIds: selectedLaneIds.filter((laneId) => validLaneIds.has(laneId))
+    });
+  }, [applySelection, canvasLanes, selectedEdgeIds, selectedLaneIds, selectedNodeIds, selectedZoneIds]);
+
+  useEffect(() => {
+    const validNodeIds = new Set(plan.nodes.map((node) => node.id));
+    const validEdgeIds = new Set(plan.edges.map((edge) => edge.id));
+    const nextConnectFromId = connectFromId && validNodeIds.has(connectFromId) ? connectFromId : null;
+
+    applySelection({
+      nodeIds: selectedNodeIds.filter((nodeId) => validNodeIds.has(nodeId)),
+      edgeIds: selectedEdgeIds.filter((edgeId) => validEdgeIds.has(edgeId)),
+      zoneIds: selectedZoneIds,
+      laneIds: selectedLaneIds
+    });
+
+    if (nextConnectFromId !== connectFromId) {
+      setConnectFromId(nextConnectFromId);
     }
-  }, [displayedCanvasLanes, selectedLaneId]);
+  }, [applySelection, connectFromId, plan.edges, plan.nodes, selectedEdgeIds, selectedLaneIds, selectedNodeIds, selectedZoneIds]);
 
-  function handleCreateEdge(connection: { from: string; to: string }) {
-    setPlan((current) => ({
-      ...current,
-      edges: [...current.edges, { id: createId("edge"), from: connection.from, to: connection.to }]
-    }));
+  const handleCreateEdge = useCallback((connection: { from: string; to: string }) => {
+    let nextSelectedEdgeId: string | null = null;
+
+    setPlan((current) => {
+      const existingEdge = current.edges.find(
+        (edge) =>
+          ((edge.from === connection.from && edge.to === connection.to) ||
+            (edge.from === connection.to && edge.to === connection.from)) &&
+          edge.bidirectional
+      );
+
+      if (existingEdge) {
+        nextSelectedEdgeId = existingEdge.id;
+        return current;
+      }
+
+      const directEdge = current.edges.find(
+        (edge) => edge.from === connection.from && edge.to === connection.to
+      );
+
+      if (directEdge) {
+        nextSelectedEdgeId = directEdge.id;
+        return current;
+      }
+
+      const reverseEdge = current.edges.find(
+        (edge) => edge.from === connection.to && edge.to === connection.from
+      );
+
+      if (reverseEdge) {
+        nextSelectedEdgeId = reverseEdge.id;
+        return {
+          ...current,
+          edges: current.edges.map((edge) =>
+            edge.id === reverseEdge.id ? { ...edge, bidirectional: true } : edge
+          )
+        };
+      }
+
+      const nextEdge = { id: createId("edge"), from: connection.from, to: connection.to };
+      nextSelectedEdgeId = nextEdge.id;
+
+      return {
+        ...current,
+        edges: [...current.edges, nextEdge]
+      };
+    });
+
     setConnectFromId(null);
-    setSelectedNodeId(connection.to);
-    setSelectedEdgeId(null);
-    setSelectedZoneId(null);
-    setSelectedLaneId(null);
-  }
+    applySelection({
+      ...emptyCanvasSelection,
+      edgeIds: nextSelectedEdgeId ? [nextSelectedEdgeId] : []
+    });
+  }, [applySelection]);
 
-  function handleNodeLayoutChange(id: string, next: { x: number; y: number; width: number; height: number }) {
+  const handleNodeLayoutChange = useCallback((id: string, next: { x: number; y: number; width: number; height: number }) => {
     setPlan((current) => ({
       ...current,
       nodes: current.nodes.map((node) =>
@@ -256,9 +473,9 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
           : node
       )
     }));
-  }
+  }, [canvasWidth, clampCanvasLayout]);
 
-  function handleZoneLayoutChange(id: string, next: { x: number; y: number; width: number; height: number }) {
+  const handleZoneLayoutChange = useCallback((id: string, next: { x: number; y: number; width: number; height: number }) => {
     setZoneOverrides((current) => {
       const width = Math.min(Math.max(next.width, MIN_ZONE_WIDTH), canvasWidth - 32);
       const height = Math.min(Math.max(next.height, MIN_ZONE_HEIGHT), CANVAS_HEIGHT - 32);
@@ -275,9 +492,9 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
         }
       };
     });
-  }
+  }, [canvasWidth, clampCanvasLayout]);
 
-  function handleLaneLayoutChange(id: string, next: { x: number; y: number; width: number; height: number }) {
+  const handleLaneLayoutChange = useCallback((id: string, next: { x: number; y: number; width: number; height: number }) => {
     setLaneOverrides((current) => {
       const width = Math.min(Math.max(next.width, MIN_LANE_WIDTH), canvasWidth - 32);
       const height = Math.min(Math.max(next.height, MIN_LANE_HEIGHT), CANVAS_HEIGHT - 32);
@@ -294,7 +511,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
         }
       };
     });
-  }
+  }, [canvasWidth, clampCanvasLayout]);
 
   function handleAddNode() {
     const position = findNextPosition(plan.nodes.length);
@@ -308,49 +525,48 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     );
 
     setPlan((current) => ({ ...current, nodes: [...current.nodes, node] }));
-    setSelectedNodeId(node.id);
-    setSelectedEdgeId(null);
-    setSelectedZoneId(null);
-    setSelectedLaneId(null);
+    applySelection({ ...emptyCanvasSelection, nodeIds: [node.id] });
     setManualTitle("");
     setManualSubtitle("");
   }
 
   function handleDeleteSelection() {
-    if (selectedNodeId) {
+    if (selectedNodeIds.length > 0 || selectedEdgeIds.length > 0) {
+      const nodeIdSet = new Set(selectedNodeIds);
+      const edgeIdSet = new Set(selectedEdgeIds);
       setPlan((current) => ({
         ...current,
-        nodes: current.nodes.filter((node) => node.id !== selectedNodeId),
-        edges: current.edges.filter((edge) => edge.from !== selectedNodeId && edge.to !== selectedNodeId)
+        nodes: current.nodes.filter((node) => !nodeIdSet.has(node.id)),
+        edges: current.edges.filter(
+          (edge) => !edgeIdSet.has(edge.id) && !nodeIdSet.has(edge.from) && !nodeIdSet.has(edge.to)
+        )
       }));
-      setSelectedNodeId(null);
-      setSelectedEdgeId(null);
-      setConnectFromId(null);
+      clearSelection();
+      if (connectFromId && nodeIdSet.has(connectFromId)) {
+        setConnectFromId(null);
+      }
       return;
     }
 
-    if (selectedEdgeId) {
-      setPlan((current) => ({
-        ...current,
-        edges: current.edges.filter((edge) => edge.id !== selectedEdgeId)
-      }));
-      setSelectedEdgeId(null);
+    if (selectedZoneIds.length > 0 || selectedLaneIds.length > 0) {
+      clearSelection();
+      setConnectFromId(null);
     }
   }
 
   function updateSelectedNodeField<Key extends keyof DiagramNode>(field: Key, value: DiagramNode[Key]) {
-    if (!selectedNodeId) {
+    if (!singleSelectedNodeId) {
       return;
     }
 
     setPlan((current) => ({
       ...current,
-      nodes: current.nodes.map((node) => (node.id === selectedNodeId ? { ...node, [field]: value } : node))
+      nodes: current.nodes.map((node) => (node.id === singleSelectedNodeId ? { ...node, [field]: value } : node))
     }));
   }
 
   function updateSelectedNodeLayout(field: "x" | "y" | "width" | "height", value: string) {
-    if (!selectedNodeId) {
+    if (!singleSelectedNodeId) {
       return;
     }
 
@@ -359,12 +575,12 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
       return;
     }
 
-    const target = nodeLookup[selectedNodeId];
+    const target = nodeLookup[singleSelectedNodeId];
     if (!target) {
       return;
     }
 
-    handleNodeLayoutChange(selectedNodeId, {
+    handleNodeLayoutChange(singleSelectedNodeId, {
       x: field === "x" ? numericValue : target.x,
       y: field === "y" ? numericValue : target.y,
       width: field === "width" ? numericValue : target.width,
@@ -376,7 +592,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     field: "titleFontSize" | "subtitleFontSize" | "metaFontSize",
     value: string
   ) {
-    if (!selectedNodeId) {
+    if (!singleSelectedNodeId) {
       return;
     }
 
@@ -395,7 +611,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setPlan((current) => ({
       ...current,
       nodes: current.nodes.map((node) =>
-        node.id === selectedNodeId
+        node.id === singleSelectedNodeId
           ? {
               ...node,
               [field]: Math.max(numericValue, minimum)
@@ -406,14 +622,14 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   }
 
   function updateSelectedEdgeLabel(value: string) {
-    if (!selectedEdgeId) {
+    if (!singleSelectedEdgeId) {
       return;
     }
 
     setPlan((current) => ({
       ...current,
       edges: current.edges.map((edge) =>
-        edge.id === selectedEdgeId
+        edge.id === singleSelectedEdgeId
           ? {
               ...edge,
               label: value.trim() ? value : undefined
@@ -424,12 +640,12 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   }
 
   function updateSelectedZoneField(field: "label" | "fontSize" | "x" | "y" | "width" | "height", value: string) {
-    if (!selectedZoneId) {
+    if (!singleSelectedZoneId) {
       return;
     }
 
     setZoneOverrides((current) => {
-      const next = { ...(current[selectedZoneId] ?? {}) };
+      const next = { ...(current[singleSelectedZoneId] ?? {}) };
 
       if (field === "label") {
         next.label = value;
@@ -442,7 +658,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
         if (field === "fontSize") {
           next.fontSize = Math.max(numericValue, MIN_ZONE_FONT_SIZE);
         } else {
-          const baseZone = displayedCanvasZones.find((zone) => zone.id === selectedZoneId);
+          const baseZone = displayedCanvasZones.find((zone) => zone.id === singleSelectedZoneId);
           const width = field === "width" ? numericValue : (next.width ?? baseZone?.width ?? MIN_ZONE_WIDTH);
           const height = field === "height" ? numericValue : (next.height ?? baseZone?.height ?? MIN_ZONE_HEIGHT);
           const x = field === "x" ? numericValue : (next.x ?? baseZone?.x ?? 16);
@@ -463,18 +679,18 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
 
       return {
         ...current,
-        [selectedZoneId]: next
+        [singleSelectedZoneId]: next
       };
     });
   }
 
   function updateSelectedLaneField(field: "label" | "fontSize" | "x" | "y" | "width" | "height", value: string) {
-    if (!selectedLaneId) {
+    if (!singleSelectedLaneId) {
       return;
     }
 
     setLaneOverrides((current) => {
-      const next = { ...(current[selectedLaneId] ?? {}) };
+      const next = { ...(current[singleSelectedLaneId] ?? {}) };
 
       if (field === "label") {
         next.label = value;
@@ -487,7 +703,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
         if (field === "fontSize") {
           next.fontSize = Math.max(numericValue, MIN_LANE_FONT_SIZE);
         } else {
-          const baseLane = displayedCanvasLanes.find((lane) => lane.id === selectedLaneId);
+          const baseLane = displayedCanvasLanes.find((lane) => lane.id === singleSelectedLaneId);
           const width = field === "width" ? numericValue : (next.width ?? baseLane?.width ?? MIN_LANE_WIDTH);
           const height = field === "height" ? numericValue : (next.height ?? baseLane?.height ?? MIN_LANE_HEIGHT);
           const x = field === "x" ? numericValue : (next.x ?? baseLane?.x ?? 16);
@@ -508,7 +724,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
 
       return {
         ...current,
-        [selectedLaneId]: next
+        [singleSelectedLaneId]: next
       };
     });
   }
@@ -571,46 +787,27 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     router.push("/architect/canvas");
   }
 
-  function handleCanvasSelection(selection: CanvasSelection) {
-    if (selection.kind === "node") {
-      setSelectedNodeId(selection.id);
-      setSelectedEdgeId(null);
-      setSelectedZoneId(null);
-      setSelectedLaneId(null);
-      return;
-    }
-
-    if (selection.kind === "edge") {
-      setSelectedEdgeId(selection.id);
-      setSelectedNodeId(null);
-      setSelectedZoneId(null);
-      setSelectedLaneId(null);
-      return;
-    }
-
-    if (selection.kind === "zone") {
-      setSelectedZoneId(selection.id);
-      setSelectedNodeId(null);
-      setSelectedEdgeId(null);
-      setSelectedLaneId(null);
-      return;
-    }
-
-    if (selection.kind === "lane") {
-      setSelectedLaneId(selection.id);
-      setSelectedNodeId(null);
-      setSelectedEdgeId(null);
-      setSelectedZoneId(null);
-      return;
-    }
-
-    setSelectedNodeId(null);
-    setSelectedEdgeId(null);
-    setSelectedZoneId(null);
-    setSelectedLaneId(null);
-  }
+  const handleCanvasSelection = useCallback((selection: CanvasSelection) => {
+    applySelection(selection);
+  }, [applySelection]);
 
   function renderSelectionEditor() {
+    if (totalSelectedCount > 1) {
+      return (
+        <Stack spacing={1.2}>
+          <Typography variant="body2" sx={{ color: "var(--text)", fontWeight: 600 }}>
+            {selectedSummary} selected.
+          </Typography>
+          <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+            Drag on empty canvas to box-select multiple items.
+          </Typography>
+          <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+            Bulk delete works for selected nodes and edges. Detailed property editing is available when exactly one item is selected.
+          </Typography>
+        </Stack>
+      );
+    }
+
     if (selectedNode) {
       return (
         <>
@@ -842,23 +1039,32 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
       return (
         <>
           <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-            Edge selected between {nodeLookup[selectedEdge.from]?.title ?? "source"} and{" "}
+            {selectedEdge.bidirectional ? "Bidirectional flow" : "Edge"} selected between {nodeLookup[selectedEdge.from]?.title ?? "source"} and{" "}
             {nodeLookup[selectedEdge.to]?.title ?? "target"}.
           </Typography>
           <TextField
             label="Edge label"
             value={selectedEdge.label ?? ""}
             onChange={(event) => updateSelectedEdgeLabel(event.target.value)}
-            helperText="Optional label shown on the connector."
+            helperText={
+              selectedEdge.bidirectional
+                ? "Label shown on the two-way connector."
+                : "Optional label shown on the connector. Add the reverse direction to turn it into a bidirectional flow."
+            }
           />
         </>
       );
     }
 
     return (
-      <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-        Select a node, lane, zone, or edge to edit it.
-      </Typography>
+      <Stack spacing={1}>
+        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+          Select a node, lane, zone, or edge to edit it.
+        </Typography>
+        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+          Drag on empty canvas to select multiple items.
+        </Typography>
+      </Stack>
     );
   }
 
@@ -904,6 +1110,36 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                           Describe the target architecture and choose the diagram style. The assistant will generate
                           layered component views closer to the reference diagrams you shared.
                         </Typography>
+                        <FormControl fullWidth>
+                          <InputLabel id="diagram-pattern-label">Architecture pattern</InputLabel>
+                          <Select
+                            labelId="diagram-pattern-label"
+                            value={selectedPattern}
+                            label="Architecture pattern"
+                            onChange={(event) => applyPattern(event.target.value as ArchitecturePatternId)}
+                          >
+                            {architecturePatterns.map((entry) => (
+                              <MenuItem key={entry.id} value={entry.id}>
+                                {entry.label}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                        <FormControl fullWidth>
+                          <InputLabel id="diagram-scenario-label">Solution scenario</InputLabel>
+                          <Select
+                            labelId="diagram-scenario-label"
+                            value={selectedScenario}
+                            label="Solution scenario"
+                            onChange={(event) => applyScenario(event.target.value as ArchitectureScenarioId)}
+                          >
+                            {architectureScenarios.map((entry) => (
+                              <MenuItem key={entry.id} value={entry.id}>
+                                {entry.label}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
                         <TextField
                           label="Architecture brief"
                           multiline
@@ -925,15 +1161,30 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                           </Select>
                         </FormControl>
                         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                          {quickPrompts.map((item) => (
+                          {architecturePatterns.map((entry) => (
                             <Chip
-                              key={item}
-                              label={item}
-                              onClick={() => {
-                                setPrompt(item);
-                                setSelectedProviders(detectProviders(item, selectedProviders));
+                              key={entry.id}
+                              label={`${entry.label}: ${entry.description}`}
+                              onClick={() => applyPattern(entry.id)}
+                              sx={{
+                                maxWidth: "100%",
+                                bgcolor: entry.id === selectedPattern ? "var(--accent-soft)" : "var(--panel-soft)",
+                                border: "1px solid var(--line)"
                               }}
-                              sx={{ maxWidth: "100%", bgcolor: "var(--panel-soft)", border: "1px solid var(--line)" }}
+                            />
+                          ))}
+                        </Stack>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          {architectureScenarios.map((entry) => (
+                            <Chip
+                              key={entry.id}
+                              label={entry.label}
+                              onClick={() => applyScenario(entry.id)}
+                              sx={{
+                                maxWidth: "100%",
+                                bgcolor: entry.id === selectedScenario ? "var(--accent-soft)" : "var(--panel-soft)",
+                                border: "1px solid var(--line)"
+                              }}
                             />
                           ))}
                         </Stack>
@@ -975,10 +1226,10 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                       diagramStyle={diagramStyle}
                       lanes={displayedCanvasLanes}
                       zones={displayedCanvasZones}
-                      selectedNodeId={selectedNodeId}
-                      selectedEdgeId={selectedEdgeId}
-                      selectedZoneId={selectedZoneId}
-                      selectedLaneId={selectedLaneId}
+                      selectedNodeIds={selectedNodeIds}
+                      selectedEdgeIds={selectedEdgeIds}
+                      selectedZoneIds={selectedZoneIds}
+                      selectedLaneIds={selectedLaneIds}
                       connectFromId={connectFromId}
                       canvasWidth={canvasWidth}
                       onSelectionChange={handleCanvasSelection}
@@ -1048,8 +1299,8 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                         </Button>
                         <Button
                           variant={connectFromId ? "contained" : "outlined"}
-                          onClick={() => setConnectFromId((current) => (current ? null : selectedNodeId))}
-                          disabled={!selectedNodeId && !connectFromId}
+                          onClick={() => setConnectFromId((current) => (current ? null : singleSelectedNodeId))}
+                          disabled={!singleSelectedNodeId && !connectFromId}
                           sx={{ borderColor: "var(--line)", color: connectFromId ? "#ffffff" : "var(--text)", bgcolor: connectFromId ? "var(--accent)" : "transparent" }}
                         >
                           {connectFromId ? "Pick target node" : "Connect selected node"}
@@ -1057,7 +1308,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                         <Button
                           variant="outlined"
                           onClick={handleDeleteSelection}
-                          disabled={!selectedNodeId && !selectedEdgeId}
+                          disabled={!hasDeletableSelection}
                           sx={{ borderColor: "var(--line)", color: "var(--text)" }}
                         >
                           Delete Selection
@@ -1180,6 +1431,57 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
 
           {importMessage ? <Alert severity="success">{importMessage}</Alert> : null}
 
+          <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
+            <CardContent sx={{ p: { xs: 3, md: 3.5 } }}>
+              <Grid container spacing={3}>
+                <Grid item xs={12} md={4}>
+                  <Stack spacing={1.2}>
+                    <Chip
+                      label="Design Platter"
+                      sx={{ width: "fit-content", bgcolor: "var(--accent-soft)", color: "var(--accent)", fontWeight: 700 }}
+                    />
+                    <Typography variant="h5">Visible coverage for real-world architecture design</Typography>
+                    <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                      Agent Architect now exposes the full supported architecture pattern set and industry scenario set
+                      directly on the page.
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                      {architecturePatterns.length} patterns x {architectureScenarios.length} scenarios
+                    </Typography>
+                  </Stack>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <Stack spacing={1.2}>
+                    <Typography variant="subtitle2">Supported Architecture Patterns</Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                      {architecturePatterns.map((entry) => (
+                        <Chip
+                          key={`visible-pattern-${entry.id}`}
+                          label={entry.label}
+                          sx={{ bgcolor: "var(--panel-soft)", border: "1px solid var(--line)" }}
+                        />
+                      ))}
+                    </Stack>
+                  </Stack>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <Stack spacing={1.2}>
+                    <Typography variant="subtitle2">Supported Real-World Scenarios</Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                      {architectureScenarios.map((entry) => (
+                        <Chip
+                          key={`visible-scenario-${entry.id}`}
+                          label={entry.label}
+                          sx={{ bgcolor: "var(--panel-soft)", border: "1px solid var(--line)" }}
+                        />
+                      ))}
+                    </Stack>
+                  </Stack>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+
           <Grid container spacing={3}>
             <Grid item xs={12} lg={4}>
               <Stack spacing={3}>
@@ -1187,12 +1489,42 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                   <CardContent sx={{ p: 3 }}>
                       <Stack spacing={2.5}>
                         <Typography variant="h5">Agent Prompt</Typography>
+                        <FormControl fullWidth>
+                          <InputLabel id="workspace-pattern-label">Architecture pattern</InputLabel>
+                          <Select
+                            labelId="workspace-pattern-label"
+                            value={selectedPattern}
+                            label="Architecture pattern"
+                            onChange={(event) => applyPattern(event.target.value as ArchitecturePatternId)}
+                          >
+                            {architecturePatterns.map((entry) => (
+                              <MenuItem key={entry.id} value={entry.id}>
+                                {entry.label}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                        <FormControl fullWidth>
+                          <InputLabel id="workspace-scenario-label">Solution scenario</InputLabel>
+                          <Select
+                            labelId="workspace-scenario-label"
+                            value={selectedScenario}
+                            label="Solution scenario"
+                            onChange={(event) => applyScenario(event.target.value as ArchitectureScenarioId)}
+                          >
+                            {architectureScenarios.map((entry) => (
+                              <MenuItem key={entry.id} value={entry.id}>
+                                {entry.label}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
                         <TextField
                           label="Architecture brief"
-                        multiline
-                        minRows={6}
-                        value={prompt}
-                        onChange={(event) => setPrompt(event.target.value)}
+                          multiline
+                          minRows={6}
+                          value={prompt}
+                          onChange={(event) => setPrompt(event.target.value)}
                           placeholder="Describe clouds, workload tiers, resilience, and shared services."
                         />
                         <FormControl fullWidth>
@@ -1231,29 +1563,46 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                         </Stack>
                       </Stack>
                       <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                        Agent Architect now includes a broader market cloud library for diagramming. Cost estimation and
-                        recommendation APIs still price AWS, Azure, and GCP.
+                        Agent Architect now includes a pattern library for single-tier, N-tier, microservices,
+                        event-driven, serverless, data, hybrid, multi-cloud, and HA/DR designs plus real-world
+                        solution contexts like banking, e-commerce, streaming, healthcare, ERP, SaaS, and IoT.
                       </Typography>
                       <Alert severity="info">
                         Drag nodes, zones, and lanes directly on the diagram to move them. Select any element to edit
                         its text, size, and position, then use the add-node controls below to create new boxes.
                       </Alert>
                       <Stack spacing={1}>
-                        <Typography variant="subtitle2">Quick prompts</Typography>
+                        <Typography variant="subtitle2">Pattern library</Typography>
                         <Stack spacing={1}>
-                          {quickPrompts.map((item) => (
+                          {architecturePatterns.map((entry) => (
                             <Chip
-                              key={item}
-                              label={item}
-                              onClick={() => {
-                                setPrompt(item);
-                                setSelectedProviders(detectProviders(item, selectedProviders));
-                              }}
+                              key={entry.id}
+                              label={`${entry.label}: ${entry.description}`}
+                              onClick={() => applyPattern(entry.id)}
                               sx={{
                                 justifyContent: "flex-start",
                                 height: "auto",
                                 py: 0.8,
-                                bgcolor: "var(--panel-soft)",
+                                bgcolor: entry.id === selectedPattern ? "var(--accent-soft)" : "var(--panel-soft)",
+                                border: "1px solid var(--line)"
+                              }}
+                            />
+                          ))}
+                        </Stack>
+                      </Stack>
+                      <Stack spacing={1}>
+                        <Typography variant="subtitle2">Scenario library</Typography>
+                        <Stack spacing={1}>
+                          {architectureScenarios.map((entry) => (
+                            <Chip
+                              key={entry.id}
+                              label={`${entry.label}: ${entry.description}`}
+                              onClick={() => applyScenario(entry.id)}
+                              sx={{
+                                justifyContent: "flex-start",
+                                height: "auto",
+                                py: 0.8,
+                                bgcolor: entry.id === selectedScenario ? "var(--accent-soft)" : "var(--panel-soft)",
                                 border: "1px solid var(--line)"
                               }}
                             />
@@ -1272,11 +1621,9 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                         <Button
                           variant="outlined"
                           onClick={() => {
-                            setPrompt(quickPrompts[0]);
-                            setSelectedProviders(DEFAULT_ARCHITECT_PROVIDERS);
+                            const baseline = architecturePatterns[0];
                             setRequestContext(null);
-                            setImportMessage(null);
-                            regenerateDiagram(quickPrompts[0], DEFAULT_ARCHITECT_PROVIDERS, null);
+                            applyPattern(baseline.id, null, architectureScenarios[0].id);
                           }}
                           sx={{ borderColor: "var(--line)", color: "var(--text)" }}
                         >
@@ -1295,8 +1642,8 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
                         <Button
                           variant={connectFromId ? "contained" : "outlined"}
-                          onClick={() => setConnectFromId((current) => (current ? null : selectedNodeId))}
-                          disabled={!selectedNodeId && !connectFromId}
+                          onClick={() => setConnectFromId((current) => (current ? null : singleSelectedNodeId))}
+                          disabled={!singleSelectedNodeId && !connectFromId}
                           sx={{
                             borderColor: "var(--line)",
                             color: connectFromId ? "#ffffff" : "var(--text)",
@@ -1308,7 +1655,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                         <Button
                           variant="outlined"
                           onClick={handleDeleteSelection}
-                          disabled={!selectedNodeId && !selectedEdgeId}
+                          disabled={!hasDeletableSelection}
                           sx={{ borderColor: "var(--line)", color: "var(--text)" }}
                         >
                           Delete Selection
@@ -1442,9 +1789,12 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                     <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", height: "100%" }}>
                       <CardContent>
                         <Typography variant="overline" sx={{ color: "var(--muted)" }}>
-                          Clouds
+                          Pattern / Scenario
                         </Typography>
-                        <Typography variant="h6">{plan.providers.map((provider) => providerLabels[provider]).join(" + ")}</Typography>
+                        <Typography variant="h6">{plan.patternLabel}</Typography>
+                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                          {plan.scenarioLabel}
+                        </Typography>
                       </CardContent>
                     </Card>
                   </Grid>
@@ -1452,10 +1802,10 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                     <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", height: "100%" }}>
                       <CardContent>
                         <Typography variant="overline" sx={{ color: "var(--muted)" }}>
-                          Elements
+                          Clouds / Elements
                         </Typography>
                         <Typography variant="h6">
-                          {plan.nodes.length} nodes / {plan.edges.length} links
+                          {plan.providers.map((provider) => providerLabels[provider]).join(" + ")} | {plan.nodes.length} / {plan.edges.length}
                         </Typography>
                       </CardContent>
                     </Card>
@@ -1500,10 +1850,10 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                           diagramStyle={diagramStyle}
                           lanes={displayedCanvasLanes}
                           zones={displayedCanvasZones}
-                          selectedNodeId={selectedNodeId}
-                          selectedEdgeId={selectedEdgeId}
-                          selectedZoneId={selectedZoneId}
-                          selectedLaneId={selectedLaneId}
+                          selectedNodeIds={selectedNodeIds}
+                          selectedEdgeIds={selectedEdgeIds}
+                          selectedZoneIds={selectedZoneIds}
+                          selectedLaneIds={selectedLaneIds}
                           connectFromId={connectFromId}
                           canvasWidth={canvasWidth}
                           onSelectionChange={handleCanvasSelection}
@@ -1543,16 +1893,98 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
 
                 <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
                   <CardContent sx={{ p: 3 }}>
-                    <Stack spacing={1.3}>
+                    <Stack spacing={2}>
                       <Typography variant="h6">Agent Notes</Typography>
                       <Typography variant="body1" sx={{ color: "var(--muted)" }}>
                         {plan.summary}
                       </Typography>
-                      {plan.assumptions.map((assumption) => (
-                        <Typography key={assumption} variant="body2" sx={{ color: "var(--muted)" }}>
-                          {assumption}
-                        </Typography>
-                      ))}
+                      <Stack spacing={0.8}>
+                        <Typography variant="subtitle2">Assumptions</Typography>
+                        {plan.assumptions.map((assumption) => (
+                          <Typography key={assumption} variant="body2" sx={{ color: "var(--muted)" }}>
+                            {assumption}
+                          </Typography>
+                        ))}
+                      </Stack>
+                      <Stack spacing={0.8}>
+                        <Typography variant="subtitle2">Components</Typography>
+                        {plan.components.map((item) => (
+                          <Typography key={item} variant="body2" sx={{ color: "var(--muted)" }}>
+                            {item}
+                          </Typography>
+                        ))}
+                      </Stack>
+                      <Stack spacing={0.8}>
+                        <Typography variant="subtitle2">Cloud Services</Typography>
+                        {plan.cloudServices.map((item) => (
+                          <Typography key={item} variant="body2" sx={{ color: "var(--muted)" }}>
+                            {item}
+                          </Typography>
+                        ))}
+                      </Stack>
+                      <Stack spacing={0.8}>
+                        <Typography variant="subtitle2">Data Flow</Typography>
+                        {plan.dataFlow.map((item) => (
+                          <Typography key={item} variant="body2" sx={{ color: "var(--muted)" }}>
+                            {item}
+                          </Typography>
+                        ))}
+                      </Stack>
+                      <Stack spacing={0.8}>
+                        <Typography variant="subtitle2">Scaling Strategy</Typography>
+                        {plan.scalingStrategy.map((item) => (
+                          <Typography key={item} variant="body2" sx={{ color: "var(--muted)" }}>
+                            {item}
+                          </Typography>
+                        ))}
+                      </Stack>
+                      <Stack spacing={0.8}>
+                        <Typography variant="subtitle2">Security</Typography>
+                        {plan.securityConsiderations.map((item) => (
+                          <Typography key={item} variant="body2" sx={{ color: "var(--muted)" }}>
+                            {item}
+                          </Typography>
+                        ))}
+                      </Stack>
+                      <Stack spacing={0.8}>
+                        <Typography variant="subtitle2">Variations</Typography>
+                        {plan.variations.costOptimized.map((item) => (
+                          <Typography key={`cost-${item}`} variant="body2" sx={{ color: "var(--muted)" }}>
+                            Cost-optimized: {item}
+                          </Typography>
+                        ))}
+                        {plan.variations.highPerformance.map((item) => (
+                          <Typography key={`perf-${item}`} variant="body2" sx={{ color: "var(--muted)" }}>
+                            High-performance: {item}
+                          </Typography>
+                        ))}
+                        {plan.variations.enterprise.map((item) => (
+                          <Typography key={`ent-${item}`} variant="body2" sx={{ color: "var(--muted)" }}>
+                            Enterprise: {item}
+                          </Typography>
+                        ))}
+                      </Stack>
+                      <Stack spacing={0.8}>
+                        <Typography variant="subtitle2">Use Cases</Typography>
+                        {plan.useCases.map((item) => (
+                          <Typography key={item} variant="body2" sx={{ color: "var(--muted)" }}>
+                            {item}
+                          </Typography>
+                        ))}
+                      </Stack>
+                      <Stack spacing={0.8}>
+                        <Typography variant="subtitle2">Pros / Cons</Typography>
+                        {plan.pros.map((item) => (
+                          <Typography key={`pro-${item}`} variant="body2" sx={{ color: "var(--muted)" }}>
+                            Pro: {item}
+                          </Typography>
+                        ))}
+                        {plan.cons.map((item) => (
+                          <Typography key={`con-${item}`} variant="body2" sx={{ color: "var(--muted)" }}>
+                            Con: {item}
+                          </Typography>
+                        ))}
+                      </Stack>
                     </Stack>
                   </CardContent>
                 </Card>

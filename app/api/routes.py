@@ -5,6 +5,8 @@ from app.models import (
     AuthLoginRequest,
     AuthLoginResponse,
     AuthenticatedUser,
+    BillingImportRequest,
+    BillingImportResponse,
     EstimationAdvisorRequest,
     EstimationAdvisorResponse,
     EstimationAdvisorChatRequest,
@@ -13,6 +15,10 @@ from app.models import (
     CatalogImportResponse,
     CatalogService,
     CloudProvider,
+    EstimateActualCreate,
+    EstimateActualRecord,
+    LivePricingRefreshRequest,
+    LivePricingRefreshResponse,
     SavedEstimateCreate,
     SavedEstimateRecord,
     ProviderSummary,
@@ -26,6 +32,7 @@ from app.models import (
 from app.services.advisor import advise_estimation_chat, advise_estimation_plan
 from app.services.auth import authenticate_user, create_session, get_user_for_token, revoke_session
 from app.services.catalog_import import import_catalog_snapshot
+from app.services.billing_import import import_billing_snapshot
 from app.services.catalog import (
     get_catalog_services,
     get_catalog_metadata,
@@ -33,12 +40,14 @@ from app.services.catalog import (
     get_service_comparison_groups,
     reload_catalog,
 )
+from app.services.actuals import create_actual_observation, list_actual_observations
 from app.services.estimates import (
     create_saved_estimate,
     delete_saved_estimate,
     get_saved_estimate,
     list_saved_estimates,
 )
+from app.services.live_pricing import refresh_live_pricing
 from app.services.recommendation import build_recommendations
 from app.services.service_pricing import calculate_service_pricing
 
@@ -101,6 +110,13 @@ def catalog_import_local(
     request: CatalogImportRequest,
 ) -> CatalogImportResponse:
     return import_catalog_snapshot(request)
+
+
+@router.post("/catalog/refresh-live-pricing", response_model=LivePricingRefreshResponse)
+def catalog_refresh_live_pricing(
+    request: LivePricingRefreshRequest,
+) -> LivePricingRefreshResponse:
+    return refresh_live_pricing(request)
 
 
 @router.post("/pricing/calculate", response_model=ServicePricingResponse)
@@ -174,6 +190,39 @@ def estimates_create(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> SavedEstimateRecord:
     return create_saved_estimate(request, current_user.id)
+
+
+@router.get("/actuals", response_model=list[EstimateActualRecord])
+def actuals_list(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> list[EstimateActualRecord]:
+    return list_actual_observations(current_user.id)
+
+
+@router.post("/actuals", response_model=EstimateActualRecord)
+def actuals_create(
+    request: EstimateActualCreate,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> EstimateActualRecord:
+    try:
+        return create_actual_observation(request, current_user.id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Estimate not found.") from exc
+
+
+@router.post("/actuals/import-local", response_model=BillingImportResponse)
+def actuals_import_local(
+    request: BillingImportRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> BillingImportResponse:
+    try:
+        return import_billing_snapshot(request, current_user.id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Billing snapshot file not found.") from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Estimate not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete("/estimates/{estimate_id}")

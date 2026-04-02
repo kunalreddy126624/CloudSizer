@@ -26,6 +26,7 @@ import { getRecommendations } from "@/lib/api";
 import { parseRecommendationRequest } from "@/lib/query";
 import type { ArchitectureRecommendation, CloudProvider } from "@/lib/types";
 import { ArchitectureDiagram } from "@/components/recommendations/architecture-diagram";
+import { formatWorkloadLabel } from "@/lib/workloads";
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
@@ -135,8 +136,21 @@ export function RecommendationDetailShell() {
                   <MetricCard label="Profile" value={recommendation.profile} />
                 </Grid>
                 <Grid item xs={12} md={3}>
-                  <MetricCard label="Workload" value={request.workload_type.toUpperCase()} />
+                  <MetricCard label="Workload" value={formatWorkloadLabel(request.workload_type)} />
                 </Grid>
+                {recommendation.accuracy ? (
+                  <>
+                    <Grid item xs={12} md={3}>
+                      <MetricCard label="Confidence" value={`${recommendation.accuracy.confidence_score}%`} />
+                    </Grid>
+                    <Grid item xs={12} md={3}>
+                      <MetricCard label="Actual comparisons" value={String(recommendation.accuracy.compared_actuals_count)} />
+                    </Grid>
+                    <Grid item xs={12} md={3}>
+                      <MetricCard label="Live pricing" value={`${recommendation.accuracy.live_pricing_coverage_percent}%`} />
+                    </Grid>
+                  </>
+                ) : null}
               </Grid>
 
               <ArchitectureDiagram recommendation={recommendation} />
@@ -152,7 +166,11 @@ export function RecommendationDetailShell() {
                             <ListItem key={service.name} disableGutters sx={{ py: 1.25 }}>
                               <ListItemText
                                 primary={service.name}
-                                secondary={service.purpose}
+                                secondary={
+                                  service.accuracy
+                                    ? `${service.purpose} | ${service.accuracy.confidence_label} confidence ${service.accuracy.confidence_score}%`
+                                    : service.purpose
+                                }
                                 primaryTypographyProps={{ fontWeight: 700 }}
                                 secondaryTypographyProps={{ color: "var(--muted)" }}
                               />
@@ -176,6 +194,27 @@ export function RecommendationDetailShell() {
                           </Typography>
                         ))}
                         <Divider />
+                        {recommendation.accuracy ? (
+                          <>
+                            <Stack spacing={1}>
+                              <Typography variant="subtitle2">Verification</Typography>
+                              <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                                Confidence label: {recommendation.accuracy.confidence_label}
+                              </Typography>
+                              {recommendation.accuracy.mean_absolute_percentage_error != null ? (
+                                <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                                  Mean billing error: {recommendation.accuracy.mean_absolute_percentage_error.toFixed(2)}%
+                                </Typography>
+                              ) : null}
+                              {recommendation.accuracy.caveats.map((caveat) => (
+                                <Typography key={caveat} variant="body2" sx={{ color: "var(--muted)" }}>
+                                  {caveat}
+                                </Typography>
+                              ))}
+                            </Stack>
+                            <Divider />
+                          </>
+                        ) : null}
                         <Stack spacing={1}>
                           <Typography variant="subtitle2">Request profile</Typography>
                           <Typography variant="body2" sx={{ color: "var(--muted)" }}>

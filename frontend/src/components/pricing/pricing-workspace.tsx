@@ -24,8 +24,10 @@ import {
   Typography
 } from "@mui/material";
 
-import { calculateServicePricing, createSavedEstimate, getCatalogServices } from "@/lib/api";
+import { useAuth } from "@/components/auth/auth-provider";
+import { calculateServicePricing, createSavedEstimate, getCatalogServices, refreshLivePricing } from "@/lib/api";
 import { formatProviderLabel, providerOptions } from "@/lib/cloud-providers";
+import { MAX_GUEST_RUNS, loadGuestUsageSummary, recordGuestUsage } from "@/lib/guest-usage";
 import type {
   CatalogService,
   CloudProvider,
@@ -93,6 +95,7 @@ function ServiceCatalogCard({
 }
 
 export function PricingWorkspace() {
+  const { isAuthenticated } = useAuth();
   const searchParams = useSearchParams();
   const [provider, setProvider] = useState<CloudProvider>("aws");
   const [category, setCategory] = useState<ServiceCategory | "all">("all");
@@ -105,6 +108,13 @@ export function PricingWorkspace() {
   const [saveName, setSaveName] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
+  const [refreshingLivePricing, setRefreshingLivePricing] = useState(false);
+  const [guestSummary, setGuestSummary] = useState(loadGuestUsageSummary);
+
+  useEffect(() => {
+    setGuestSummary(loadGuestUsageSummary());
+  }, [isAuthenticated]);
 
   useEffect(() => {
     let active = true;
@@ -205,6 +215,11 @@ export function PricingWorkspace() {
       return;
     }
 
+    if (!isAuthenticated && loadGuestUsageSummary().remaining <= 0) {
+      setError(`Guest access is limited to ${MAX_GUEST_RUNS} estimate runs. Sign in to continue.`);
+      return;
+    }
+
     setCalculating(true);
     setError(null);
     setSaveMessage(null);
@@ -221,6 +236,9 @@ export function PricingWorkspace() {
 
       const response = await calculateServicePricing(request);
       setPricingResult(response);
+      if (!isAuthenticated) {
+        setGuestSummary(recordGuestUsage("pricing"));
+      }
     } catch (calculationError) {
       setError(calculationError instanceof Error ? calculationError.message : "Failed to calculate pricing.");
     } finally {
@@ -266,6 +284,26 @@ export function PricingWorkspace() {
       setError(saveError instanceof Error ? saveError.message : "Failed to save estimate.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleRefreshLivePricing() {
+    setRefreshingLivePricing(true);
+    setError(null);
+    setRefreshMessage(null);
+
+    try {
+      const response = await refreshLivePricing({ providers: [provider] });
+      const result = response.results[0];
+      setRefreshMessage(
+        `${result.provider.toUpperCase()}: updated ${result.updated_services} services, skipped ${result.skipped_services}.`
+      );
+      const refreshedCatalog = await getCatalogServices(provider, category === "all" ? undefined : category);
+      setCatalog(refreshedCatalog);
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "Failed to refresh live pricing.");
+    } finally {
+      setRefreshingLivePricing(false);
     }
   }
 
@@ -337,6 +375,13 @@ export function PricingWorkspace() {
           </Card>
 
           {error ? <Alert severity="error">{error}</Alert> : null}
+          {refreshMessage ? <Alert severity="success">{refreshMessage}</Alert> : null}
+          {!isAuthenticated ? (
+            <Alert severity={guestSummary.remaining > 0 ? "info" : "warning"}>
+              Guest access is limited to {MAX_GUEST_RUNS} estimate runs total. You have {guestSummary.remaining}{" "}
+              remaining.
+            </Alert>
+          ) : null}
 
           <Grid container spacing={3}>
             <Grid item xs={12} lg={7}>
@@ -349,6 +394,14 @@ export function PricingWorkspace() {
                         Add services to the estimate builder. Switching provider resets the current draft so you can
                         explore one cloud service stack at a time.
                       </Typography>
+                      <Button
+                        variant="outlined"
+                        onClick={handleRefreshLivePricing}
+                        disabled={refreshingLivePricing}
+                        sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
+                      >
+                        {refreshingLivePricing ? "Refreshing..." : "Refresh Live Pricing"}
+                      </Button>
                     </Stack>
                     {loadingCatalog ? (
                       <Stack direction="row" spacing={1.5} alignItems="center">
@@ -471,6 +524,13 @@ export function PricingWorkspace() {
                           <Typography variant="body2" sx={{ color: "var(--muted)" }}>
                             Estimated monthly total for the selected {formatProviderLabel(pricingResult.provider)} services.
                           </Typography>
+                          {pricingResult.accuracy ? (
+                            <Alert severity={pricingResult.accuracy.confidence_score >= 70 ? "success" : "warning"}>
+                              Confidence {pricingResult.accuracy.confidence_score}% | Live pricing{" "}
+                              {pricingResult.accuracy.live_pricing_coverage_percent}% | Actual comparisons{" "}
+                              {pricingResult.accuracy.compared_actuals_count}
+                            </Alert>
+                          ) : null}
                           <Divider />
                           <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "var(--panel-strong)" }}>
                             <CardContent>
@@ -521,8 +581,14 @@ export function PricingWorkspace() {
                                     </Typography>
                                   </Stack>
                                   <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                                    Base cost: ${item.base_monthly_cost_usd.toFixed(2)} | Region: {item.region}
+                                    Base cost: ${item.base_monthly_cost_usd.toFixed(2)} | Region: {item.region} | Source:{" "}
+                                    {item.pricing_source.replaceAll("_", " ")}
                                   </Typography>
+                                  {item.accuracy ? (
+                                    <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                                      Service confidence: {item.accuracy.confidence_score}% ({item.accuracy.confidence_label})
+                                    </Typography>
+                                  ) : null}
                                   {item.dimensions.map((dimension) => (
                                     <Typography key={dimension.key} variant="caption" sx={{ color: "var(--muted)" }}>
                                       {dimension.label}: {dimension.quantity} {dimension.unit} x $
