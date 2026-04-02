@@ -123,3 +123,171 @@ class NoodlePlatformBlueprint(BaseModel):
     ai_stack: list[str]
     observability_stack: list[str]
 
+
+class NoodleServiceEndpoint(BaseModel):
+    method: Literal["GET", "POST", "PUT", "DELETE"]
+    path: str
+    summary: str
+
+
+class NoodleMicroserviceSpec(BaseModel):
+    name: str
+    responsibility: str
+    domain: str
+    deployment_pattern: str
+    apis: list[NoodleServiceEndpoint]
+    dependencies: list[str] = Field(default_factory=list)
+
+
+class NoodleMicroserviceCatalogResponse(BaseModel):
+    services: list[NoodleMicroserviceSpec]
+
+
+class NoodleMicroserviceDetailResponse(BaseModel):
+    service: NoodleMicroserviceSpec
+
+
+class NoodleWorkflowStartRequest(BaseModel):
+    pipeline_name: str
+    workflow_template: str
+    trigger: Literal["manual", "event", "schedule"] = "manual"
+
+
+class NoodleWorkflowRunStatus(BaseModel):
+    workflow_id: str
+    service: str
+    status: Literal["accepted", "running", "completed", "failed"]
+    detail: str
+
+
+class NoodleSchemaInferenceRequest(BaseModel):
+    source_name: str
+    format_hint: str
+    sample_record: dict[str, object] = Field(default_factory=dict)
+
+
+class NoodleSchemaField(BaseModel):
+    name: str
+    inferred_type: str
+    nullable: bool
+
+
+class NoodleSchemaInferenceResponse(BaseModel):
+    source_name: str
+    fields: list[NoodleSchemaField]
+    drift_risk: Literal["low", "medium", "high"]
+
+
+class NoodleRoutingRequest(BaseModel):
+    dataset_name: str
+    latency_slo: Literal["seconds", "minutes", "hours", "daily"]
+    contains_sensitive_data: bool = False
+    requires_realtime_serving: bool = False
+    consumers: list[str] = Field(default_factory=list)
+
+
+class NoodleRoutingDecisionResponse(BaseModel):
+    dataset_name: str
+    route_to: list[TargetZone]
+    rationale: list[str]
+
+
+class NoodleConnectorRegistrationRequest(BaseModel):
+    name: str
+    source_kind: SourceKind
+    runtime: str
+
+
+class NoodleConnectorRegistrationResponse(BaseModel):
+    status: Literal["registered"]
+    connector_name: str
+    runtime: str
+
+
+class NoodleJobSubmissionRequest(BaseModel):
+    pipeline_name: str
+    stage_name: str
+    mode: ProcessingMode
+
+
+class NoodleJobSubmissionResponse(BaseModel):
+    status: Literal["accepted"]
+    job_id: str
+    execution_plane: str
+    detail: str
+
+
+class NoodleEnrichmentRequest(BaseModel):
+    dataset_name: str
+    tasks: list[str] = Field(default_factory=list)
+
+
+class NoodleEnrichmentResponse(BaseModel):
+    dataset_name: str
+    tasks: list[str]
+    execution_mode: Literal["async", "sync"]
+
+
+class NoodleQualityCheckRequest(BaseModel):
+    dataset_name: str
+    checks: list[str] = Field(default_factory=list)
+
+
+class NoodleQualityCheckResponse(BaseModel):
+    dataset_name: str
+    score: float
+    passed_checks: list[str]
+    failed_checks: list[str]
+
+
+class NoodleDatasetSummary(BaseModel):
+    dataset_name: str
+    zone: TargetZone
+    owner: str
+    classification: str
+
+
+class NoodleLineageResponse(BaseModel):
+    asset_id: str
+    upstream_assets: list[str]
+    downstream_assets: list[str]
+
+
+class NoodlePolicyEvaluationRequest(BaseModel):
+    asset_name: str
+    contains_sensitive_data: bool = False
+    residency: str = "global"
+
+
+class NoodlePolicyEvaluationResponse(BaseModel):
+    asset_name: str
+    passed: bool
+    enforced_controls: list[str]
+
+
+class NoodleAccessCheckRequest(BaseModel):
+    principal: str
+    asset_name: str
+    action: Literal["read", "write", "admin"]
+
+
+class NoodleAccessCheckResponse(BaseModel):
+    principal: str
+    asset_name: str
+    action: str
+    allowed: bool
+    reason: str
+
+
+class NoodleDataProduct(BaseModel):
+    name: str
+    interface: str
+    consumers: list[str]
+
+
+class NoodlePipelineObservability(BaseModel):
+    pipeline_name: str
+    freshness_minutes: int
+    error_rate_percent: float
+    monthly_cost_usd: float
+    quality_score: float

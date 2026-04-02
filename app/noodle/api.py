@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.noodle.microservices.api import router as microservices_router
 from app.noodle.schemas import (
     NoodleArchitectureOverview,
     NoodlePipelineIntent,
@@ -34,3 +35,5 @@ def noodle_reference_specs() -> list[NoodleReferenceSpec]:
 def noodle_plan_pipeline(intent: NoodlePipelineIntent) -> NoodlePipelinePlanResponse:
     return get_noodle_service().plan_pipeline(intent)
 
+
+router.include_router(microservices_router)

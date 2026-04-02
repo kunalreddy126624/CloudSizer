@@ -72,6 +72,54 @@ class NoodleOrchestratorApiTest(unittest.TestCase):
         self.assertGreaterEqual(len(specs), 2)
         self.assertEqual(specs[0]["id"], "hybrid-orders-analytics")
 
+    def test_microservice_catalog_exposes_planner_and_governance_services(self) -> None:
+        response = self.client.get("/noodle/microservices")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        service_names = {service["name"] for service in payload["services"]}
+        self.assertIn("noodle-planner", service_names)
+        self.assertIn("noodle-governance-service", service_names)
+        self.assertIn("noodle-observability-service", service_names)
+
+    def test_workflow_scaffold_start_endpoint_accepts_run(self) -> None:
+        response = self.client.post(
+            "/noodle/workflows/start",
+            json={
+                "pipeline_name": "customer-360-pipeline",
+                "workflow_template": "temporal-standard-batch-orchestration",
+                "trigger": "manual",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["service"], "noodle-workflow-service")
+        self.assertEqual(payload["status"], "accepted")
+        self.assertEqual(payload["workflow_id"], "wf-customer-360-pipeline-manual")
+
+    def test_governance_scaffold_adds_sensitive_data_controls(self) -> None:
+        response = self.client.post(
+            "/noodle/governance/evaluate",
+            json={
+                "asset_name": "customer_360_gold",
+                "contains_sensitive_data": True,
+                "residency": "eu",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["passed"])
+        self.assertIn("dynamic-data-masking", payload["enforced_controls"])
+        self.assertIn("residency-and-compliance-routing", payload["enforced_controls"])
+
+    def test_unknown_microservice_returns_not_found(self) -> None:
+        response = self.client.get("/noodle/microservices/noodle-missing-service")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "Noodle microservice not found.")
+
 
 if __name__ == "__main__":
     unittest.main()
