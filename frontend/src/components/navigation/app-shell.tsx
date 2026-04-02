@@ -11,11 +11,13 @@ import { useAuth } from "@/components/auth/auth-provider";
 const navItems = [
   { href: "/workspace", label: "Workspace" },
   { href: "/advisor", label: "Agent Estimator" },
+  { href: "/allocator", label: "Agent Allocator" },
+  { href: "/noodle", label: "Noodle" },
   { href: "/estimator", label: "Form Estimator" },
   { href: "/pricing", label: "Pricing" },
   { href: "/architect", label: "Architect" },
   { href: "/catalog", label: "Catalog" },
-  { href: "/estimates", label: "Saved Estimates" }
+  { href: "/estimates", label: "Saved Work" }
 ] as const;
 
 function isRouteActive(pathname: string, href: string) {

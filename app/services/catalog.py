@@ -91,6 +91,18 @@ PROVIDER_LABELS: dict[CloudProvider, str] = {
 }
 
 GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
+    CloudProvider.AWS: {
+        "snowflake_warehouse": "Snowflake on AWS",
+        "salesforce_crm": "Salesforce Sales Cloud",
+    },
+    CloudProvider.AZURE: {
+        "snowflake_warehouse": "Snowflake on Azure",
+        "salesforce_crm": "Salesforce Sales Cloud",
+    },
+    CloudProvider.GCP: {
+        "snowflake_warehouse": "Snowflake on Google Cloud",
+        "salesforce_crm": "Salesforce Sales Cloud",
+    },
     CloudProvider.ORACLE: {
         "virtual_machine": "OCI Compute",
         "containers_managed": "Oracle Kubernetes Engine",
@@ -107,6 +119,8 @@ GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
         "vision_ai": "OCI Vision",
         "key_management": "OCI Vault",
         "web_application_firewall": "OCI Web Application Firewall",
+        "snowflake_warehouse": "Snowflake-Compatible Data Cloud",
+        "salesforce_crm": "Salesforce Sales Cloud",
     },
     CloudProvider.ALIBABA: {
         "virtual_machine": "Elastic Compute Service",
@@ -124,6 +138,8 @@ GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
         "vision_ai": "Visual Intelligence",
         "key_management": "Key Management Service",
         "web_application_firewall": "Alibaba Cloud WAF",
+        "snowflake_warehouse": "Snowflake-Compatible Data Cloud",
+        "salesforce_crm": "Salesforce Sales Cloud",
     },
     CloudProvider.IBM: {
         "virtual_machine": "Virtual Servers for VPC",
@@ -141,6 +157,8 @@ GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
         "vision_ai": "Watson Visual Recognition",
         "key_management": "IBM Key Protect",
         "web_application_firewall": "IBM Cloud Internet Services",
+        "snowflake_warehouse": "Snowflake-Compatible Data Cloud",
+        "salesforce_crm": "Salesforce Sales Cloud",
     },
     CloudProvider.TENCENT: {
         "virtual_machine": "Cloud Virtual Machine",
@@ -158,6 +176,8 @@ GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
         "vision_ai": "Tencent Cloud Visual Intelligence",
         "key_management": "Key Management Service",
         "web_application_firewall": "Tencent Cloud WAF",
+        "snowflake_warehouse": "Snowflake-Compatible Data Cloud",
+        "salesforce_crm": "Salesforce Sales Cloud",
     },
     CloudProvider.DIGITALOCEAN: {
         "virtual_machine": "Droplets",
@@ -175,6 +195,8 @@ GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
         "vision_ai": "Paperspace Vision",
         "key_management": "DigitalOcean Key Management",
         "web_application_firewall": "Cloud Firewalls",
+        "snowflake_warehouse": "Snowflake-Compatible Data Cloud",
+        "salesforce_crm": "Salesforce Sales Cloud",
     },
     CloudProvider.AKAMAI: {
         "virtual_machine": "Linode Compute Instances",
@@ -192,6 +214,8 @@ GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
         "vision_ai": "Akamai Image and Video Manager",
         "key_management": "Akamai Certificate and Key Management",
         "web_application_firewall": "App and API Protector",
+        "snowflake_warehouse": "Snowflake-Compatible Data Cloud",
+        "salesforce_crm": "Salesforce Sales Cloud",
     },
     CloudProvider.OVHCLOUD: {
         "virtual_machine": "Public Cloud Instances",
@@ -209,6 +233,8 @@ GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
         "vision_ai": "OVHcloud AI Vision",
         "key_management": "OVHcloud Key Management Service",
         "web_application_firewall": "OVHcloud Network Firewall",
+        "snowflake_warehouse": "Snowflake-Compatible Data Cloud",
+        "salesforce_crm": "Salesforce Sales Cloud",
     },
     CloudProvider.CLOUDFLARE: {
         "virtual_machine": "Cloudflare Edge Compute",
@@ -226,6 +252,8 @@ GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
         "vision_ai": "Cloudflare Images",
         "key_management": "Cloudflare Keyless SSL",
         "web_application_firewall": "Cloudflare WAF",
+        "snowflake_warehouse": "Snowflake-Compatible Data Cloud",
+        "salesforce_crm": "Salesforce Sales Cloud",
     },
 }
 
@@ -257,6 +285,8 @@ SERVICE_FAMILY_LABELS: dict[str, str] = {
     "vision_ai": "Vision AI",
     "key_management": "Key Management",
     "web_application_firewall": "Web Application Firewall",
+    "snowflake_warehouse": "Cloud Data Warehouse SaaS",
+    "salesforce_crm": "CRM SaaS",
 }
 
 
@@ -306,7 +336,11 @@ def _build_generated_services(
                         )
                         for dimension in template.dimensions
                     ],
-                    "pricing_source": PricingSource.GENERATED,
+                    "pricing_source": (
+                        PricingSource.BENCHMARK_LIVE
+                        if template.pricing_source in {PricingSource.LIVE_API, PricingSource.BENCHMARK_LIVE}
+                        else PricingSource.GENERATED
+                    ),
                     "last_validated_at": None,
                 }
             )

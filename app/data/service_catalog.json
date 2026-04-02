@@ -403,6 +403,58 @@
           "suggested_value": 20.0
         }
       ]
+    },
+    {
+      "provider": "aws",
+      "category": "saas",
+      "service_family": "snowflake_warehouse",
+      "service_code": "aws.snowflake.enterprise",
+      "name": "Snowflake on AWS",
+      "summary": "Cloud data warehouse SaaS running on AWS-backed Snowflake.",
+      "default_region": "us-east-1",
+      "base_monthly_cost_usd": 120.0,
+      "dimensions": [
+        {
+          "key": "warehouse_hours",
+          "label": "Warehouse hours",
+          "unit": "hours",
+          "rate_per_unit_usd": 2.4,
+          "suggested_value": 120.0
+        },
+        {
+          "key": "storage_tb",
+          "label": "Storage",
+          "unit": "TB",
+          "rate_per_unit_usd": 23.0,
+          "suggested_value": 2.0
+        }
+      ]
+    },
+    {
+      "provider": "aws",
+      "category": "saas",
+      "service_family": "salesforce_crm",
+      "service_code": "aws.salesforce.salescloud",
+      "name": "Salesforce Sales Cloud",
+      "summary": "CRM SaaS platform with cloud-hosted sales automation and reporting.",
+      "default_region": "global",
+      "base_monthly_cost_usd": 75.0,
+      "dimensions": [
+        {
+          "key": "user_seats",
+          "label": "User seats",
+          "unit": "users",
+          "rate_per_unit_usd": 25.0,
+          "suggested_value": 20.0
+        },
+        {
+          "key": "automation_runs_1000",
+          "label": "Automation runs",
+          "unit": "1000 runs",
+          "rate_per_unit_usd": 3.5,
+          "suggested_value": 10.0
+        }
+      ]
     }
   ],
   "azure": [

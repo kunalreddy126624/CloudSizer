@@ -1,4 +1,11 @@
 import type {
+  AllocationActionRequest,
+  AllocatorRunCreateRequest,
+  AllocatorRunListResponse,
+  AllocatorRunRecord,
+  AllocatorRunResponse,
+  ApprovalActionRequest,
+  AuditLogListResponse,
   AuthLoginRequest,
   AuthLoginResponse,
   AuthenticatedUser,
@@ -13,15 +20,27 @@ import type {
   EstimationAdvisorResponse,
   LivePricingRefreshRequest,
   LivePricingRefreshResponse,
+  NoodleArchitectureOverview,
+  NoodlePipelineIntent,
+  NoodlePipelinePlanResponse,
+  NoodlePlatformBlueprint,
+  NoodleReferenceSpec,
+  PendingApprovalListResponse,
   ProviderSummary,
+  RbacLoginResponse,
+  RbacPrincipal,
   RecommendationRequest,
   RecommendationResponse,
+  ResourceAllocatorContractResponse,
+  ResourceAllocatorRequest,
+  ResourceAllocatorResponse,
   SavedEstimateCreate,
   SavedEstimateRecord,
   ServiceCategory,
   ServiceComparisonGroup,
   ServicePricingRequest,
-  ServicePricingResponse
+  ServicePricingResponse,
+  BudgetValidationActionRequest
 } from "@/lib/types";
 
 const API_BASE_URL = "/api";
@@ -80,6 +99,25 @@ export function getProviders() {
   return apiRequest<ProviderSummary[]>("/providers");
 }
 
+export function getNoodleOverview() {
+  return apiRequest<NoodleArchitectureOverview>("/noodle/overview");
+}
+
+export function getNoodleBlueprint() {
+  return apiRequest<NoodlePlatformBlueprint>("/noodle/blueprint");
+}
+
+export function listNoodleReferenceSpecs() {
+  return apiRequest<NoodleReferenceSpec[]>("/noodle/reference-specs");
+}
+
+export function planNoodlePipeline(request: NoodlePipelineIntent) {
+  return apiRequest<NoodlePipelinePlanResponse>("/noodle/pipelines/plan", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
 export function loginUser(request: AuthLoginRequest) {
   return apiRequest<AuthLoginResponse>("/auth/login", {
     method: "POST",
@@ -87,8 +125,22 @@ export function loginUser(request: AuthLoginRequest) {
   });
 }
 
+export function loginRbacUser(request: AuthLoginRequest) {
+  return apiRequest<RbacLoginResponse>("/rbac/auth/login", {
+    method: "POST",
+    body: JSON.stringify({
+      email: request.email,
+      password: request.password
+    })
+  });
+}
+
 export function getCurrentUser() {
   return apiRequest<AuthenticatedUser>("/auth/me");
+}
+
+export function getRbacPrincipal() {
+  return apiRequest<RbacPrincipal>("/rbac/auth/me");
 }
 
 export function logoutUser() {
@@ -188,4 +240,66 @@ export function refreshLivePricing(request: LivePricingRefreshRequest) {
     method: "POST",
     body: JSON.stringify(request)
   });
+}
+
+export function getAllocatorContracts() {
+  return apiRequest<ResourceAllocatorContractResponse>("/allocator/contracts");
+}
+
+export function executeAllocator(request: ResourceAllocatorRequest) {
+  return apiRequest<ResourceAllocatorResponse>("/allocator/execute", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function createAllocatorRun(request: AllocatorRunCreateRequest) {
+  return apiRequest<AllocatorRunResponse>("/allocator/runs", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function listAllocatorRuns() {
+  return apiRequest<AllocatorRunListResponse>("/allocator/runs");
+}
+
+export function getAllocatorRun(runId: number) {
+  return apiRequest<AllocatorRunRecord>(`/allocator/runs/${runId}`);
+}
+
+export function listPendingAllocatorApprovals() {
+  return apiRequest<PendingApprovalListResponse>("/allocator/approvals/pending");
+}
+
+export function approveAllocatorRun(runId: number, request: ApprovalActionRequest) {
+  return apiRequest<AllocatorRunResponse>(`/allocator/approvals/${runId}/approve`, {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function rejectAllocatorRun(runId: number, request: ApprovalActionRequest) {
+  return apiRequest<AllocatorRunResponse>(`/allocator/approvals/${runId}/reject`, {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function validateAllocatorBudget(runId: number, request: BudgetValidationActionRequest) {
+  return apiRequest<AllocatorRunResponse>(`/allocator/runs/${runId}/budget-validation`, {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function allocateAllocatorRun(runId: number, request: AllocationActionRequest) {
+  return apiRequest<AllocatorRunResponse>(`/allocator/runs/${runId}/allocate`, {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function listAllocatorAuditLogs() {
+  return apiRequest<AuditLogListResponse>("/allocator/audit-logs");
 }

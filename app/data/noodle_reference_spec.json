@@ -1,0 +1,19 @@
+{
+  "id": "hybrid-orders-analytics",
+  "name": "Hybrid Orders To Lakehouse",
+  "summary": "Unifies on-prem ERP orders with cloud clickstream and edge telemetry into a governed lakehouse data product.",
+  "deployment_scope": "hybrid_multi_cloud",
+  "target_consumers": [
+    "bi",
+    "operations_api",
+    "forecasting_model"
+  ],
+  "recommended_stack": {
+    "event_backbone": "kafka",
+    "workflow": "temporal",
+    "batch_processing": "spark",
+    "stream_processing": "flink",
+    "metadata": "datahub",
+    "lakehouse": "iceberg"
+  }
+}

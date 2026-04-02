@@ -2,6 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.models import (
+    ResourceAllocatorContractResponse,
+    ResourceAllocatorRequest,
+    ResourceAllocatorResponse,
     AuthLoginRequest,
     AuthLoginResponse,
     AuthenticatedUser,
@@ -48,6 +51,10 @@ from app.services.estimates import (
     list_saved_estimates,
 )
 from app.services.live_pricing import refresh_live_pricing
+from app.services.resource_allocator import (
+    allocate_cloud_resources,
+    get_resource_allocator_contracts,
+)
 from app.services.recommendation import build_recommendations
 from app.services.service_pricing import calculate_service_pricing
 
@@ -240,3 +247,15 @@ def recommend_architecture(
     request: RecommendationRequest,
 ) -> RecommendationResponse:
     return build_recommendations(request)
+
+
+@router.get("/allocator/contracts", response_model=ResourceAllocatorContractResponse)
+def allocator_contracts() -> ResourceAllocatorContractResponse:
+    return get_resource_allocator_contracts()
+
+
+@router.post("/allocator/execute", response_model=ResourceAllocatorResponse)
+def allocator_execute(
+    request: ResourceAllocatorRequest,
+) -> ResourceAllocatorResponse:
+    return allocate_cloud_resources(request)

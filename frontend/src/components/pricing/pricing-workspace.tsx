@@ -45,7 +45,8 @@ const categoryOptions: { value: ServiceCategory | "all"; label: string }[] = [
   { value: "networking", label: "Networking" },
   { value: "analytics", label: "Analytics" },
   { value: "ai_ml", label: "AI / ML" },
-  { value: "security", label: "Security" }
+  { value: "security", label: "Security" },
+  { value: "saas", label: "SaaS Applications" }
 ];
 
 interface DraftLineItem extends ServicePricingLineItemRequest {
@@ -307,6 +308,29 @@ export function PricingWorkspace() {
     }
   }
 
+  async function handleRefreshAllLivePricing() {
+    setRefreshingLivePricing(true);
+    setError(null);
+    setRefreshMessage(null);
+
+    try {
+      const response = await refreshLivePricing({
+        providers: providerOptions.map((option) => option.value)
+      });
+      const totalUpdated = response.results.reduce((sum, item) => sum + item.updated_services, 0);
+      const totalSkipped = response.results.reduce((sum, item) => sum + item.skipped_services, 0);
+      setRefreshMessage(
+        `All supported clouds refreshed: updated ${totalUpdated} services and skipped ${totalSkipped}.`
+      );
+      const refreshedCatalog = await getCatalogServices(provider, category === "all" ? undefined : category);
+      setCatalog(refreshedCatalog);
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "Failed to refresh live pricing for all clouds.");
+    } finally {
+      setRefreshingLivePricing(false);
+    }
+  }
+
   return (
     <Box sx={{ py: { xs: 4, md: 7 } }}>
       <Container maxWidth="xl">
@@ -394,14 +418,24 @@ export function PricingWorkspace() {
                         Add services to the estimate builder. Switching provider resets the current draft so you can
                         explore one cloud service stack at a time.
                       </Typography>
-                      <Button
-                        variant="outlined"
-                        onClick={handleRefreshLivePricing}
-                        disabled={refreshingLivePricing}
-                        sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
-                      >
-                        {refreshingLivePricing ? "Refreshing..." : "Refresh Live Pricing"}
-                      </Button>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                        <Button
+                          variant="outlined"
+                          onClick={handleRefreshLivePricing}
+                          disabled={refreshingLivePricing}
+                          sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
+                        >
+                          {refreshingLivePricing ? "Refreshing..." : `Refresh ${formatProviderLabel(provider)}`}
+                        </Button>
+                        <Button
+                          variant="contained"
+                          onClick={handleRefreshAllLivePricing}
+                          disabled={refreshingLivePricing}
+                          sx={{ alignSelf: "flex-start", bgcolor: "var(--accent)", "&:hover": { bgcolor: "#095847" } }}
+                        >
+                          {refreshingLivePricing ? "Refreshing..." : "Refresh All Clouds"}
+                        </Button>
+                      </Stack>
                     </Stack>
                     {loadingCatalog ? (
                       <Stack direction="row" spacing={1.5} alignItems="center">

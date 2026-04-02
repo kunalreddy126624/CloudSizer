@@ -241,17 +241,17 @@ const providerServices: Record<
   ArchitectureCloudProvider,
   Record<ServiceCategory | "identity" | "integration" | "observability", string>
 > = {
-  aws: { compute: "Amazon EKS", database: "Amazon RDS", storage: "Amazon S3", networking: "Application Load Balancer", analytics: "Amazon Redshift", ai_ml: "Amazon Bedrock", security: "AWS WAF", identity: "IAM Identity Center", integration: "Amazon EventBridge", observability: "Amazon CloudWatch" },
-  azure: { compute: "Azure Kubernetes Service", database: "Azure SQL Database", storage: "Azure Blob Storage", networking: "Azure Front Door", analytics: "Azure Synapse", ai_ml: "Azure OpenAI Service", security: "Azure Firewall", identity: "Microsoft Entra ID", integration: "Azure Service Bus", observability: "Azure Monitor" },
-  gcp: { compute: "Google Kubernetes Engine", database: "Cloud SQL", storage: "Cloud Storage", networking: "Cloud Load Balancing", analytics: "BigQuery", ai_ml: "Vertex AI", security: "Cloud Armor", identity: "Cloud Identity", integration: "Pub/Sub", observability: "Cloud Monitoring" },
-  oracle: { compute: "Oracle Kubernetes Engine", database: "Autonomous Database", storage: "OCI Object Storage", networking: "OCI Load Balancer", analytics: "Oracle Analytics Cloud", ai_ml: "OCI Generative AI", security: "OCI Web Application Firewall", identity: "OCI IAM", integration: "OCI Streaming", observability: "OCI Logging and Monitoring" },
-  alibaba: { compute: "Alibaba ACK", database: "ApsaraDB RDS", storage: "Alibaba OSS", networking: "Server Load Balancer", analytics: "MaxCompute", ai_ml: "PAI", security: "Alibaba Cloud Firewall", identity: "Resource Access Management", integration: "Alibaba EventBridge", observability: "CloudMonitor" },
-  ibm: { compute: "Red Hat OpenShift on IBM Cloud", database: "Db2 on Cloud", storage: "IBM Cloud Object Storage", networking: "IBM Cloud Load Balancer", analytics: "watsonx.data", ai_ml: "watsonx.ai", security: "IBM Cloud Internet Services", identity: "IBM Cloud IAM", integration: "Event Streams", observability: "IBM Cloud Monitoring" },
-  tencent: { compute: "Tencent Kubernetes Engine", database: "TencentDB", storage: "Tencent Cloud Object Storage", networking: "Cloud Load Balancer", analytics: "Tencent Data Warehouse", ai_ml: "Tencent Hunyuan", security: "Tencent Cloud Firewall", identity: "Cloud Access Management", integration: "Tencent EventBridge", observability: "Tencent Cloud Monitor" },
-  digitalocean: { compute: "DigitalOcean Kubernetes", database: "Managed PostgreSQL", storage: "Spaces Object Storage", networking: "DigitalOcean Load Balancer", analytics: "Managed Kafka", ai_ml: "DigitalOcean GenAI Platform", security: "Cloud Firewalls", identity: "DigitalOcean IAM", integration: "Functions and Queues", observability: "DigitalOcean Monitoring" },
-  akamai: { compute: "Akamai Kubernetes Engine", database: "Managed Databases", storage: "Akamai Object Storage", networking: "Akamai Application Load Balancer", analytics: "DataStream", ai_ml: "Akamai AI Inference", security: "App and API Protector", identity: "Akamai IAM", integration: "Event Center", observability: "Akamai Cloud Monitor" },
-  ovhcloud: { compute: "OVHcloud Managed Kubernetes", database: "OVHcloud Managed Databases", storage: "OVHcloud Object Storage", networking: "OVHcloud Load Balancer", analytics: "OVHcloud Data Platform", ai_ml: "OVHcloud AI Endpoints", security: "OVHcloud Network Firewall", identity: "OVHcloud IAM", integration: "OVHcloud Event Streams", observability: "OVHcloud Metrics" },
-  cloudflare: { compute: "Cloudflare Workers", database: "Cloudflare D1", storage: "Cloudflare R2", networking: "Cloudflare Load Balancer", analytics: "Cloudflare Analytics Engine", ai_ml: "Workers AI", security: "Cloudflare WAF", identity: "Cloudflare Access", integration: "Cloudflare Queues", observability: "Cloudflare Analytics" }
+  aws: { compute: "Amazon EKS", database: "Amazon RDS", storage: "Amazon S3", networking: "Application Load Balancer", analytics: "Amazon Redshift", ai_ml: "Amazon Bedrock", security: "AWS WAF", saas: "Snowflake + Salesforce", identity: "IAM Identity Center", integration: "Amazon EventBridge", observability: "Amazon CloudWatch" },
+  azure: { compute: "Azure Kubernetes Service", database: "Azure SQL Database", storage: "Azure Blob Storage", networking: "Azure Front Door", analytics: "Azure Synapse", ai_ml: "Azure OpenAI Service", security: "Azure Firewall", saas: "Snowflake + Salesforce", identity: "Microsoft Entra ID", integration: "Azure Service Bus", observability: "Azure Monitor" },
+  gcp: { compute: "Google Kubernetes Engine", database: "Cloud SQL", storage: "Cloud Storage", networking: "Cloud Load Balancing", analytics: "BigQuery", ai_ml: "Vertex AI", security: "Cloud Armor", saas: "Snowflake + Salesforce", identity: "Cloud Identity", integration: "Pub/Sub", observability: "Cloud Monitoring" },
+  oracle: { compute: "Oracle Kubernetes Engine", database: "Autonomous Database", storage: "OCI Object Storage", networking: "OCI Load Balancer", analytics: "Oracle Analytics Cloud", ai_ml: "OCI Generative AI", security: "OCI Web Application Firewall", saas: "Snowflake + Salesforce", identity: "OCI IAM", integration: "OCI Streaming", observability: "OCI Logging and Monitoring" },
+  alibaba: { compute: "Alibaba ACK", database: "ApsaraDB RDS", storage: "Alibaba OSS", networking: "Server Load Balancer", analytics: "MaxCompute", ai_ml: "PAI", security: "Alibaba Cloud Firewall", saas: "Snowflake + Salesforce", identity: "Resource Access Management", integration: "Alibaba EventBridge", observability: "CloudMonitor" },
+  ibm: { compute: "Red Hat OpenShift on IBM Cloud", database: "Db2 on Cloud", storage: "IBM Cloud Object Storage", networking: "IBM Cloud Load Balancer", analytics: "watsonx.data", ai_ml: "watsonx.ai", security: "IBM Cloud Internet Services", saas: "Snowflake + Salesforce", identity: "IBM Cloud IAM", integration: "Event Streams", observability: "IBM Cloud Monitoring" },
+  tencent: { compute: "Tencent Kubernetes Engine", database: "TencentDB", storage: "Tencent Cloud Object Storage", networking: "Cloud Load Balancer", analytics: "Tencent Data Warehouse", ai_ml: "Tencent Hunyuan", security: "Tencent Cloud Firewall", saas: "Snowflake + Salesforce", identity: "Cloud Access Management", integration: "Tencent EventBridge", observability: "Tencent Cloud Monitor" },
+  digitalocean: { compute: "DigitalOcean Kubernetes", database: "Managed PostgreSQL", storage: "Spaces Object Storage", networking: "DigitalOcean Load Balancer", analytics: "Managed Kafka", ai_ml: "DigitalOcean GenAI Platform", security: "Cloud Firewalls", saas: "Snowflake + Salesforce", identity: "DigitalOcean IAM", integration: "Functions and Queues", observability: "DigitalOcean Monitoring" },
+  akamai: { compute: "Akamai Kubernetes Engine", database: "Managed Databases", storage: "Akamai Object Storage", networking: "Akamai Application Load Balancer", analytics: "DataStream", ai_ml: "Akamai AI Inference", security: "App and API Protector", saas: "Snowflake + Salesforce", identity: "Akamai IAM", integration: "Event Center", observability: "Akamai Cloud Monitor" },
+  ovhcloud: { compute: "OVHcloud Managed Kubernetes", database: "OVHcloud Managed Databases", storage: "OVHcloud Object Storage", networking: "OVHcloud Load Balancer", analytics: "OVHcloud Data Platform", ai_ml: "OVHcloud AI Endpoints", security: "OVHcloud Network Firewall", saas: "Snowflake + Salesforce", identity: "OVHcloud IAM", integration: "OVHcloud Event Streams", observability: "OVHcloud Metrics" },
+  cloudflare: { compute: "Cloudflare Workers", database: "Cloudflare D1", storage: "Cloudflare R2", networking: "Cloudflare Load Balancer", analytics: "Cloudflare Analytics Engine", ai_ml: "Workers AI", security: "Cloudflare WAF", saas: "Snowflake + Salesforce", identity: "Cloudflare Access", integration: "Cloudflare Queues", observability: "Cloudflare Analytics" }
 };
 
 function pattern(
@@ -443,16 +443,16 @@ function connect(edges: DiagramEdge[], from: DiagramNode, to: DiagramNode, label
 }
 
 export function detectProviders(prompt: string, selectedProviders: ArchitectureCloudProvider[]) {
+  if (selectedProviders.length) {
+    return Array.from(new Set(selectedProviders));
+  }
+
   const normalized = prompt.toLowerCase();
   const mentioned = architectureProviderOptions.filter((provider) =>
     providerAliases[provider].some((alias) => normalized.includes(alias))
   );
   if (mentioned.length) {
     return mentioned;
-  }
-
-  if (selectedProviders.length) {
-    return selectedProviders;
   }
 
   return DEFAULT_ARCHITECT_PROVIDERS;
@@ -504,12 +504,25 @@ function inferFeatures(prompt: string, request: RecommendationRequest | null, pr
 }
 
 function ensureProviders(pattern: ArchitecturePatternId, selectedProviders: ArchitectureCloudProvider[]) {
-  const detected = selectedProviders.length ? selectedProviders : DEFAULT_ARCHITECT_PROVIDERS;
+  const detected = Array.from(new Set(selectedProviders.length ? selectedProviders : DEFAULT_ARCHITECT_PROVIDERS));
   if (pattern === "multi_cloud") {
-    return Array.from(new Set([...detected, "aws", "azure", "gcp"])).slice(0, 3) as ArchitectureCloudProvider[];
+    return detected as ArchitectureCloudProvider[];
   }
 
   return [detected[0] ?? DEFAULT_ARCHITECT_PROVIDERS[0]];
+}
+
+function resolveArchitecturePattern(
+  prompt: string,
+  selectedPattern: ArchitecturePatternId | undefined,
+  providers: ArchitectureCloudProvider[]
+) {
+  const detectedPattern = selectedPattern ?? detectArchitecturePattern(prompt);
+  if (providers.length > 1 && detectedPattern !== "multi_cloud") {
+    return "multi_cloud";
+  }
+
+  return detectedPattern;
 }
 
 export function getProviderLaneWidth(providerCount: number) {
@@ -881,6 +894,115 @@ function applyScenarioToDiagram(plan: PatternDiagramData, scenarioId: Architectu
   return plan;
 }
 
+function getNetworkBucket(category: DiagramCategory) {
+  if (category === "users" || category === "networking" || category === "security" || category === "identity") {
+    return "edge";
+  }
+
+  if (category === "database" || category === "storage" || category === "analytics" || category === "ai_ml") {
+    return "data";
+  }
+
+  if (category === "observability") {
+    return "ops";
+  }
+
+  return "app";
+}
+
+function buildWorkflowLevels(nodes: DiagramNode[], edges: DiagramEdge[]) {
+  const indegree = new Map(nodes.map((node) => [node.id, 0]));
+  const adjacency = new Map(nodes.map((node) => [node.id, [] as string[]]));
+  const level = new Map(nodes.map((node) => [node.id, 0]));
+
+  for (const edge of edges) {
+    adjacency.get(edge.from)?.push(edge.to);
+    indegree.set(edge.to, (indegree.get(edge.to) ?? 0) + 1);
+  }
+
+  const queue = nodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id);
+
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    const currentLevel = level.get(nodeId) ?? 0;
+
+    for (const targetId of adjacency.get(nodeId) ?? []) {
+      level.set(targetId, Math.max(level.get(targetId) ?? 0, currentLevel + 1));
+      indegree.set(targetId, (indegree.get(targetId) ?? 0) - 1);
+      if ((indegree.get(targetId) ?? 0) === 0) {
+        queue.push(targetId);
+      }
+    }
+  }
+
+  return level;
+}
+
+function applyDiagramStyleLayout(
+  plan: PatternDiagramData,
+  providers: ArchitectureCloudProvider[],
+  diagramStyle: DiagramStyle,
+  patternId: ArchitecturePatternId
+) {
+  const nodes = plan.nodes.map((node) => ({ ...node }));
+  const laneWidth = getProviderLaneWidth(providers.length);
+  const providerIndex = new Map(providers.map((provider, index) => [provider, index]));
+
+  if (diagramStyle === "network") {
+    const bucketRows = { edge: 96, app: 240, data: 486, ops: 632 };
+    const bucketCounts = new Map<string, number>();
+
+    for (const node of nodes) {
+      const bucket = getNetworkBucket(node.category);
+      const key = `${node.provider}:${bucket}`;
+      const index = bucketCounts.get(key) ?? 0;
+      bucketCounts.set(key, index + 1);
+
+      const baseX =
+        node.provider === "shared"
+          ? 48
+          : PROVIDER_LANE_START + (providerIndex.get(node.provider as ArchitectureCloudProvider) ?? 0) * laneWidth + 28;
+      const widthBudget = node.provider === "shared" ? 250 : Math.max(220, laneWidth - 56);
+      const columns = Math.max(1, Math.floor(widthBudget / 250));
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+
+      node.x = baseX + column * 226;
+      node.y = bucketRows[bucket] + row * 94;
+    }
+
+    return { ...plan, nodes };
+  }
+
+  if (diagramStyle === "workflow") {
+    const levelMap = buildWorkflowLevels(nodes, plan.edges);
+    const bucketRows = { edge: 104, app: 248, data: 458, ops: 612 };
+    const levelCounts = new Map<string, number>();
+
+    for (const node of nodes) {
+      const level = levelMap.get(node.id) ?? 0;
+      const bucket =
+        patternId === "microservices" && node.subtitle === "Events across domains"
+          ? "ops"
+          : getNetworkBucket(node.category);
+      const key = `${node.provider}:${bucket}:${level}`;
+      const index = levelCounts.get(key) ?? 0;
+      levelCounts.set(key, index + 1);
+
+      const baseX =
+        node.provider === "shared"
+          ? 52
+          : PROVIDER_LANE_START + (providerIndex.get(node.provider as ArchitectureCloudProvider) ?? 0) * laneWidth + 36;
+      node.x = baseX + level * 188;
+      node.y = bucketRows[bucket] + index * 92;
+    }
+
+    return { ...plan, nodes };
+  }
+
+  return { ...plan, nodes };
+}
+
 export function buildArchitecturePlan(
   prompt: string,
   selectedProviders: ArchitectureCloudProvider[],
@@ -889,13 +1011,19 @@ export function buildArchitecturePlan(
   selectedPattern?: ArchitecturePatternId,
   selectedScenario?: ArchitectureScenarioId
 ): DiagramPlan {
-  const patternId = selectedPattern ?? detectArchitecturePattern(prompt);
+  const detectedProviders = detectProviders(prompt, selectedProviders);
+  const patternId = resolveArchitecturePattern(prompt, selectedPattern, detectedProviders);
   const scenarioId = selectedScenario ?? detectArchitectureScenario(prompt);
-  const providers = ensureProviders(patternId, detectProviders(prompt, selectedProviders));
+  const providers = ensureProviders(patternId, detectedProviders);
   const definition = architecturePatternMap[patternId];
   const scenario = architectureScenarioMap[scenarioId];
   const features = inferFeatures(prompt, request, providers.length);
-  const base = applyScenarioToDiagram(buildPatternDiagram(patternId, providers, features), scenarioId);
+  const base = applyDiagramStyleLayout(
+    applyScenarioToDiagram(buildPatternDiagram(patternId, providers, features), scenarioId),
+    providers,
+    diagramStyle,
+    patternId
+  );
   return {
     ...base,
     providers,
@@ -932,6 +1060,14 @@ export function findNextPosition(nodeCount: number) {
   return { x: 380 + column * 240, y: 620 + row * 92 };
 }
 
+export function getArchitectureCanvasWidth(plan: DiagramPlan) {
+  const laneWidth = getProviderLaneWidth(plan.providers.length);
+  const providerWidth = PROVIDER_LANE_START + plan.providers.length * laneWidth + 60;
+  const nodeWidth = plan.nodes.length ? Math.max(...plan.nodes.map((node) => node.x + node.width)) + 64 : 0;
+
+  return Math.max(CANVAS_WIDTH, providerWidth, nodeWidth);
+}
+
 export function buildManualNodeTitle(provider: DiagramProvider, category: DiagramCategory, title: string) {
   if (title.trim()) {
     return title.trim();
@@ -951,7 +1087,7 @@ export function buildCanvasZones(
   zoneOverrides: Record<string, Partial<CanvasZone>> = {}
 ) {
   const laneWidth = getProviderLaneWidth(plan.providers.length);
-  const canvasWidth = Math.max(CANVAS_WIDTH, PROVIDER_LANE_START + plan.providers.length * laneWidth + 60);
+  const canvasWidth = getArchitectureCanvasWidth(plan);
   const dataZoneCategories = new Set<DiagramCategory>(["database", "storage", "analytics", "ai_ml"]);
   const zonePadding = { left: 18, right: 18, top: 54, bottom: 22 };
   const expandZoneToFitNodes = (zone: CanvasZone, nodes: DiagramNode[]) => {
@@ -964,10 +1100,10 @@ export function buildCanvasZones(
     const maxX = Math.max(...nodes.map((node) => node.x + node.width)) + zonePadding.right;
     const maxY = Math.max(...nodes.map((node) => node.y + node.height)) + zonePadding.bottom;
 
-    const x = Math.max(16, Math.min(zone.x, minX));
-    const y = Math.max(72, Math.min(zone.y, minY));
-    const width = Math.min(canvasWidth - x - 16, Math.max(zone.width, maxX - x));
-    const height = Math.min(CANVAS_HEIGHT - y - 20, Math.max(zone.height, maxY - y));
+    const x = Math.max(16, minX);
+    const y = Math.max(72, minY);
+    const width = Math.min(canvasWidth - x - 16, Math.max(MIN_ZONE_WIDTH, maxX - x));
+    const height = Math.min(CANVAS_HEIGHT - y - 20, Math.max(MIN_ZONE_HEIGHT, maxY - y));
 
     return {
       ...zone,
@@ -979,6 +1115,10 @@ export function buildCanvasZones(
   };
   const isDataZoneNode = (node: DiagramNode) => {
     if (dataZoneCategories.has(node.category)) {
+      return true;
+    }
+
+    if (plan.pattern === "n_tier" && node.category === "integration" && node.x >= 600) {
       return true;
     }
 
@@ -1048,7 +1188,7 @@ export function buildCanvasLanes(
   laneOverrides: Record<string, Partial<CanvasLane>> = {}
 ) {
   const laneWidth = getProviderLaneWidth(plan.providers.length);
-  const canvasWidth = Math.max(CANVAS_WIDTH, PROVIDER_LANE_START + plan.providers.length * laneWidth + 60);
+  const canvasWidth = getArchitectureCanvasWidth(plan);
   const lanePadding = { left: 24, right: 24, top: 56, bottom: 20 };
   const expandLaneToFitNodes = (lane: CanvasLane, nodes: DiagramNode[]) => {
     if (nodes.length === 0) {
@@ -1082,6 +1222,8 @@ export function buildCanvasLanes(
       text: "#17315c"
     }
   ];
+  const sharedNodes = plan.nodes.filter((node) => node.provider === "shared");
+  lanes[0] = expandLaneToFitNodes(lanes[0], sharedNodes);
 
   plan.providers.forEach((provider, index) => {
     const laneX = PROVIDER_LANE_START + index * laneWidth;

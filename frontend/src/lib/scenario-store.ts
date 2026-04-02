@@ -34,6 +34,8 @@ export interface PendingArchitectScenario {
 }
 
 export interface ArchitectCanvasDraft {
+  id?: string;
+  name?: string;
   prompt: string;
   selected_providers: string[];
   diagram_style?: string;
@@ -44,11 +46,17 @@ export interface ArchitectCanvasDraft {
   saved_at: string;
 }
 
+export interface SavedArchitectureDraft extends ArchitectCanvasDraft {
+  id: string;
+  name: string;
+}
+
 const SAVED_SCENARIOS_KEY = "cloudsizer.saved-scenarios";
 const HISTORY_KEY = "cloudsizer.comparison-history";
 const PENDING_ESTIMATOR_SCENARIO_KEY = "cloudsizer.pending-estimator-scenario";
 const PENDING_ARCHITECT_SCENARIO_KEY = "cloudsizer.pending-architect-scenario";
 const ARCHITECT_CANVAS_DRAFT_KEY = "cloudsizer.architect-canvas-draft";
+const SAVED_ARCHITECTURES_KEY = "cloudsizer.saved-architectures";
 
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) {
@@ -121,4 +129,23 @@ export function storeArchitectCanvasDraft(draft: ArchitectCanvasDraft) {
 
 export function clearArchitectCanvasDraft() {
   window.localStorage.removeItem(ARCHITECT_CANVAS_DRAFT_KEY);
+}
+
+export function loadSavedArchitectureDrafts() {
+  return parseJson<SavedArchitectureDraft[]>(window.localStorage.getItem(SAVED_ARCHITECTURES_KEY), []);
+}
+
+export function storeSavedArchitectureDrafts(drafts: SavedArchitectureDraft[]) {
+  window.localStorage.setItem(SAVED_ARCHITECTURES_KEY, JSON.stringify(drafts));
+}
+
+export function upsertSavedArchitectureDraft(draft: SavedArchitectureDraft) {
+  const drafts = loadSavedArchitectureDrafts();
+  const nextDrafts = [draft, ...drafts.filter((entry) => entry.id !== draft.id)];
+  storeSavedArchitectureDrafts(nextDrafts);
+}
+
+export function deleteSavedArchitectureDraft(draftId: string) {
+  const drafts = loadSavedArchitectureDrafts();
+  storeSavedArchitectureDrafts(drafts.filter((draft) => draft.id !== draftId));
 }

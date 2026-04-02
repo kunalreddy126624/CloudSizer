@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -26,7 +26,8 @@ import {
   loadArchitectCanvasDraft,
   clearPendingArchitectScenario,
   loadPendingArchitectScenario,
-  storeArchitectCanvasDraft
+  storeArchitectCanvasDraft,
+  upsertSavedArchitectureDraft
 } from "@/lib/scenario-store";
 import { ArchitectFlowCanvas, type CanvasSelection } from "@/components/architect/architect-flow-canvas";
 import {
@@ -61,6 +62,7 @@ import {
   detectArchitectureScenario,
   findNextPosition,
   getCategoryLabel,
+  getArchitectureCanvasWidth,
   getLegendItems,
   getProviderLaneWidth,
   providerLabels,
@@ -71,6 +73,7 @@ import {
   type CanvasLane,
   type CanvasZone,
   type DiagramCategory,
+  type DiagramEdge,
   type DiagramNode,
   type DiagramPlan,
   type DiagramProvider,
@@ -82,12 +85,30 @@ interface ArchitectWorkspaceProps {
   canvasOnly?: boolean;
 }
 
+interface ArchitectHistorySnapshot {
+  prompt: string;
+  selectedPattern: ArchitecturePatternId;
+  selectedScenario: ArchitectureScenarioId;
+  selectedProviders: ArchitectureCloudProvider[];
+  requestContext: RecommendationRequest | null;
+  plan: DiagramPlan;
+  diagramStyle: DiagramStyle;
+  zoneOverrides: Record<string, Partial<CanvasZone>>;
+  laneOverrides: Record<string, Partial<CanvasLane>>;
+}
+
+interface ArchitectHistoryState {
+  past: ArchitectHistorySnapshot[];
+  future: ArchitectHistorySnapshot[];
+}
+
 const emptyCanvasSelection: CanvasSelection = {
   nodeIds: [],
   edgeIds: [],
   zoneIds: [],
   laneIds: []
 };
+const MAX_HISTORY_ENTRIES = 80;
 
 function areSelectionsEqual(left: CanvasSelection, right: CanvasSelection) {
   return (
@@ -111,6 +132,75 @@ function normalizeSelection(selection: CanvasSelection): CanvasSelection {
   };
 }
 
+function isEditableTarget(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.tagName === "SELECT" ||
+      target.closest("[contenteditable='true']") !== null)
+  );
+}
+
+function upsertEdgeConnection(
+  edges: DiagramEdge[],
+  connection: { from: string; to: string },
+  replacementEdge?: DiagramEdge
+) {
+  const remainingEdges = replacementEdge ? edges.filter((edge) => edge.id !== replacementEdge.id) : edges;
+
+  const existingBidirectional = remainingEdges.find(
+    (edge) =>
+      ((edge.from === connection.from && edge.to === connection.to) ||
+        (edge.from === connection.to && edge.to === connection.from)) &&
+      edge.bidirectional
+  );
+
+  if (existingBidirectional) {
+    return { edges: remainingEdges, selectedEdgeId: existingBidirectional.id };
+  }
+
+  const directEdge = remainingEdges.find(
+    (edge) => edge.from === connection.from && edge.to === connection.to
+  );
+
+  if (directEdge) {
+    return { edges: remainingEdges, selectedEdgeId: directEdge.id };
+  }
+
+  const reverseEdge = remainingEdges.find(
+    (edge) => edge.from === connection.to && edge.to === connection.from
+  );
+
+  if (reverseEdge) {
+    return {
+      edges: remainingEdges.map((edge) =>
+        edge.id === reverseEdge.id ? { ...edge, bidirectional: true } : edge
+      ),
+      selectedEdgeId: reverseEdge.id
+    };
+  }
+
+  const nextEdge: DiagramEdge = replacementEdge
+    ? {
+        ...replacementEdge,
+        from: connection.from,
+        to: connection.to,
+        bidirectional: false
+      }
+    : {
+        id: createId("edge"),
+        from: connection.from,
+        to: connection.to
+      };
+
+  return {
+    edges: [...remainingEdges, nextEdge],
+    selectedEdgeId: nextEdge.id
+  };
+}
+
 export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspaceProps) {
   const router = useRouter();
   const [prompt, setPrompt] = useState(quickPrompts[0]);
@@ -131,6 +221,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   const [agentMessage, setAgentMessage] = useState(buildAgentMessage(plan));
   const [diagramStyle, setDiagramStyle] = useState<DiagramStyle>("reference");
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [selection, setSelection] = useState<CanvasSelection>(emptyCanvasSelection);
   const [connectFromId, setConnectFromId] = useState<string | null>(null);
   const [manualProvider, setManualProvider] = useState<DiagramProvider>("shared");
@@ -139,30 +230,91 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   const [manualSubtitle, setManualSubtitle] = useState("");
   const [zoneOverrides, setZoneOverrides] = useState<Record<string, Partial<CanvasZone>>>({});
   const [laneOverrides, setLaneOverrides] = useState<Record<string, Partial<CanvasLane>>>({});
+  const [historyState, setHistoryState] = useState<ArchitectHistoryState>({ past: [], future: [] });
+  const [historyHydrated, setHistoryHydrated] = useState(false);
   const [isGenerating, startGenerating] = useTransition();
+  const historySnapshotRef = useRef<ArchitectHistorySnapshot | null>(null);
+  const historySignatureRef = useRef<string>("");
+  const isApplyingHistoryRef = useRef(false);
+
+  const currentHistorySnapshot = useMemo<ArchitectHistorySnapshot>(
+    () => ({
+      prompt,
+      selectedPattern,
+      selectedScenario,
+      selectedProviders,
+      requestContext,
+      plan,
+      diagramStyle,
+      zoneOverrides,
+      laneOverrides
+    }),
+    [
+      diagramStyle,
+      laneOverrides,
+      plan,
+      prompt,
+      requestContext,
+      selectedPattern,
+      selectedProviders,
+      selectedScenario,
+      zoneOverrides
+    ]
+  );
+  const currentHistorySignature = useMemo(
+    () => JSON.stringify(currentHistorySnapshot),
+    [currentHistorySnapshot]
+  );
+
+  const applyHistorySnapshot = useCallback((snapshot: ArchitectHistorySnapshot) => {
+    setPrompt(snapshot.prompt);
+    setSelectedPattern(snapshot.selectedPattern);
+    setSelectedScenario(snapshot.selectedScenario);
+    setSelectedProviders(snapshot.selectedProviders);
+    setRequestContext(snapshot.requestContext);
+    setPlan(snapshot.plan);
+    setDiagramStyle(snapshot.diagramStyle);
+    setZoneOverrides(snapshot.zoneOverrides);
+    setLaneOverrides(snapshot.laneOverrides);
+    setAgentMessage(buildAgentMessage(snapshot.plan));
+    setImportMessage(null);
+    setSaveMessage(null);
+    setConnectFromId(null);
+    setSelection(emptyCanvasSelection);
+  }, []);
+
+  useEffect(() => {
+    if (!canvasOnly) {
+      return;
+    }
+
+    const draft = loadArchitectCanvasDraft();
+    if (!draft) {
+      setHistoryHydrated(true);
+      return;
+    }
+
+    setPrompt(draft.prompt);
+    setSelectedPattern((draft.plan as unknown as DiagramPlan).pattern ?? architecturePatterns[0].id);
+    setSelectedScenario((draft.plan as unknown as DiagramPlan).scenario ?? architectureScenarios[0].id);
+    setSelectedProviders(draft.selected_providers as ArchitectureCloudProvider[]);
+    setDiagramStyle((draft.diagram_style as DiagramStyle | undefined) ?? "reference");
+    setRequestContext(draft.request_context);
+    setPlan(draft.plan as unknown as DiagramPlan);
+    setZoneOverrides((draft.zone_overrides as Record<string, Partial<CanvasZone>> | undefined) ?? {});
+    setLaneOverrides((draft.lane_overrides as Record<string, Partial<CanvasLane>> | undefined) ?? {});
+    setAgentMessage(buildAgentMessage(draft.plan as unknown as DiagramPlan));
+    setHistoryHydrated(true);
+  }, [canvasOnly]);
 
   useEffect(() => {
     if (canvasOnly) {
-      const draft = loadArchitectCanvasDraft();
-      if (!draft) {
-        return;
-      }
-
-      setPrompt(draft.prompt);
-      setSelectedPattern((draft.plan as unknown as DiagramPlan).pattern ?? architecturePatterns[0].id);
-      setSelectedScenario((draft.plan as unknown as DiagramPlan).scenario ?? architectureScenarios[0].id);
-      setSelectedProviders(draft.selected_providers as ArchitectureCloudProvider[]);
-      setDiagramStyle((draft.diagram_style as DiagramStyle | undefined) ?? "reference");
-      setRequestContext(draft.request_context);
-      setPlan(draft.plan as unknown as DiagramPlan);
-      setZoneOverrides((draft.zone_overrides as Record<string, Partial<CanvasZone>> | undefined) ?? {});
-      setLaneOverrides((draft.lane_overrides as Record<string, Partial<CanvasLane>> | undefined) ?? {});
-      setAgentMessage(buildAgentMessage(draft.plan as unknown as DiagramPlan));
       return;
     }
 
     const pendingScenario = loadPendingArchitectScenario();
     if (!pendingScenario) {
+      setHistoryHydrated(true);
       return;
     }
 
@@ -180,7 +332,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     );
 
     setPrompt(nextPrompt);
-    setSelectedPattern(nextPattern);
+    setSelectedPattern(nextPlan.pattern);
     setSelectedScenario(nextScenario);
     setSelectedProviders(nextPlan.providers);
     setRequestContext(pendingScenario.request);
@@ -190,7 +342,35 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setAgentMessage(buildAgentMessage(nextPlan));
     setImportMessage(`Imported "${pendingScenario.name}" into Agent Architect.`);
     clearPendingArchitectScenario();
+    setHistoryHydrated(true);
   }, [canvasOnly, diagramStyle, selectedPattern, selectedScenario]);
+
+  useEffect(() => {
+    if (!canvasOnly || !historyHydrated) {
+      return;
+    }
+
+    storeArchitectCanvasDraft({
+      prompt,
+      selected_providers: selectedProviders,
+      diagram_style: diagramStyle,
+      request_context: requestContext,
+      plan: plan as unknown as Record<string, unknown>,
+      zone_overrides: zoneOverrides,
+      lane_overrides: laneOverrides,
+      saved_at: new Date().toISOString()
+    });
+  }, [
+    canvasOnly,
+    diagramStyle,
+    historyHydrated,
+    laneOverrides,
+    plan,
+    prompt,
+    requestContext,
+    selectedProviders,
+    zoneOverrides
+  ]);
 
   const nodeLookup = useMemo(() => {
     return plan.nodes.reduce<Record<string, DiagramNode>>((accumulator, node) => {
@@ -206,7 +386,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   const singleSelectedNodeId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : null;
   const singleSelectedEdgeId = selectedEdgeIds.length === 1 ? selectedEdgeIds[0] : null;
   const laneWidth = getProviderLaneWidth(plan.providers.length);
-  const canvasWidth = Math.max(CANVAS_WIDTH, PROVIDER_LANE_START + plan.providers.length * laneWidth + 60);
+  const canvasWidth = getArchitectureCanvasWidth(plan);
   const canvasLanes = useMemo(() => buildCanvasLanes(plan, diagramStyle), [diagramStyle, plan]);
   const displayedCanvasLanes = useMemo(
     () => buildCanvasLanes(plan, diagramStyle, laneOverrides),
@@ -246,6 +426,36 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   const clearSelection = useCallback(() => {
     applySelection(emptyCanvasSelection);
   }, [applySelection]);
+  const canUndo = historyState.past.length > 0;
+  const canRedo = historyState.future.length > 0;
+
+  const handleUndo = useCallback(() => {
+    if (!historyState.past.length) {
+      return;
+    }
+
+    const previousSnapshot = historyState.past[historyState.past.length - 1];
+    isApplyingHistoryRef.current = true;
+    applyHistorySnapshot(previousSnapshot);
+    setHistoryState({
+      past: historyState.past.slice(0, -1),
+      future: [currentHistorySnapshot, ...historyState.future].slice(0, MAX_HISTORY_ENTRIES)
+    });
+  }, [applyHistorySnapshot, currentHistorySnapshot, historyState]);
+
+  const handleRedo = useCallback(() => {
+    if (!historyState.future.length) {
+      return;
+    }
+
+    const [nextSnapshot, ...remainingFuture] = historyState.future;
+    isApplyingHistoryRef.current = true;
+    applyHistorySnapshot(nextSnapshot);
+    setHistoryState({
+      past: [...historyState.past, currentHistorySnapshot].slice(-MAX_HISTORY_ENTRIES),
+      future: remainingFuture
+    });
+  }, [applyHistorySnapshot, currentHistorySnapshot, historyState]);
 
   const clampCanvasLayout = useCallback((x: number, y: number, width: number, height: number) => {
     return {
@@ -253,6 +463,213 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
       y: Math.min(Math.max(y, 16), CANVAS_HEIGHT - height - 16)
     };
   }, [canvasWidth]);
+
+  useEffect(() => {
+    if (!historyHydrated) {
+      return;
+    }
+
+    if (isApplyingHistoryRef.current) {
+      historySnapshotRef.current = currentHistorySnapshot;
+      historySignatureRef.current = currentHistorySignature;
+      isApplyingHistoryRef.current = false;
+      return;
+    }
+
+    if (!historySnapshotRef.current) {
+      historySnapshotRef.current = currentHistorySnapshot;
+      historySignatureRef.current = currentHistorySignature;
+      return;
+    }
+
+    if (historySignatureRef.current === currentHistorySignature) {
+      return;
+    }
+
+    const previousSnapshot = historySnapshotRef.current;
+    historySnapshotRef.current = currentHistorySnapshot;
+    historySignatureRef.current = currentHistorySignature;
+
+    setHistoryState((current) => ({
+      past: [...current.past, previousSnapshot].slice(-MAX_HISTORY_ENTRIES),
+      future: []
+    }));
+  }, [currentHistorySignature, currentHistorySnapshot, historyHydrated]);
+
+  const nudgeSelection = useCallback((deltaX: number, deltaY: number) => {
+    if (!selectedNodeIds.length && !selectedZoneIds.length && !selectedLaneIds.length) {
+      return;
+    }
+
+    if (selectedNodeIds.length) {
+      const nodeIdSet = new Set(selectedNodeIds);
+      setPlan((current) => ({
+        ...current,
+        nodes: current.nodes.map((node) =>
+          nodeIdSet.has(node.id)
+            ? {
+                ...node,
+                ...clampCanvasLayout(node.x + deltaX, node.y + deltaY, node.width, node.height)
+              }
+            : node
+        )
+      }));
+    }
+
+    if (selectedZoneIds.length) {
+      const zoneLookup = new Map(displayedCanvasZones.map((zone) => [zone.id, zone]));
+      setZoneOverrides((current) => {
+        const nextOverrides = { ...current };
+
+        for (const zoneId of selectedZoneIds) {
+          const zone = zoneLookup.get(zoneId);
+          if (!zone) {
+            continue;
+          }
+
+          const position = clampCanvasLayout(zone.x + deltaX, zone.y + deltaY, zone.width, zone.height);
+          nextOverrides[zoneId] = {
+            ...(current[zoneId] ?? {}),
+            ...position,
+            width: zone.width,
+            height: zone.height
+          };
+        }
+
+        return nextOverrides;
+      });
+    }
+
+    if (selectedLaneIds.length) {
+      const laneLookup = new Map(displayedCanvasLanes.map((lane) => [lane.id, lane]));
+      setLaneOverrides((current) => {
+        const nextOverrides = { ...current };
+
+        for (const laneId of selectedLaneIds) {
+          const lane = laneLookup.get(laneId);
+          if (!lane) {
+            continue;
+          }
+
+          const position = clampCanvasLayout(lane.x + deltaX, lane.y + deltaY, lane.width, lane.height);
+          nextOverrides[laneId] = {
+            ...(current[laneId] ?? {}),
+            ...position,
+            width: lane.width,
+            height: lane.height
+          };
+        }
+
+        return nextOverrides;
+      });
+    }
+  }, [
+    clampCanvasLayout,
+    displayedCanvasLanes,
+    displayedCanvasZones,
+    selectedLaneIds,
+    selectedNodeIds,
+    selectedZoneIds
+  ]);
+
+  const persistArchitectureDraft = useCallback(() => {
+    storeArchitectCanvasDraft({
+      prompt,
+      selected_providers: selectedProviders,
+      diagram_style: diagramStyle,
+      request_context: requestContext,
+      plan: plan as unknown as Record<string, unknown>,
+      zone_overrides: zoneOverrides,
+      lane_overrides: laneOverrides,
+      saved_at: new Date().toISOString()
+    });
+  }, [diagramStyle, laneOverrides, plan, prompt, requestContext, selectedProviders, zoneOverrides]);
+
+  const saveArchitecture = useCallback(() => {
+    const savedAt = new Date().toISOString();
+    const draftId = createId("architecture");
+    const draftRecord = {
+      id: draftId,
+      name: plan.title,
+      prompt,
+      selected_providers: selectedProviders,
+      diagram_style: diagramStyle,
+      request_context: requestContext,
+      plan: plan as unknown as Record<string, unknown>,
+      zone_overrides: zoneOverrides,
+      lane_overrides: laneOverrides,
+      saved_at: savedAt
+    };
+    storeArchitectCanvasDraft(draftRecord);
+    upsertSavedArchitectureDraft(draftRecord);
+    setSaveMessage(`Saved "${plan.title}" to Saved Work.`);
+  }, [
+    diagramStyle,
+    laneOverrides,
+    plan,
+    prompt,
+    requestContext,
+    selectedProviders,
+    zoneOverrides
+  ]);
+
+  useEffect(() => {
+    function handleWorkspaceKeyDown(event: KeyboardEvent) {
+      const isMetaPressed = event.ctrlKey || event.metaKey;
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      const hasMovableSelection = selectedNodeIds.length > 0 || selectedZoneIds.length > 0 || selectedLaneIds.length > 0;
+      if (isMetaPressed && key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      if (isMetaPressed && ((key === "z" && event.shiftKey) || key === "y")) {
+        event.preventDefault();
+        handleRedo();
+        return;
+      }
+
+      if (isMetaPressed && key === "s") {
+        event.preventDefault();
+        saveArchitecture();
+        return;
+      }
+
+      const distance = event.shiftKey ? 48 : 16;
+      if (event.key === "ArrowLeft" && hasMovableSelection) {
+        event.preventDefault();
+        nudgeSelection(-distance, 0);
+        return;
+      }
+
+      if (event.key === "ArrowRight" && hasMovableSelection) {
+        event.preventDefault();
+        nudgeSelection(distance, 0);
+        return;
+      }
+
+      if (event.key === "ArrowUp" && hasMovableSelection) {
+        event.preventDefault();
+        nudgeSelection(0, -distance);
+        return;
+      }
+
+      if (event.key === "ArrowDown" && hasMovableSelection) {
+        event.preventDefault();
+        nudgeSelection(0, distance);
+      }
+    }
+
+    window.addEventListener("keydown", handleWorkspaceKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleWorkspaceKeyDown);
+    };
+  }, [handleRedo, handleUndo, nudgeSelection, saveArchitecture]);
 
   function regenerateDiagram(nextPrompt = prompt, nextProviders = selectedProviders, nextRequest = requestContext) {
     setImportMessage(null);
@@ -267,6 +684,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
         selectedScenario
       );
       setPlan(nextPlan);
+      setSelectedPattern(nextPlan.pattern);
       setSelectedProviders(nextPlan.providers);
       setZoneOverrides({});
       setLaneOverrides({});
@@ -331,8 +749,10 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
       selectedPattern,
       scenarioId
     );
+    setSelectedPattern(nextPlan.pattern);
     setSelectedScenario(scenarioId);
     setPrompt(nextPrompt);
+    setSelectedProviders(nextPlan.providers);
     setImportMessage(null);
     setPlan(nextPlan);
     setAgentMessage(buildAgentMessage(nextPlan));
@@ -342,14 +762,56 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setConnectFromId(null);
   }
 
-  function toggleProvider(provider: ArchitectureCloudProvider) {
-    setSelectedProviders((current) => {
-      if (current.includes(provider)) {
-        return current.length === 1 ? current : current.filter((item) => item !== provider);
-      }
+  function applyDiagramStyle(nextDiagramStyle: DiagramStyle) {
+    if (nextDiagramStyle === diagramStyle) {
+      return;
+    }
 
-      return [...current, provider];
-    });
+    const nextPlan = buildArchitecturePlan(
+      prompt,
+      selectedProviders,
+      requestContext,
+      nextDiagramStyle,
+      selectedPattern,
+      selectedScenario
+    );
+
+    setDiagramStyle(nextDiagramStyle);
+    setImportMessage(null);
+    setPlan(nextPlan);
+    setSelectedPattern(nextPlan.pattern);
+    setSelectedProviders(nextPlan.providers);
+    setZoneOverrides({});
+    setLaneOverrides({});
+    setAgentMessage(buildAgentMessage(nextPlan));
+    clearSelection();
+    setConnectFromId(null);
+  }
+
+  function toggleProvider(provider: ArchitectureCloudProvider) {
+    const nextProviders = selectedProviders.includes(provider)
+      ? selectedProviders.length === 1
+        ? selectedProviders
+        : selectedProviders.filter((item) => item !== provider)
+      : [...selectedProviders, provider];
+    const nextPlan = buildArchitecturePlan(
+      prompt,
+      nextProviders,
+      requestContext,
+      diagramStyle,
+      selectedPattern,
+      selectedScenario
+    );
+
+    setSelectedProviders(nextPlan.providers);
+    setPlan(nextPlan);
+    setSelectedPattern(nextPlan.pattern);
+    setImportMessage(null);
+    setAgentMessage(buildAgentMessage(nextPlan));
+    setZoneOverrides({});
+    setLaneOverrides({});
+    clearSelection();
+    setConnectFromId(null);
   }
 
   useEffect(() => {
@@ -403,51 +865,40 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     let nextSelectedEdgeId: string | null = null;
 
     setPlan((current) => {
-      const existingEdge = current.edges.find(
-        (edge) =>
-          ((edge.from === connection.from && edge.to === connection.to) ||
-            (edge.from === connection.to && edge.to === connection.from)) &&
-          edge.bidirectional
-      );
-
-      if (existingEdge) {
-        nextSelectedEdgeId = existingEdge.id;
-        return current;
-      }
-
-      const directEdge = current.edges.find(
-        (edge) => edge.from === connection.from && edge.to === connection.to
-      );
-
-      if (directEdge) {
-        nextSelectedEdgeId = directEdge.id;
-        return current;
-      }
-
-      const reverseEdge = current.edges.find(
-        (edge) => edge.from === connection.to && edge.to === connection.from
-      );
-
-      if (reverseEdge) {
-        nextSelectedEdgeId = reverseEdge.id;
-        return {
-          ...current,
-          edges: current.edges.map((edge) =>
-            edge.id === reverseEdge.id ? { ...edge, bidirectional: true } : edge
-          )
-        };
-      }
-
-      const nextEdge = { id: createId("edge"), from: connection.from, to: connection.to };
-      nextSelectedEdgeId = nextEdge.id;
+      const edgeUpdate = upsertEdgeConnection(current.edges, connection);
+      nextSelectedEdgeId = edgeUpdate.selectedEdgeId;
 
       return {
         ...current,
-        edges: [...current.edges, nextEdge]
+        edges: edgeUpdate.edges
       };
     });
 
     setConnectFromId(null);
+    applySelection({
+      ...emptyCanvasSelection,
+      edgeIds: nextSelectedEdgeId ? [nextSelectedEdgeId] : []
+    });
+  }, [applySelection]);
+
+  const handleReconnectEdge = useCallback((edgeId: string, connection: { from: string; to: string }) => {
+    let nextSelectedEdgeId: string | null = null;
+
+    setPlan((current) => {
+      const currentEdge = current.edges.find((edge) => edge.id === edgeId);
+      if (!currentEdge) {
+        return current;
+      }
+
+      const edgeUpdate = upsertEdgeConnection(current.edges, connection, currentEdge);
+      nextSelectedEdgeId = edgeUpdate.selectedEdgeId;
+
+      return {
+        ...current,
+        edges: edgeUpdate.edges
+      };
+    });
+
     applySelection({
       ...emptyCanvasSelection,
       edgeIds: nextSelectedEdgeId ? [nextSelectedEdgeId] : []
@@ -774,16 +1225,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   }
 
   function openCanvasPage() {
-    storeArchitectCanvasDraft({
-      prompt,
-      selected_providers: selectedProviders,
-      diagram_style: diagramStyle,
-      request_context: requestContext,
-      plan: plan as unknown as Record<string, unknown>,
-      zone_overrides: zoneOverrides,
-      lane_overrides: laneOverrides,
-      saved_at: new Date().toISOString()
-    });
+    persistArchitectureDraft();
     router.push("/architect/canvas");
   }
 
@@ -1091,6 +1533,13 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                     <Button component={Link} href="/architect" variant="outlined" sx={{ borderColor: "var(--line)", color: "var(--text)" }}>
                       Back To Workspace
                     </Button>
+                    <Button
+                      variant="contained"
+                      onClick={saveArchitecture}
+                      sx={{ bgcolor: "var(--accent)", color: "#ffffff", "&:hover": { bgcolor: "#265db8" } }}
+                    >
+                      Save Architecture
+                    </Button>
                     <Button variant="outlined" onClick={downloadSvg} sx={{ borderColor: "var(--line)", color: "var(--text)" }}>
                       Export SVG
                     </Button>
@@ -1098,6 +1547,9 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                 </Stack>
               </CardContent>
             </Card>
+
+            {importMessage ? <Alert severity="success">{importMessage}</Alert> : null}
+            {saveMessage ? <Alert severity="success">{saveMessage}</Alert> : null}
 
             <Grid container spacing={3}>
               <Grid item xs={12} xl={3} sx={{ order: { xs: 1, xl: 3 } }}>
@@ -1153,7 +1605,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                             labelId="diagram-style-label"
                             value={diagramStyle}
                             label="Diagram style"
-                            onChange={(event) => setDiagramStyle(event.target.value as DiagramStyle)}
+                            onChange={(event) => applyDiagramStyle(event.target.value as DiagramStyle)}
                           >
                             <MenuItem value="reference">Reference architecture</MenuItem>
                             <MenuItem value="network">Network topology</MenuItem>
@@ -1234,6 +1686,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                       canvasWidth={canvasWidth}
                       onSelectionChange={handleCanvasSelection}
                       onCreateEdge={handleCreateEdge}
+                      onReconnectEdge={handleReconnectEdge}
                       onNodeLayoutChange={handleNodeLayoutChange}
                       onZoneLayoutChange={handleZoneLayoutChange}
                       onLaneLayoutChange={handleLaneLayoutChange}
@@ -1253,9 +1706,9 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                           and refine the current diagram.
                         </Typography>
                         <Alert severity="info">
-                          Drag nodes, zones, and lanes on the canvas to move them. Select any visible element to edit
-                          its label, size, or position. To create a link, select a node, click connect mode, then
-                          click the target node.
+                          Drag nodes, zones, lanes, and connector endpoints on the canvas to update the draft. Select
+                          any visible element to edit its label, size, or position. To create a link, select a node,
+                          click connect mode, then click the target node.
                         </Alert>
                         <FormControl fullWidth>
                           <InputLabel id="canvas-manual-provider-label">Node provider</InputLabel>
@@ -1298,6 +1751,22 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                           Add Tool Shape
                         </Button>
                         <Button
+                          variant="outlined"
+                          onClick={handleUndo}
+                          disabled={!canUndo}
+                          sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                        >
+                          Undo
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          onClick={handleRedo}
+                          disabled={!canRedo}
+                          sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                        >
+                          Redo
+                        </Button>
+                        <Button
                           variant={connectFromId ? "contained" : "outlined"}
                           onClick={() => setConnectFromId((current) => (current ? null : singleSelectedNodeId))}
                           disabled={!singleSelectedNodeId && !connectFromId}
@@ -1313,6 +1782,17 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                         >
                           Delete Selection
                         </Button>
+                        <Button
+                          variant="outlined"
+                          onClick={saveArchitecture}
+                          sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                        >
+                          Save Architecture
+                        </Button>
+                        <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                          Shortcuts: Arrow keys move selected items, Shift+Arrow moves faster, Ctrl/Cmd+S saves, and
+                          Ctrl/Cmd+Z or Ctrl+Y undo and redo.
+                        </Typography>
                       </Stack>
                     </CardContent>
                   </Card>
@@ -1430,6 +1910,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
           </Card>
 
           {importMessage ? <Alert severity="success">{importMessage}</Alert> : null}
+          {saveMessage ? <Alert severity="success">{saveMessage}</Alert> : null}
 
           <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
             <CardContent sx={{ p: { xs: 3, md: 3.5 } }}>
@@ -1533,7 +2014,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                             labelId="workspace-diagram-style-label"
                             value={diagramStyle}
                             label="Diagram style"
-                            onChange={(event) => setDiagramStyle(event.target.value as DiagramStyle)}
+                            onChange={(event) => applyDiagramStyle(event.target.value as DiagramStyle)}
                           >
                             <MenuItem value="reference">Reference architecture</MenuItem>
                             <MenuItem value="network">Network topology</MenuItem>
@@ -1568,8 +2049,8 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                         solution contexts like banking, e-commerce, streaming, healthcare, ERP, SaaS, and IoT.
                       </Typography>
                       <Alert severity="info">
-                        Drag nodes, zones, and lanes directly on the diagram to move them. Select any element to edit
-                        its text, size, and position, then use the add-node controls below to create new boxes.
+                        Drag nodes, zones, lanes, and connector endpoints directly on the diagram. Select any element
+                        to edit its text, size, and position, then use the add-node controls below to create new boxes.
                       </Alert>
                       <Stack spacing={1}>
                         <Typography variant="subtitle2">Pattern library</Typography>
@@ -1620,6 +2101,13 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                         </Button>
                         <Button
                           variant="outlined"
+                          onClick={saveArchitecture}
+                          sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                        >
+                          Save Architecture
+                        </Button>
+                        <Button
+                          variant="outlined"
                           onClick={() => {
                             const baseline = architecturePatterns[0];
                             setRequestContext(null);
@@ -1641,6 +2129,22 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                       <Typography variant="h6">Canvas Controls</Typography>
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
                         <Button
+                          variant="outlined"
+                          onClick={handleUndo}
+                          disabled={!canUndo}
+                          sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                        >
+                          Undo
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          onClick={handleRedo}
+                          disabled={!canRedo}
+                          sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                        >
+                          Redo
+                        </Button>
+                        <Button
                           variant={connectFromId ? "contained" : "outlined"}
                           onClick={() => setConnectFromId((current) => (current ? null : singleSelectedNodeId))}
                           disabled={!singleSelectedNodeId && !connectFromId}
@@ -1660,7 +2164,18 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                         >
                           Delete Selection
                         </Button>
+                        <Button
+                          variant="outlined"
+                          onClick={saveArchitecture}
+                          sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                        >
+                          Save Architecture
+                        </Button>
                       </Stack>
+                      <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                        Shortcuts: Arrow keys move selected items, Shift+Arrow moves faster, Ctrl/Cmd+S saves, and
+                        Ctrl/Cmd+Z or Ctrl+Y undo and redo.
+                      </Typography>
                       <FormControl fullWidth>
                         <InputLabel id="manual-provider-label">Node provider</InputLabel>
                         <Select
@@ -1837,6 +2352,13 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                           </Button>
                           <Button
                             variant="outlined"
+                            onClick={saveArchitecture}
+                            sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                          >
+                            Save Architecture
+                          </Button>
+                          <Button
+                            variant="outlined"
                             onClick={downloadSvg}
                             sx={{ borderColor: "var(--line)", color: "var(--text)" }}
                           >
@@ -1858,6 +2380,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
                           canvasWidth={canvasWidth}
                           onSelectionChange={handleCanvasSelection}
                           onCreateEdge={handleCreateEdge}
+                          onReconnectEdge={handleReconnectEdge}
                           onNodeLayoutChange={handleNodeLayoutChange}
                           onZoneLayoutChange={handleZoneLayoutChange}
                           onLaneLayoutChange={handleLaneLayoutChange}

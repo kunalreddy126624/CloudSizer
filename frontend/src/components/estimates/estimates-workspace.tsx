@@ -23,10 +23,16 @@ import {
 import { useAuth } from "@/components/auth/auth-provider";
 import { createActualObservation, deleteSavedEstimate, importBillingSnapshot, listActualObservations, listSavedEstimates } from "@/lib/api";
 import {
+  deleteSavedArchitectureDraft,
+  loadSavedArchitectureDrafts,
+  storeArchitectCanvasDraft,
   storePendingArchitectScenario,
   storePendingEstimatorScenario
 } from "@/lib/scenario-store";
+import type { SavedArchitectureDraft } from "@/lib/scenario-store";
 import type { CloudProvider, EstimateActualRecord, RecommendationRequest, SavedEstimateRecord, WorkloadType } from "@/lib/types";
+
+type SavedWorkFilter = "all" | "estimates" | "architectures";
 
 function formatEstimateType(estimateType: SavedEstimateRecord["estimate_type"]) {
   return estimateType.replaceAll("_", " ");
@@ -218,10 +224,14 @@ export function EstimatesWorkspace() {
   const router = useRouter();
   const { isAuthenticated, loading: authLoading } = useAuth();
   const [estimates, setEstimates] = useState<SavedEstimateRecord[]>([]);
+  const [architectures, setArchitectures] = useState<SavedArchitectureDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEstimateId, setSelectedEstimateId] = useState<number | null>(null);
+  const [selectedArchitectureId, setSelectedArchitectureId] = useState<string | null>(null);
+  const [savedWorkFilter, setSavedWorkFilter] = useState<SavedWorkFilter>("all");
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deletingArchitectureId, setDeletingArchitectureId] = useState<string | null>(null);
   const [actuals, setActuals] = useState<EstimateActualRecord[]>([]);
   const [actualCost, setActualCost] = useState("");
   const [billingPeriodStart, setBillingPeriodStart] = useState("");
@@ -234,6 +244,10 @@ export function EstimatesWorkspace() {
   const [importingActuals, setImportingActuals] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const detailPanelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setArchitectures(loadSavedArchitectureDrafts());
+  }, []);
 
   useEffect(() => {
     if (authLoading || !isAuthenticated) {
@@ -281,6 +295,10 @@ export function EstimatesWorkspace() {
     () => estimates.find((estimate) => estimate.id === selectedEstimateId) ?? null,
     [estimates, selectedEstimateId]
   );
+  const selectedArchitecture = useMemo(
+    () => architectures.find((draft) => draft.id === selectedArchitectureId) ?? null,
+    [architectures, selectedArchitectureId]
+  );
   const selectedEstimatorRequest = useMemo(
     () => (selectedEstimate ? extractEstimatorRequest(selectedEstimate) : null),
     [selectedEstimate]
@@ -296,6 +314,8 @@ export function EstimatesWorkspace() {
         : [],
     [actuals, selectedEstimate]
   );
+  const showEstimates = savedWorkFilter === "all" || savedWorkFilter === "estimates";
+  const showArchitectures = savedWorkFilter === "all" || savedWorkFilter === "architectures";
 
   async function handleDeleteEstimate(estimateId: number) {
     setDeletingId(estimateId);
@@ -317,6 +337,12 @@ export function EstimatesWorkspace() {
       setSelectedEstimateId(estimates[0].id);
     }
   }, [estimates, selectedEstimateId]);
+
+  useEffect(() => {
+    if (!selectedArchitectureId && architectures.length) {
+      setSelectedArchitectureId(architectures[0].id);
+    }
+  }, [architectures, selectedArchitectureId]);
 
   function handleOpenInEstimator(estimate: SavedEstimateRecord, request: RecommendationRequest) {
     storePendingEstimatorScenario({
@@ -342,6 +368,20 @@ export function EstimatesWorkspace() {
       imported_at: new Date().toISOString()
     });
     router.push("/architect");
+  }
+
+  function handleOpenSavedArchitecture(draft: SavedArchitectureDraft) {
+    storeArchitectCanvasDraft(draft);
+    router.push("/architect");
+  }
+
+  function handleDeleteArchitecture(draftId: string) {
+    setDeletingArchitectureId(draftId);
+    deleteSavedArchitectureDraft(draftId);
+    const nextDrafts = loadSavedArchitectureDrafts();
+    setArchitectures(nextDrafts);
+    setSelectedArchitectureId((current) => (current === draftId ? nextDrafts[0]?.id ?? null : current));
+    setDeletingArchitectureId(null);
   }
 
   function handleViewDetails(estimateId: number) {
@@ -435,15 +475,15 @@ export function EstimatesWorkspace() {
             <CardContent sx={{ p: { xs: 3, md: 5 } }}>
               <Stack spacing={1.5}>
                 <Chip
-                  label="Saved Estimates"
+                  label="Saved Work"
                   sx={{ width: "fit-content", bgcolor: "rgba(12, 107, 88, 0.12)", color: "var(--accent)" }}
                 />
                 <Typography variant="h2" sx={{ fontSize: { xs: "2.3rem", md: "3.8rem" }, lineHeight: 0.98 }}>
-                  Reopen saved advisor and pricing drafts from one place.
+                  Reopen saved estimates and architecture drafts from one place.
                 </Typography>
                 <Typography variant="body1" sx={{ color: "var(--muted)", maxWidth: 760 }}>
-                  Use this workspace to review saved estimates, compare totals, and delete outdated drafts once
-                  you have refined the architecture.
+                  Estimates are saved to your account. Architecture drafts are saved on this device. Use the filter
+                  to switch between both kinds of saved work from one workspace.
                 </Typography>
               </Stack>
             </CardContent>
@@ -452,14 +492,35 @@ export function EstimatesWorkspace() {
           {error ? <Alert severity="error">{error}</Alert> : null}
           {importMessage ? <Alert severity="success">{importMessage}</Alert> : null}
 
+          <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
+            <CardContent>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "stretch", sm: "center" }} justifyContent="space-between">
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                  Saved work filter
+                </Typography>
+                <TextField
+                  select
+                  value={savedWorkFilter}
+                  onChange={(event) => setSavedWorkFilter(event.target.value as SavedWorkFilter)}
+                  size="small"
+                  sx={{ minWidth: 220 }}
+                >
+                  <MenuItem value="all">All saved work</MenuItem>
+                  <MenuItem value="estimates">Saved estimates</MenuItem>
+                  <MenuItem value="architectures">Saved architectures</MenuItem>
+                </TextField>
+              </Stack>
+            </CardContent>
+          </Card>
+
           {!authLoading && !isAuthenticated ? (
             <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
               <CardContent sx={{ p: 4 }}>
                 <Stack spacing={2}>
                   <Typography variant="h5">Login Required</Typography>
                   <Typography variant="body1" sx={{ color: "var(--muted)", maxWidth: 720 }}>
-                    Saved estimates are now tied to your authenticated account. Sign in first to view,
-                    create, or delete estimate records.
+                    Saved estimates are tied to your authenticated account. You can still view saved architecture drafts
+                    on this device, but sign in to view, create, or delete estimate records.
                   </Typography>
                   <Button
                     component={Link}
@@ -492,7 +553,7 @@ export function EstimatesWorkspace() {
                 </Stack>
               </CardContent>
             </Card>
-          ) : isAuthenticated ? (
+          ) : isAuthenticated && showEstimates ? (
             <Grid container spacing={3}>
               <Grid item xs={12} lg={5}>
                 <Stack spacing={2}>
@@ -803,6 +864,134 @@ export function EstimatesWorkspace() {
                     ) : (
                       <Typography variant="body2" sx={{ color: "var(--muted)" }}>
                         Select a saved estimate to inspect the stored request and response payload.
+                      </Typography>
+                    )}
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+          ) : null}
+
+          {showArchitectures ? (
+            <Grid container spacing={3}>
+              <Grid item xs={12} lg={5}>
+                <Stack spacing={2}>
+                  {architectures.length ? (
+                    architectures.map((draft) => (
+                      <Card
+                        key={draft.id}
+                        sx={{
+                          borderRadius: 4,
+                          border: "1px solid var(--line)",
+                          boxShadow: "none",
+                          bgcolor:
+                            draft.id === selectedArchitectureId ? "var(--accent-soft)" : "var(--panel-strong)"
+                        }}
+                      >
+                        <CardContent>
+                          <Stack spacing={1.2}>
+                            <Stack direction="row" justifyContent="space-between" spacing={1.5} alignItems="flex-start">
+                              <Box>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                                  {draft.name}
+                                </Typography>
+                                <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                                  {draft.prompt}
+                                </Typography>
+                              </Box>
+                              <Chip label="Architecture" />
+                            </Stack>
+                            <Stack direction="row" spacing={1} flexWrap="wrap">
+                              {draft.selected_providers.map((provider) => (
+                                <Chip key={`${draft.id}-${provider}`} label={provider.toUpperCase()} size="small" />
+                              ))}
+                            </Stack>
+                            <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                              Saved: {new Date(draft.saved_at).toLocaleString()}
+                            </Typography>
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                              <Button
+                                variant={draft.id === selectedArchitectureId ? "contained" : "outlined"}
+                                onClick={() => setSelectedArchitectureId(draft.id)}
+                                sx={
+                                  draft.id === selectedArchitectureId
+                                    ? {
+                                        bgcolor: "var(--accent)",
+                                        color: "#ffffff",
+                                        "&:hover": { bgcolor: "#265db8" }
+                                      }
+                                    : { borderColor: "var(--line)", color: "var(--text)" }
+                                }
+                              >
+                                {draft.id === selectedArchitectureId ? "Viewing Details" : "View Details"}
+                              </Button>
+                              <Button
+                                color="inherit"
+                                onClick={() => handleDeleteArchitecture(draft.id)}
+                                disabled={deletingArchitectureId === draft.id}
+                              >
+                                {deletingArchitectureId === draft.id ? "Deleting..." : "Delete"}
+                              </Button>
+                            </Stack>
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    ))
+                  ) : (
+                    <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
+                      <CardContent>
+                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                          No architecture drafts are saved yet. Use Save Architecture in Agent Architect to add drafts here.
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  )}
+                </Stack>
+              </Grid>
+
+              <Grid item xs={12} lg={7}>
+                <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none", minHeight: "100%" }}>
+                  <CardContent>
+                    {selectedArchitecture ? (
+                      <Stack spacing={2}>
+                        <Chip
+                          label="Showing saved architecture draft"
+                          sx={{ width: "fit-content", bgcolor: "var(--accent-soft)", color: "var(--accent)" }}
+                        />
+                        <Typography variant="h5">{selectedArchitecture.name}</Typography>
+                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                          Style: {selectedArchitecture.diagram_style ?? "reference"} | Saved:{" "}
+                          {new Date(selectedArchitecture.saved_at).toLocaleString()}
+                        </Typography>
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                          <Button
+                            variant="contained"
+                            onClick={() => handleOpenSavedArchitecture(selectedArchitecture)}
+                            sx={{ alignSelf: "flex-start", bgcolor: "var(--accent)", "&:hover": { bgcolor: "#265db8" } }}
+                          >
+                            Open In Agent Architect
+                          </Button>
+                        </Stack>
+                        <Box
+                          component="pre"
+                          sx={{
+                            m: 0,
+                            p: 2,
+                            overflowX: "auto",
+                            borderRadius: 3,
+                            border: "1px solid var(--line)",
+                            bgcolor: "#f5f7f2",
+                            fontSize: "0.8rem",
+                            lineHeight: 1.5,
+                            fontFamily: '"Cascadia Mono", "Consolas", monospace'
+                          }}
+                        >
+                          {JSON.stringify(selectedArchitecture.plan, null, 2)}
+                        </Box>
+                      </Stack>
+                    ) : (
+                      <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                        Select a saved architecture draft to inspect the stored layout and reopen it in Agent Architect.
                       </Typography>
                     )}
                   </CardContent>
