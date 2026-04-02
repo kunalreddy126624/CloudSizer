@@ -46,6 +46,13 @@ FAMILY_REASONING: dict[str, str] = {
 WORKLOAD_KEYWORDS: list[tuple[WorkloadType, tuple[str, ...]]] = [
     (WorkloadType.ERP, ("erp", "finance", "inventory", "procurement", "sap")),
     (WorkloadType.CRM, ("crm", "sales", "customer", "support", "leads")),
+    (WorkloadType.ECOMMERCE, ("ecommerce", "e-commerce", "storefront", "shopping cart", "checkout", "retail")),
+    (WorkloadType.ANALYTICS, ("analytics", "bi", "dashboard", "warehouse", "etl", "reporting")),
+    (WorkloadType.AI_ML, ("ai", "ml", "machine learning", "llm", "inference", "training", "copilot")),
+    (WorkloadType.VDI, ("vdi", "virtual desktop", "desktop", "remote desktop", "workspace")),
+    (WorkloadType.DEV_TEST, ("dev", "test", "qa", "staging", "sandbox", "ci", "cd")),
+    (WorkloadType.WEB_API, ("web", "website", "api", "portal", "frontend", "backend")),
+    (WorkloadType.SAAS, ("saas", "multi-tenant", "tenant", "subscription platform", "b2b app")),
     (WorkloadType.APPLICATION, ("app", "application", "portal", "website", "api", "platform")),
 ]
 
@@ -64,6 +71,17 @@ DETAIL_KEYWORDS = (
     "erp",
     "crm",
     "application",
+    "ecommerce",
+    "analytics",
+    "ai",
+    "ml",
+    "vdi",
+    "desktop",
+    "dev",
+    "test",
+    "web",
+    "api",
+    "saas",
     "budget",
 )
 
@@ -87,6 +105,10 @@ def detect_workload(requirement: str) -> WorkloadType | None:
         if any(keyword in lowered for keyword in keywords):
             return workload
     return None
+
+
+def format_workload_label(workload: WorkloadType) -> str:
+    return workload.value.replace("_", " ").title()
 
 
 def detect_service_families(requirement: str) -> list[str]:
@@ -294,9 +316,9 @@ def advise_estimation_plan(
     ]
 
     workload_summary = (
-        f"Detected a {workload.value.upper()}-style workload."
+        f"Detected a {format_workload_label(workload)}-style workload."
         if workload
-        else "Detected a general application workload with mixed infrastructure needs."
+        else "Detected a general workload with mixed infrastructure needs."
     )
 
     return EstimationAdvisorResponse(
@@ -336,7 +358,7 @@ def _build_clarifying_message(
     families: list[str],
 ) -> str:
     workload_hint = (
-        f"I read this as a possible {workload.value.upper()} workload. "
+        f"I read this as a possible {format_workload_label(workload)} workload. "
         if workload
         else "I do not have enough detail yet to classify the workload cleanly. "
     )

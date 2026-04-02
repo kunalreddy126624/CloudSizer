@@ -2,11 +2,17 @@ import type {
   AuthLoginRequest,
   AuthLoginResponse,
   AuthenticatedUser,
+  BillingImportRequest,
+  BillingImportResponse,
   CatalogService,
+  EstimateActualCreate,
+  EstimateActualRecord,
   EstimationAdvisorChatRequest,
   EstimationAdvisorChatResponse,
   EstimationAdvisorRequest,
   EstimationAdvisorResponse,
+  LivePricingRefreshRequest,
+  LivePricingRefreshResponse,
   ProviderSummary,
   RecommendationRequest,
   RecommendationResponse,
@@ -156,5 +162,30 @@ export function createSavedEstimate(request: SavedEstimateCreate) {
 export function deleteSavedEstimate(estimateId: number) {
   return apiRequest<{ status: string }>(`/estimates/${estimateId}`, {
     method: "DELETE"
+  });
+}
+
+export function listActualObservations() {
+  return apiRequest<EstimateActualRecord[]>("/actuals");
+}
+
+export function createActualObservation(request: EstimateActualCreate) {
+  return apiRequest<EstimateActualRecord>("/actuals", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function importBillingSnapshot(request: BillingImportRequest) {
+  return apiRequest<BillingImportResponse>("/actuals/import-local", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function refreshLivePricing(request: LivePricingRefreshRequest) {
+  return apiRequest<LivePricingRefreshResponse>("/catalog/refresh-live-pricing", {
+    method: "POST",
+    body: JSON.stringify(request)
   });
 }

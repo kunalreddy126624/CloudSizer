@@ -1,10 +1,15 @@
 import json
+import sqlite3
 from functools import lru_cache
 from pathlib import Path
+from datetime import UTC, datetime
 
+from app.db import get_connection
 from app.models import (
     CatalogService,
     CloudProvider,
+    PricingDimension,
+    PricingSource,
     ProviderSummary,
     ServiceCategory,
     ServiceComparisonGroup,
@@ -301,6 +306,8 @@ def _build_generated_services(
                         )
                         for dimension in template.dimensions
                     ],
+                    "pricing_source": PricingSource.GENERATED,
+                    "last_validated_at": None,
                 }
             )
         )
@@ -308,14 +315,66 @@ def _build_generated_services(
     return generated
 
 
+def _load_overrides() -> dict[str, dict[str, object]]:
+    try:
+        with get_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    provider,
+                    service_code,
+                    base_monthly_cost_usd,
+                    dimensions_json,
+                    pricing_source,
+                    last_validated_at
+                FROM catalog_price_overrides
+                """
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+
+    overrides: dict[str, dict[str, object]] = {}
+    for row in rows:
+        overrides[row["service_code"]] = {
+            "provider": row["provider"],
+            "base_monthly_cost_usd": row["base_monthly_cost_usd"],
+            "dimensions": [
+                PricingDimension.model_validate(item)
+                for item in json.loads(row["dimensions_json"])
+            ],
+            "pricing_source": row["pricing_source"],
+            "last_validated_at": row["last_validated_at"],
+        }
+    return overrides
+
+
+def _apply_override(service: CatalogService, overrides: dict[str, dict[str, object]]) -> CatalogService:
+    override = overrides.get(service.service_code)
+    if not override:
+        return service
+
+    return service.model_copy(
+        update={
+            "base_monthly_cost_usd": float(override["base_monthly_cost_usd"]),
+            "dimensions": override["dimensions"],
+            "pricing_source": PricingSource(str(override["pricing_source"])),
+            "last_validated_at": str(override["last_validated_at"]),
+        }
+    )
+
+
 @lru_cache(maxsize=1)
 def _load_catalog() -> dict[CloudProvider, list[CatalogService]]:
     raw_catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     loaded: dict[CloudProvider, list[CatalogService]] = {}
+    overrides = _load_overrides()
 
     for provider_value, services in raw_catalog.items():
         provider = CloudProvider(provider_value)
-        loaded[provider] = [CatalogService.model_validate(service) for service in services]
+        loaded[provider] = [
+            _apply_override(CatalogService.model_validate(service), overrides)
+            for service in services
+        ]
 
     reference_services: dict[str, CatalogService] = {}
     for services in loaded.values():
@@ -326,8 +385,11 @@ def _load_catalog() -> dict[CloudProvider, list[CatalogService]]:
         existing_services = loaded.get(provider, [])
         existing_families = {service.service_family for service in existing_services}
         loaded[provider] = sorted(
-            existing_services
-            + _build_generated_services(provider, reference_services, existing_families),
+            [
+                _apply_override(service, overrides)
+                for service in existing_services
+                + _build_generated_services(provider, reference_services, existing_families)
+            ],
             key=lambda item: (item.category.value, item.name),
         )
 
@@ -336,6 +398,46 @@ def _load_catalog() -> dict[CloudProvider, list[CatalogService]]:
 
 def reload_catalog() -> None:
     _load_catalog.cache_clear()
+
+
+def upsert_catalog_price_override(
+    provider: CloudProvider,
+    service_code: str,
+    base_monthly_cost_usd: float,
+    dimensions: list[PricingDimension],
+    pricing_source: PricingSource,
+) -> None:
+    timestamp = datetime.now(UTC).isoformat()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO catalog_price_overrides (
+                provider,
+                service_code,
+                base_monthly_cost_usd,
+                dimensions_json,
+                pricing_source,
+                last_validated_at,
+                detail_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(service_code) DO UPDATE SET
+                provider = excluded.provider,
+                base_monthly_cost_usd = excluded.base_monthly_cost_usd,
+                dimensions_json = excluded.dimensions_json,
+                pricing_source = excluded.pricing_source,
+                last_validated_at = excluded.last_validated_at
+            """,
+            (
+                provider.value,
+                service_code,
+                base_monthly_cost_usd,
+                json.dumps([dimension.model_dump(mode="json") for dimension in dimensions]),
+                pricing_source.value,
+                timestamp,
+                "{}",
+            ),
+        )
+    reload_catalog()
 
 
 def get_catalog_metadata() -> dict[str, int | str]:

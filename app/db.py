@@ -54,9 +54,55 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS estimate_actuals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                estimate_id INTEGER,
+                provider TEXT NOT NULL,
+                workload_type TEXT,
+                service_code TEXT,
+                service_name TEXT,
+                region TEXT,
+                billing_period_start TEXT NOT NULL,
+                billing_period_end TEXT NOT NULL,
+                estimated_monthly_cost_usd REAL,
+                actual_monthly_cost_usd REAL NOT NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                observed_usage_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (estimate_id) REFERENCES saved_estimates(id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS catalog_price_overrides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                service_code TEXT NOT NULL UNIQUE,
+                base_monthly_cost_usd REAL NOT NULL,
+                dimensions_json TEXT NOT NULL,
+                pricing_source TEXT NOT NULL,
+                last_validated_at TEXT NOT NULL,
+                detail_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """
+        )
         columns = {
             row["name"]
             for row in connection.execute("PRAGMA table_info(saved_estimates)").fetchall()
         }
         if "user_id" not in columns:
             connection.execute("ALTER TABLE saved_estimates ADD COLUMN user_id INTEGER")
+
+        actual_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(estimate_actuals)").fetchall()
+        }
+        if "service_code" not in actual_columns:
+            connection.execute("ALTER TABLE estimate_actuals ADD COLUMN service_code TEXT")
+        if "service_name" not in actual_columns:
+            connection.execute("ALTER TABLE estimate_actuals ADD COLUMN service_name TEXT")

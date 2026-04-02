@@ -59,8 +59,8 @@ export function LoginWorkspace() {
     void (async () => {
       try {
         await login(email, password, rememberMe);
-        setSuccess("Signed in successfully. Redirecting to saved estimates...");
-        router.push("/estimates");
+        setSuccess("Signed in successfully. Redirecting to your workspace...");
+        router.push("/workspace");
       } catch (loginError) {
         setError(loginError instanceof Error ? loginError.message : "Unable to sign in.");
       }
@@ -100,7 +100,8 @@ export function LoginWorkspace() {
                     Sign in to manage cloud estimates and saved scenarios.
                   </Typography>
                   <Typography variant="body1" sx={{ color: "var(--muted)", lineHeight: 1.7 }}>
-                    Use this account workspace to access saved estimates, advisor drafts, and future team collaboration features.
+                    Use this account workspace to access every CloudSizer application, saved estimates, advisor drafts,
+                    and future team collaboration features.
                   </Typography>
                   <Stack spacing={1.5}>
                     <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "var(--panel-strong)" }}>
@@ -119,7 +120,8 @@ export function LoginWorkspace() {
                           Current status
                         </Typography>
                         <Typography variant="body2" sx={{ color: "var(--muted)", mt: 1, lineHeight: 1.6 }}>
-                          This page is UI-ready. Connect it to your authentication backend or identity provider next.
+                          After sign-in you land in a shared workspace with direct access to advisor, estimator,
+                          pricing, architecture, catalog, and saved estimates.
                         </Typography>
                       </CardContent>
                     </Card>
@@ -151,7 +153,7 @@ export function LoginWorkspace() {
                 <Stack spacing={3}>
                   <Box>
                     <Typography variant="h4">User Login</Typography>
-                  <Typography variant="body2" sx={{ color: "var(--muted)", mt: 1 }}>
+                    <Typography variant="body2" sx={{ color: "var(--muted)", mt: 1 }}>
                       Sign in with your email and password to continue into CloudSizer.
                     </Typography>
                   </Box>
@@ -159,11 +161,15 @@ export function LoginWorkspace() {
                   <Alert severity="info">
                     Demo access: <strong>demo@cloudsizer.local</strong> / <strong>CloudSizer123!</strong>
                   </Alert>
+                  <Alert severity="info">
+                    Guest users can explore the tools for 3 estimate runs total. Sign in to unlock unlimited usage,
+                    saved estimates, and the full workspace.
+                  </Alert>
 
                   {error ? <Alert severity="error">{error}</Alert> : null}
                   {success ? <Alert severity="success">{success}</Alert> : null}
                   {isAuthenticated && user ? (
-                    <Alert severity="success">Signed in as {user.full_name}. Open your saved estimates or advisor.</Alert>
+                    <Alert severity="success">Signed in as {user.full_name}. Open your full workspace.</Alert>
                   ) : null}
 
                   <Stack component="form" spacing={2.5} onSubmit={handleSubmit}>
@@ -196,8 +202,8 @@ export function LoginWorkspace() {
                         }
                         label="Remember me"
                       />
-                      <Button component={Link} href="/advisor" variant="text" sx={{ px: 0, color: "var(--accent)" }}>
-                        Forgot password?
+                      <Button component={Link} href="/signup" variant="text" sx={{ px: 0, color: "var(--accent)" }}>
+                        Need an account?
                       </Button>
                     </Stack>
                     <Button
@@ -217,29 +223,13 @@ export function LoginWorkspace() {
 
                   <Divider />
 
-                  <Stack spacing={1.5}>
-                    <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                      Prefer another route?
-                    </Typography>
-                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-                      <Button
-                        component={Link}
-                        href="/advisor"
-                        variant="outlined"
-                        sx={{ flex: 1, borderColor: "var(--line)", color: "var(--text)" }}
-                      >
-                        Open Advisor
-                      </Button>
-                      <Button
-                        component={Link}
-                        href="/estimator"
-                        variant="outlined"
-                        sx={{ flex: 1, borderColor: "var(--line)", color: "var(--text)" }}
-                      >
-                        Open Estimator
-                      </Button>
-                    </Stack>
-                  </Stack>
+                  <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                    Use the shared top navigation to move between workspace, advisor, estimator, pricing,
+                    architect, catalog, and saved estimates after sign-in.
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                    New here? Visit the sign-up page to request access or use the demo login while signup is being finalized.
+                  </Typography>
                 </Stack>
               </CardContent>
             </Card>

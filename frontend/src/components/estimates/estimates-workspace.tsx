@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -14,23 +14,36 @@ import {
   CircularProgress,
   Container,
   Grid,
+  MenuItem,
   Stack,
+  TextField,
   Typography
 } from "@mui/material";
 
 import { useAuth } from "@/components/auth/auth-provider";
-import { deleteSavedEstimate, listSavedEstimates } from "@/lib/api";
+import { createActualObservation, deleteSavedEstimate, importBillingSnapshot, listActualObservations, listSavedEstimates } from "@/lib/api";
 import {
   storePendingArchitectScenario,
   storePendingEstimatorScenario
 } from "@/lib/scenario-store";
-import type { RecommendationRequest, SavedEstimateRecord } from "@/lib/types";
+import type { CloudProvider, EstimateActualRecord, RecommendationRequest, SavedEstimateRecord, WorkloadType } from "@/lib/types";
 
 function formatEstimateType(estimateType: SavedEstimateRecord["estimate_type"]) {
   return estimateType.replaceAll("_", " ");
 }
 
-const workloadTypes = new Set<RecommendationRequest["workload_type"]>(["erp", "crm", "application"]);
+const workloadTypes = new Set<RecommendationRequest["workload_type"]>([
+  "erp",
+  "crm",
+  "application",
+  "ecommerce",
+  "analytics",
+  "ai_ml",
+  "vdi",
+  "dev_test",
+  "web_api",
+  "saas"
+]);
 const availabilityTiers = new Set<RecommendationRequest["availability_tier"]>([
   "standard",
   "high",
@@ -136,6 +149,71 @@ function extractEstimatorRequest(estimate: SavedEstimateRecord): RecommendationR
   return parseRecommendationRequest(recommendation.baseline_inputs);
 }
 
+function extractArchitectScenario(
+  estimate: SavedEstimateRecord
+): { request: RecommendationRequest; prompt_override?: string } | null {
+  const estimatorRequest = extractEstimatorRequest(estimate);
+  if (estimatorRequest) {
+    return { request: estimatorRequest };
+  }
+
+  const payload = isObjectRecord(estimate.payload) ? estimate.payload : null;
+  const requestPayload = payload && isObjectRecord(payload.request) ? payload.request : null;
+  const responsePayload = payload && isObjectRecord(payload.response) ? payload.response : null;
+  const provider = requestPayload?.provider;
+  const requestItems = Array.isArray(requestPayload?.items) ? requestPayload.items : [];
+  const responseItems = Array.isArray(responsePayload?.items) ? responsePayload.items : [];
+
+  if (!providers.has(provider as RecommendationRequest["preferred_providers"][number]) || !requestItems.length) {
+    return null;
+  }
+
+  const region =
+    requestItems.find((item) => isObjectRecord(item) && typeof item.region === "string")?.region ?? "global";
+  const categorySet = new Set<string>();
+  const serviceNames: string[] = [];
+
+  responseItems.forEach((item) => {
+    if (!isObjectRecord(item)) {
+      return;
+    }
+
+    if (typeof item.category === "string") {
+      categorySet.add(item.category);
+    }
+
+    if (typeof item.service_name === "string") {
+      serviceNames.push(item.service_name);
+    }
+  });
+
+  requestItems.forEach((item) => {
+    if (isObjectRecord(item) && typeof item.service_code === "string" && serviceNames.length < 6) {
+      serviceNames.push(item.service_code);
+    }
+  });
+
+  const categories = Array.from(categorySet);
+  const promptOverride = `${estimate.name}: Design a ${String(provider).toUpperCase()} architecture from this saved estimate for region ${region}, using services ${serviceNames.slice(0, 6).join(", ")}${categories.length ? ` across ${categories.join(", ")} categories` : ""}.`;
+
+  return {
+    request: {
+      workload_type: "application",
+      region,
+      user_count: Math.max(requestItems.length * 25, 25),
+      concurrent_users: Math.max(requestItems.length * 10, 10),
+      storage_gb: 250,
+      monthly_requests_million: Math.max(requestItems.length, 1),
+      requires_disaster_recovery: categories.includes("storage"),
+      requires_managed_database: categories.includes("database"),
+      availability_tier: "high",
+      budget_preference: "balanced",
+      preferred_providers: [provider as RecommendationRequest["preferred_providers"][number]]
+    },
+    prompt_override: promptOverride
+  };
+}
+
 export function EstimatesWorkspace() {
   const router = useRouter();
   const { isAuthenticated, loading: authLoading } = useAuth();
@@ -144,6 +222,18 @@ export function EstimatesWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [selectedEstimateId, setSelectedEstimateId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [actuals, setActuals] = useState<EstimateActualRecord[]>([]);
+  const [actualCost, setActualCost] = useState("");
+  const [billingPeriodStart, setBillingPeriodStart] = useState("");
+  const [billingPeriodEnd, setBillingPeriodEnd] = useState("");
+  const [actualNotes, setActualNotes] = useState("");
+  const [savingActual, setSavingActual] = useState(false);
+  const [importPath, setImportPath] = useState("");
+  const [importProvider, setImportProvider] = useState<CloudProvider | "">("");
+  const [importWorkloadType, setImportWorkloadType] = useState<WorkloadType | "">("");
+  const [importingActuals, setImportingActuals] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const detailPanelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (authLoading || !isAuthenticated) {
@@ -158,12 +248,16 @@ export function EstimatesWorkspace() {
       setError(null);
 
       try {
-        const response = await listSavedEstimates();
+        const [response, actualResponse] = await Promise.all([
+          listSavedEstimates(),
+          listActualObservations()
+        ]);
         if (!active) {
           return;
         }
 
         setEstimates(response);
+        setActuals(actualResponse);
         setSelectedEstimateId((current) => current ?? response[0]?.id ?? null);
       } catch (loadError) {
         if (active) {
@@ -190,6 +284,17 @@ export function EstimatesWorkspace() {
   const selectedEstimatorRequest = useMemo(
     () => (selectedEstimate ? extractEstimatorRequest(selectedEstimate) : null),
     [selectedEstimate]
+  );
+  const selectedArchitectScenario = useMemo(
+    () => (selectedEstimate ? extractArchitectScenario(selectedEstimate) : null),
+    [selectedEstimate]
+  );
+  const selectedActuals = useMemo(
+    () =>
+      selectedEstimate
+        ? actuals.filter((actual) => actual.estimate_id === selectedEstimate.id)
+        : [],
+    [actuals, selectedEstimate]
   );
 
   async function handleDeleteEstimate(estimateId: number) {
@@ -224,15 +329,95 @@ export function EstimatesWorkspace() {
     router.push("/estimator");
   }
 
-  function handleOpenInArchitect(estimate: SavedEstimateRecord, request: RecommendationRequest) {
+  function handleOpenInArchitect(
+    estimate: SavedEstimateRecord,
+    scenario: { request: RecommendationRequest; prompt_override?: string }
+  ) {
     storePendingArchitectScenario({
       name: estimate.name,
-      request,
+      request: scenario.request,
       source: "saved_estimate",
       estimate_id: estimate.id,
+      prompt_override: scenario.prompt_override,
       imported_at: new Date().toISOString()
     });
     router.push("/architect");
+  }
+
+  function handleViewDetails(estimateId: number) {
+    setSelectedEstimateId(estimateId);
+
+    requestAnimationFrame(() => {
+      detailPanelRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+    });
+  }
+
+  async function handleSaveActual() {
+    if (!selectedEstimate?.provider || !actualCost || !billingPeriodStart || !billingPeriodEnd) {
+      setError("Provider, actual cost, and billing period dates are required.");
+      return;
+    }
+
+    setSavingActual(true);
+    setError(null);
+    setImportMessage(null);
+
+    try {
+      const request = selectedEstimatorRequest ?? selectedArchitectScenario?.request ?? null;
+      const record = await createActualObservation({
+        estimate_id: selectedEstimate.id,
+        provider: selectedEstimate.provider,
+        workload_type: request?.workload_type ?? null,
+        region: request?.region ?? null,
+        billing_period_start: billingPeriodStart,
+        billing_period_end: billingPeriodEnd,
+        estimated_monthly_cost_usd: selectedEstimate.estimated_monthly_cost_usd ?? null,
+        actual_monthly_cost_usd: Number(actualCost),
+        notes: actualNotes,
+        observed_usage: {}
+      });
+      setActuals((current) => [record, ...current]);
+      setActualCost("");
+      setBillingPeriodStart("");
+      setBillingPeriodEnd("");
+      setActualNotes("");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to save actual billing record.");
+    } finally {
+      setSavingActual(false);
+    }
+  }
+
+  async function handleImportActuals() {
+    if (!importPath.trim()) {
+      setError("Enter a CSV or JSON billing snapshot path.");
+      return;
+    }
+
+    setImportingActuals(true);
+    setError(null);
+    setImportMessage(null);
+
+    try {
+      const response = await importBillingSnapshot({
+        snapshot_path: importPath.trim(),
+        provider: importProvider || undefined,
+        estimate_id: selectedEstimate?.id ?? undefined,
+        workload_type: importWorkloadType || undefined
+      });
+      const refreshedActuals = await listActualObservations();
+      setActuals(refreshedActuals);
+      setImportMessage(
+        `Imported ${response.imported_records} billing records from ${response.snapshot_path}.`
+      );
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "Failed to import billing snapshot.");
+    } finally {
+      setImportingActuals(false);
+    }
   }
 
   return (
@@ -265,6 +450,7 @@ export function EstimatesWorkspace() {
           </Card>
 
           {error ? <Alert severity="error">{error}</Alert> : null}
+          {importMessage ? <Alert severity="success">{importMessage}</Alert> : null}
 
           {!authLoading && !isAuthenticated ? (
             <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
@@ -349,11 +535,19 @@ export function EstimatesWorkspace() {
                             </Typography>
                             <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
                               <Button
-                                variant="outlined"
-                                onClick={() => setSelectedEstimateId(estimate.id)}
-                                sx={{ borderColor: "var(--line)", color: "var(--text)" }}
+                                variant={estimate.id === selectedEstimateId ? "contained" : "outlined"}
+                                onClick={() => handleViewDetails(estimate.id)}
+                                sx={
+                                  estimate.id === selectedEstimateId
+                                    ? {
+                                        bgcolor: "var(--accent)",
+                                        color: "#ffffff",
+                                        "&:hover": { bgcolor: "#265db8" }
+                                      }
+                                    : { borderColor: "var(--line)", color: "var(--text)" }
+                                }
                               >
-                                View Details
+                                {estimate.id === selectedEstimateId ? "Viewing Details" : "View Details"}
                               </Button>
                               <Button
                                 color="inherit"
@@ -381,10 +575,24 @@ export function EstimatesWorkspace() {
               </Grid>
 
               <Grid item xs={12} lg={7}>
-                <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none", minHeight: "100%" }}>
+                <Card
+                  ref={detailPanelRef}
+                  tabIndex={-1}
+                  sx={{
+                    borderRadius: 5,
+                    border: "1px solid var(--line)",
+                    boxShadow: "none",
+                    minHeight: "100%",
+                    scrollMarginTop: { xs: 16, md: 32 }
+                  }}
+                >
                   <CardContent>
                     {selectedEstimate ? (
                       <Stack spacing={2}>
+                        <Chip
+                          label={`Showing details for estimate #${selectedEstimate.id}`}
+                          sx={{ width: "fit-content", bgcolor: "var(--accent-soft)", color: "var(--accent)" }}
+                        />
                         <Stack direction="row" justifyContent="space-between" spacing={2} alignItems="center">
                           <Box>
                             <Typography variant="h5">{selectedEstimate.name}</Typography>
@@ -400,26 +608,34 @@ export function EstimatesWorkspace() {
                           Type: {formatEstimateType(selectedEstimate.estimate_type)} | Created:{" "}
                           {new Date(selectedEstimate.created_at).toLocaleString()}
                         </Typography>
-                        {selectedEstimatorRequest ? (
+                        {selectedEstimatorRequest || selectedArchitectScenario ? (
                           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-                            <Button
-                              variant="contained"
-                              onClick={() => handleOpenInEstimator(selectedEstimate, selectedEstimatorRequest)}
-                              sx={{ alignSelf: "flex-start", bgcolor: "var(--accent)", "&:hover": { bgcolor: "#265db8" } }}
-                            >
-                              Open In Form Estimator
-                            </Button>
-                            <Button
-                              variant="outlined"
-                              onClick={() => handleOpenInArchitect(selectedEstimate, selectedEstimatorRequest)}
-                              sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
-                            >
-                              Open In Agent Architect
-                            </Button>
+                            {selectedEstimatorRequest ? (
+                              <Button
+                                variant="contained"
+                                onClick={() => handleOpenInEstimator(selectedEstimate, selectedEstimatorRequest)}
+                                sx={{ alignSelf: "flex-start", bgcolor: "var(--accent)", "&:hover": { bgcolor: "#265db8" } }}
+                              >
+                                Open In Form Estimator
+                              </Button>
+                            ) : null}
+                            {selectedArchitectScenario ? (
+                              <Button
+                                variant={selectedEstimatorRequest ? "outlined" : "contained"}
+                                onClick={() => handleOpenInArchitect(selectedEstimate, selectedArchitectScenario)}
+                                sx={
+                                  selectedEstimatorRequest
+                                    ? { alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }
+                                    : { alignSelf: "flex-start", bgcolor: "var(--accent)", "&:hover": { bgcolor: "#265db8" } }
+                                }
+                              >
+                                Open In Agent Architect
+                              </Button>
+                            ) : null}
                           </Stack>
                         ) : (
                           <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                            This saved record does not include a reusable workload form payload.
+                            This saved record does not include enough structured data to rebuild an estimator or architect draft.
                           </Typography>
                         )}
                         <Typography variant="h3">
@@ -427,6 +643,137 @@ export function EstimatesWorkspace() {
                             ? `$${selectedEstimate.estimated_monthly_cost_usd.toFixed(2)}`
                             : "No monthly total"}
                         </Typography>
+                        {selectedEstimate.provider ? (
+                          <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "var(--panel-strong)" }}>
+                            <CardContent>
+                              <Stack spacing={1.5}>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                                  Record Actual Billing
+                                </Typography>
+                                <Grid container spacing={2}>
+                                  <Grid item xs={12} sm={4}>
+                                    <TextField
+                                      label="Actual monthly cost"
+                                      type="number"
+                                      value={actualCost}
+                                      onChange={(event) => setActualCost(event.target.value)}
+                                      inputProps={{ min: 0, step: "0.01" }}
+                                      fullWidth
+                                    />
+                                  </Grid>
+                                  <Grid item xs={12} sm={4}>
+                                    <TextField
+                                      label="Billing start"
+                                      type="date"
+                                      value={billingPeriodStart}
+                                      onChange={(event) => setBillingPeriodStart(event.target.value)}
+                                      fullWidth
+                                      InputLabelProps={{ shrink: true }}
+                                    />
+                                  </Grid>
+                                  <Grid item xs={12} sm={4}>
+                                    <TextField
+                                      label="Billing end"
+                                      type="date"
+                                      value={billingPeriodEnd}
+                                      onChange={(event) => setBillingPeriodEnd(event.target.value)}
+                                      fullWidth
+                                      InputLabelProps={{ shrink: true }}
+                                    />
+                                  </Grid>
+                                </Grid>
+                                <TextField
+                                  label="Notes"
+                                  value={actualNotes}
+                                  onChange={(event) => setActualNotes(event.target.value)}
+                                  multiline
+                                  minRows={2}
+                                />
+                                <Button
+                                  variant="contained"
+                                  onClick={handleSaveActual}
+                                  disabled={savingActual}
+                                  sx={{ alignSelf: "flex-start", bgcolor: "var(--accent)", "&:hover": { bgcolor: "#265db8" } }}
+                                >
+                                  {savingActual ? "Saving..." : "Save Actual Billing"}
+                                </Button>
+                                {selectedActuals.length ? (
+                                  selectedActuals.map((actual) => (
+                                    <Typography key={actual.id} variant="body2" sx={{ color: "var(--muted)" }}>
+                                      {actual.billing_period_start} to {actual.billing_period_end}: $
+                                      {actual.actual_monthly_cost_usd.toFixed(2)}
+                                    </Typography>
+                                  ))
+                                ) : (
+                                  <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                                    No actual billing records linked yet.
+                                  </Typography>
+                                )}
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        ) : null}
+                        <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "var(--panel-strong)" }}>
+                          <CardContent>
+                            <Stack spacing={1.5}>
+                              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                                Import Billing Snapshot
+                              </Typography>
+                              <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                                Import a local CSV or JSON billing export to create actual cost records automatically.
+                              </Typography>
+                              <TextField
+                                label="Snapshot path"
+                                value={importPath}
+                                onChange={(event) => setImportPath(event.target.value)}
+                                placeholder="C:\\billing\\aws-cur-march.csv"
+                                fullWidth
+                              />
+                              <Grid container spacing={2}>
+                                <Grid item xs={12} sm={6}>
+                                  <TextField
+                                    label="Provider override"
+                                    value={importProvider}
+                                    onChange={(event) => setImportProvider(event.target.value as CloudProvider | "")}
+                                    select
+                                    fullWidth
+                                  >
+                                    <MenuItem value="">Auto-detect</MenuItem>
+                                    {Array.from(providers).map((provider) => (
+                                      <MenuItem key={provider} value={provider}>
+                                        {provider.toUpperCase()}
+                                      </MenuItem>
+                                    ))}
+                                  </TextField>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                  <TextField
+                                    label="Workload type"
+                                    value={importWorkloadType}
+                                    onChange={(event) => setImportWorkloadType(event.target.value as WorkloadType | "")}
+                                    select
+                                    fullWidth
+                                  >
+                                    <MenuItem value="">Infer if possible</MenuItem>
+                                    {Array.from(workloadTypes).map((workloadType) => (
+                                      <MenuItem key={workloadType} value={workloadType}>
+                                        {workloadType.replaceAll("_", " ")}
+                                      </MenuItem>
+                                    ))}
+                                  </TextField>
+                                </Grid>
+                              </Grid>
+                              <Button
+                                variant="outlined"
+                                onClick={handleImportActuals}
+                                disabled={importingActuals}
+                                sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
+                              >
+                                {importingActuals ? "Importing..." : "Import Billing Snapshot"}
+                              </Button>
+                            </Stack>
+                          </CardContent>
+                        </Card>
                         <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "var(--panel-strong)" }}>
                           <CardContent>
                             <Stack spacing={1}>

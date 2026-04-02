@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
 import { Box, Button, Stack, Typography } from "@mui/material";
 import ReactFlow, {
@@ -14,6 +14,7 @@ import ReactFlow, {
   Panel,
   Position,
   ReactFlowProvider,
+  SelectionMode,
   type Connection,
   type Edge as FlowEdge,
   type Node as FlowNode,
@@ -40,11 +41,12 @@ import {
 } from "@/lib/architect-diagram";
 
 export type CanvasSelection =
-  | { kind: "none" }
-  | { kind: "node"; id: string }
-  | { kind: "edge"; id: string }
-  | { kind: "zone"; id: string }
-  | { kind: "lane"; id: string };
+  {
+    nodeIds: string[];
+    edgeIds: string[];
+    zoneIds: string[];
+    laneIds: string[];
+  };
 
 interface DiagramNodeData {
   title: string;
@@ -82,10 +84,10 @@ interface ArchitectFlowCanvasProps {
   diagramStyle: DiagramStyle;
   lanes: CanvasLane[];
   zones: CanvasZone[];
-  selectedNodeId: string | null;
-  selectedEdgeId: string | null;
-  selectedZoneId: string | null;
-  selectedLaneId: string | null;
+  selectedNodeIds: string[];
+  selectedEdgeIds: string[];
+  selectedZoneIds: string[];
+  selectedLaneIds: string[];
   connectFromId: string | null;
   canvasWidth: number;
   onSelectionChange: (selection: CanvasSelection) => void;
@@ -252,10 +254,10 @@ function ArchitectFlowCanvasInner({
   diagramStyle,
   lanes,
   zones,
-  selectedNodeId,
-  selectedEdgeId,
-  selectedZoneId,
-  selectedLaneId,
+  selectedNodeIds,
+  selectedEdgeIds,
+  selectedZoneIds,
+  selectedLaneIds,
   connectFromId,
   canvasWidth,
   onSelectionChange,
@@ -264,6 +266,40 @@ function ArchitectFlowCanvasInner({
   onZoneLayoutChange,
   onLaneLayoutChange
 }: ArchitectFlowCanvasProps) {
+  const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
+  const selectedEdgeIdSet = useMemo(() => new Set(selectedEdgeIds), [selectedEdgeIds]);
+  const selectedZoneIdSet = useMemo(() => new Set(selectedZoneIds), [selectedZoneIds]);
+  const selectedLaneIdSet = useMemo(() => new Set(selectedLaneIds), [selectedLaneIds]);
+  const [isAdditiveSelectionActive, setIsAdditiveSelectionActive] = useState(false);
+
+  useEffect(() => {
+    const additiveSelectionKeys = new Set(["Control", "Meta", "Shift"]);
+
+    function handleKeyState(event: KeyboardEvent) {
+      setIsAdditiveSelectionActive(
+        additiveSelectionKeys.has(event.key) || event.ctrlKey || event.metaKey || event.shiftKey
+      );
+    }
+
+    function handleKeyUp(event: KeyboardEvent) {
+      setIsAdditiveSelectionActive(event.ctrlKey || event.metaKey || event.shiftKey);
+    }
+
+    function handleWindowBlur() {
+      setIsAdditiveSelectionActive(false);
+    }
+
+    window.addEventListener("keydown", handleKeyState);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleWindowBlur);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyState);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, []);
+
   const laneNodes = useMemo<FlowNode<LaneNodeData>[]>(() => {
     return lanes.map((lane) => ({
         id: lane.id,
@@ -271,10 +307,10 @@ function ArchitectFlowCanvasInner({
         draggable: true,
         selectable: true,
         connectable: false,
-        zIndex: 0,
+        zIndex: -2,
         position: { x: lane.x, y: lane.y },
         style: { width: lane.width, height: lane.height },
-        selected: lane.id === selectedLaneId,
+        selected: selectedLaneIdSet.has(lane.id),
         data: {
           label: lane.label,
           fontSize: lane.fontSize,
@@ -284,7 +320,7 @@ function ArchitectFlowCanvasInner({
           onResizeEnd: (id, next) => onLaneLayoutChange(id, next)
         }
       }));
-  }, [lanes, onLaneLayoutChange, selectedLaneId]);
+  }, [lanes, onLaneLayoutChange, selectedLaneIdSet]);
 
   const diagramNodes = useMemo<FlowNode<DiagramNodeData>[]>(() => {
     return plan.nodes.map((node) => {
@@ -296,7 +332,7 @@ function ArchitectFlowCanvasInner({
         style: { width: node.width, height: node.height },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
-        selected: node.id === selectedNodeId,
+        selected: selectedNodeIdSet.has(node.id),
         zIndex: 3,
         data: {
           title: node.title,
@@ -313,7 +349,7 @@ function ArchitectFlowCanvasInner({
         }
       };
     });
-  }, [connectFromId, onNodeLayoutChange, plan.nodes, selectedNodeId]);
+  }, [connectFromId, onNodeLayoutChange, plan.nodes, selectedNodeIdSet]);
 
   const zoneNodes = useMemo<FlowNode<ZoneNodeData>[]>(() => {
     return zones.map((zone) => ({
@@ -321,8 +357,8 @@ function ArchitectFlowCanvasInner({
       type: "zone",
       position: { x: zone.x, y: zone.y },
       style: { width: zone.width, height: zone.height },
-      selected: zone.id === selectedZoneId,
-      zIndex: 2,
+      selected: selectedZoneIdSet.has(zone.id),
+      zIndex: -1,
       data: {
         label: zone.label,
         fontSize: zone.fontSize,
@@ -331,7 +367,7 @@ function ArchitectFlowCanvasInner({
         onResizeEnd: (id, next) => onZoneLayoutChange(id, next)
       }
     }));
-  }, [onZoneLayoutChange, selectedZoneId, zones]);
+  }, [onZoneLayoutChange, selectedZoneIdSet, zones]);
 
   const mappedEdges = useMemo<FlowEdge[]>(() => {
     return plan.edges.map((edge) => ({
@@ -341,34 +377,37 @@ function ArchitectFlowCanvasInner({
       label: edge.label,
       type: edgeTypeByStyle[diagramStyle],
       animated: diagramStyle === "workflow",
-      selected: edge.id === selectedEdgeId,
+      selected: selectedEdgeIdSet.has(edge.id),
       style: {
-        stroke: edge.id === selectedEdgeId ? "#17315c" : "#316fd6",
-        strokeWidth: edge.id === selectedEdgeId ? 4 : 3
+        stroke: selectedEdgeIdSet.has(edge.id) ? "#17315c" : "#316fd6",
+        strokeWidth: selectedEdgeIdSet.has(edge.id) ? 4 : 3
       },
+      zIndex: 1,
       labelStyle: { fill: "#60779c", fontSize: 12, fontWeight: 600 },
       markerEnd: {
         type: MarkerType.ArrowClosed,
         width: 18,
         height: 18,
-        color: edge.id === selectedEdgeId ? "#17315c" : "#316fd6"
-      }
+        color: selectedEdgeIdSet.has(edge.id) ? "#17315c" : "#316fd6"
+      },
+      markerStart: edge.bidirectional
+        ? {
+            type: MarkerType.ArrowClosed,
+            width: 18,
+            height: 18,
+            color: selectedEdgeIdSet.has(edge.id) ? "#17315c" : "#316fd6"
+          }
+        : undefined
     }));
-  }, [diagramStyle, plan.edges, selectedEdgeId]);
+  }, [diagramStyle, plan.edges, selectedEdgeIdSet]);
 
-  const [flowNodes, setFlowNodes] = useState<FlowNode[]>([...laneNodes, ...zoneNodes, ...diagramNodes]);
-  const [flowEdges, setFlowEdges] = useState<FlowEdge[]>(mappedEdges);
+  const flowNodes = useMemo<FlowNode[]>(
+    () => [...laneNodes, ...zoneNodes, ...diagramNodes],
+    [diagramNodes, laneNodes, zoneNodes]
+  );
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
 
-  useEffect(() => {
-    setFlowNodes([...laneNodes, ...zoneNodes, ...diagramNodes]);
-  }, [diagramNodes, laneNodes, zoneNodes]);
-
-  useEffect(() => {
-    setFlowEdges(mappedEdges);
-  }, [mappedEdges]);
-
-  const handleNodeDragStop: NodeDragHandler = (_, node) => {
+  const handleNodeDragStop = useCallback<NodeDragHandler>((_, node) => {
     const width = Number(node.width ?? node.style?.width ?? MIN_NODE_WIDTH);
     const height = Number(node.height ?? node.style?.height ?? MIN_NODE_HEIGHT);
     const next = clampPosition(node.position.x, node.position.y, width, height, canvasWidth);
@@ -391,66 +430,150 @@ function ArchitectFlowCanvasInner({
         height: Math.max(height, MIN_LANE_HEIGHT)
       });
     }
-  };
+  }, [canvasWidth, onLaneLayoutChange, onNodeLayoutChange, onZoneLayoutChange]);
 
-  function handleConnect(connection: Connection) {
+  const handleConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target || connection.source === connection.target) {
       return;
     }
 
     onCreateEdge({ from: connection.source, to: connection.target });
-  }
+  }, [onCreateEdge]);
+
+  const handleNodeClick = useCallback(
+    (event: React.MouseEvent, node: FlowNode) => {
+      const isAdditiveSelection = event.ctrlKey || event.metaKey || event.shiftKey;
+
+      if (!isAdditiveSelection && node.type === "diagram" && connectFromId && connectFromId !== node.id) {
+        event.preventDefault();
+        onCreateEdge({ from: connectFromId, to: node.id });
+        return;
+      }
+
+      if (isAdditiveSelection) {
+        window.setTimeout(() => {
+          onSelectionChange({
+            nodeIds:
+              node.type === "diagram" ? [...selectedNodeIdSet, node.id] : [...selectedNodeIdSet],
+            edgeIds: [...selectedEdgeIdSet],
+            zoneIds:
+              node.type === "zone" ? [...selectedZoneIdSet, node.id] : [...selectedZoneIdSet],
+            laneIds:
+              node.type === "lane" ? [...selectedLaneIdSet, node.id] : [...selectedLaneIdSet]
+          });
+        }, 0);
+        return;
+      }
+
+      window.setTimeout(() => {
+        onSelectionChange({
+          nodeIds: node.type === "diagram" ? [node.id] : [],
+          edgeIds: [],
+          zoneIds: node.type === "zone" ? [node.id] : [],
+          laneIds: node.type === "lane" ? [node.id] : []
+        });
+      }, 0);
+    },
+    [connectFromId, onCreateEdge, onSelectionChange, selectedEdgeIdSet, selectedLaneIdSet, selectedNodeIdSet, selectedZoneIdSet]
+  );
+
+  const handleEdgeClick = useCallback(
+    (event: React.MouseEvent, edge: FlowEdge) => {
+      const isAdditiveSelection = event.ctrlKey || event.metaKey || event.shiftKey;
+
+      if (!isAdditiveSelection) {
+        window.setTimeout(() => {
+          onSelectionChange({
+            nodeIds: [],
+            edgeIds: [edge.id],
+            zoneIds: [],
+            laneIds: []
+          });
+        }, 0);
+        return;
+      }
+
+      window.setTimeout(() => {
+        onSelectionChange({
+          nodeIds: [...selectedNodeIdSet],
+          edgeIds: [...selectedEdgeIdSet, edge.id],
+          zoneIds: [...selectedZoneIdSet],
+          laneIds: [...selectedLaneIdSet]
+        });
+      }, 0);
+    },
+    [onSelectionChange, selectedEdgeIdSet, selectedLaneIdSet, selectedNodeIdSet, selectedZoneIdSet]
+  );
+
+  const handlePaneClick = useCallback(() => {
+    onSelectionChange({ nodeIds: [], edgeIds: [], zoneIds: [], laneIds: [] });
+  }, [onSelectionChange]);
+
+  const handleSelectionChange = useCallback(
+    ({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEdge[] }) => {
+      const nextSelection = {
+        nodeIds: nodes.filter((node) => node.type === "diagram").map((node) => node.id),
+        edgeIds: edges.map((edge) => edge.id),
+        zoneIds: nodes.filter((node) => node.type === "zone").map((node) => node.id),
+        laneIds: nodes.filter((node) => node.type === "lane").map((node) => node.id)
+      };
+
+      if (isAdditiveSelectionActive) {
+        onSelectionChange({
+          nodeIds: [...selectedNodeIdSet, ...nextSelection.nodeIds],
+          edgeIds: [...selectedEdgeIdSet, ...nextSelection.edgeIds],
+          zoneIds: [...selectedZoneIdSet, ...nextSelection.zoneIds],
+          laneIds: [...selectedLaneIdSet, ...nextSelection.laneIds]
+        });
+        return;
+      }
+
+      onSelectionChange(nextSelection);
+    },
+    [isAdditiveSelectionActive, onSelectionChange, selectedEdgeIdSet, selectedLaneIdSet, selectedNodeIdSet, selectedZoneIdSet]
+  );
+
+  const fitViewOptions = useMemo(() => ({ padding: 0.18 }), []);
+  const snapGrid = useMemo<[number, number]>(() => [16, 16], []);
+  const defaultEdgeOptions = useMemo(
+    () => ({
+      type: edgeTypeByStyle[diagramStyle],
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#316fd6" },
+      zIndex: 1
+    }),
+    [diagramStyle]
+  );
+
+  const handleFitDiagram = useCallback(() => {
+    flowInstance?.fitView({ padding: 0.18, duration: 220 });
+  }, [flowInstance]);
 
   return (
     <Box sx={{ width: "100%", height: 760, borderRadius: 4, overflow: "hidden", bgcolor: "#f8fbff" }}>
       <ReactFlow
         nodes={flowNodes}
-        edges={flowEdges}
+        edges={mappedEdges}
         nodeTypes={nodeTypes}
         onInit={setFlowInstance}
         onNodeDragStop={handleNodeDragStop}
-        onNodeClick={(event, node) => {
-          event.preventDefault();
-
-          if (node.type === "zone") {
-            onSelectionChange({ kind: "zone", id: node.id });
-            return;
-          }
-
-          if (node.type === "lane") {
-            onSelectionChange({ kind: "lane", id: node.id });
-            return;
-          }
-
-          if (node.type !== "diagram") {
-            return;
-          }
-
-          if (connectFromId && connectFromId !== node.id) {
-            onCreateEdge({ from: connectFromId, to: node.id });
-            onSelectionChange({ kind: "node", id: node.id });
-            return;
-          }
-
-          onSelectionChange({ kind: "node", id: node.id });
-        }}
-        onEdgeClick={(event, edge) => {
-          event.preventDefault();
-          onSelectionChange({ kind: "edge", id: edge.id });
-        }}
-        onPaneClick={() => onSelectionChange({ kind: "none" })}
+        onNodeClick={handleNodeClick}
+        onEdgeClick={handleEdgeClick}
+        onPaneClick={handlePaneClick}
+        onSelectionChange={handleSelectionChange}
         onConnect={handleConnect}
         fitView
-        fitViewOptions={{ padding: 0.18 }}
+        fitViewOptions={fitViewOptions}
         minZoom={0.35}
         maxZoom={1.6}
-        defaultEdgeOptions={{
-          type: edgeTypeByStyle[diagramStyle],
-          markerEnd: { type: MarkerType.ArrowClosed, color: "#316fd6" }
-        }}
+        defaultEdgeOptions={defaultEdgeOptions}
+        elevateEdgesOnSelect
         connectionMode={ConnectionMode.Loose}
+        selectionOnDrag
+        selectionMode={SelectionMode.Partial}
+        multiSelectionKeyCode={["Control", "Meta", "Shift"]}
+        panOnDrag={false}
         snapToGrid
-        snapGrid={[16, 16]}
+        snapGrid={snapGrid}
         proOptions={{ hideAttribution: true }}
       >
         <Background gap={20} size={1} color="rgba(49, 111, 214, 0.08)" />
@@ -481,7 +604,7 @@ function ArchitectFlowCanvasInner({
             <Button
               size="small"
               variant="outlined"
-              onClick={() => flowInstance?.fitView({ padding: 0.18, duration: 220 })}
+              onClick={handleFitDiagram}
               sx={{ bgcolor: "rgba(255,255,255,0.94)", borderColor: "var(--line)", color: "var(--text)" }}
             >
               Fit Diagram

@@ -1,8 +1,31 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+import Script from "next/script";
 
 import { Box, Button, Card, CardContent, Chip, Container, Stack, Typography } from "@mui/material";
 
+import { buildPageMetadata, getSiteUrl } from "@/lib/seo";
+
+export const metadata: Metadata = buildPageMetadata({
+  title: "Multi-Cloud Sizing And Cost Estimation",
+  description:
+    "Estimate ERP, CRM, and application workloads across AWS, Azure, GCP, and other providers with CloudSizer's advisor, estimator, pricing, and architecture tools.",
+  path: "/",
+  keywords: ["cloud workload estimator", "cloud cost recommendation", "multi-cloud planning platform"]
+});
+
 export default function HomePage() {
+  const websiteJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    name: "CloudSizer",
+    applicationCategory: "BusinessApplication",
+    operatingSystem: "Web",
+    url: getSiteUrl(),
+    description:
+      "CloudSizer estimates ERP, CRM, and application workloads across multiple cloud providers with advisor, pricing, and architecture workflows."
+  };
+
   return (
     <Box
       sx={{
@@ -12,6 +35,11 @@ export default function HomePage() {
         alignItems: "center"
       }}
     >
+      <Script
+        id="cloudsizer-webapplication-jsonld"
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}
+      />
       <Container maxWidth="lg">
         <Stack spacing={4} sx={{ maxWidth: 780 }}>
           <Chip
@@ -34,21 +62,7 @@ export default function HomePage() {
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
             <Button
               component={Link}
-              href="/advisor"
-              variant="contained"
-              size="large"
-              sx={{
-                bgcolor: "var(--accent)",
-                px: 3.5,
-                py: 1.4,
-                "&:hover": { bgcolor: "#265db8" }
-              }}
-            >
-              Open Estimation Agent
-            </Button>
-            <Button
-              component={Link}
-              href="/login"
+              href="/signup"
               variant="contained"
               size="large"
               sx={{
@@ -59,37 +73,36 @@ export default function HomePage() {
                 "&:hover": { bgcolor: "#102443" }
               }}
             >
+              Create Account
+            </Button>
+            <Button
+              component={Link}
+              href="/advisor"
+              variant="contained"
+              size="large"
+              sx={{
+                bgcolor: "var(--accent)",
+                px: 3.5,
+                py: 1.4,
+                "&:hover": { bgcolor: "#265db8" }
+              }}
+            >
+              Open Agent Estimator
+            </Button>
+            <Button
+              component={Link}
+              href="/login"
+              variant="outlined"
+              size="large"
+              sx={{
+                borderColor: "var(--line)",
+                color: "var(--text)",
+                px: 3.5,
+                py: 1.4,
+                "&:hover": { borderColor: "var(--line-strong)", bgcolor: "rgba(255,255,255,0.4)" }
+              }}
+            >
               Login
-            </Button>
-            <Button
-              component={Link}
-              href="/estimator"
-              variant="outlined"
-              size="large"
-              sx={{
-                borderColor: "var(--line)",
-                color: "var(--text)",
-                px: 3.5,
-                py: 1.4,
-                "&:hover": { borderColor: "var(--line-strong)", bgcolor: "rgba(255,255,255,0.4)" }
-              }}
-            >
-              Open Estimator
-            </Button>
-            <Button
-              component={Link}
-              href="/architect"
-              variant="outlined"
-              size="large"
-              sx={{
-                borderColor: "var(--line)",
-                color: "var(--text)",
-                px: 3.5,
-                py: 1.4,
-                "&:hover": { borderColor: "var(--line-strong)", bgcolor: "rgba(255,255,255,0.4)" }
-              }}
-            >
-              Open Agent Architect
             </Button>
           </Stack>
           <Card
@@ -119,65 +132,9 @@ export default function HomePage() {
                     Use the estimation agent to describe the workload in plain language and get a full recommendation set end to end.
                   </Typography>
                 </Stack>
-                <Button
-                  component={Link}
-                  href="/advisor"
-                  variant="contained"
-                  size="large"
-                  sx={{
-                    minWidth: { xs: "100%", md: 240 },
-                    bgcolor: "var(--accent)",
-                    color: "#ffffff",
-                    fontWeight: 800,
-                    px: 3.5,
-                    py: 1.4,
-                    boxShadow: "0 12px 24px rgba(49, 111, 214, 0.24)",
-                    "&:hover": { bgcolor: "#265db8" }
-                  }}
-                >
-                  Open Estimation Agent
-                </Button>
               </Stack>
             </CardContent>
           </Card>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-            <Button
-              component={Link}
-              href="/pricing"
-              variant="outlined"
-              size="large"
-              sx={{ px: 3.5, py: 1.4, borderColor: "var(--line)", color: "var(--text)" }}
-            >
-              Open Service Calculator
-            </Button>
-            <Button
-              component={Link}
-              href="/catalog"
-              variant="text"
-              size="large"
-              sx={{ px: 1.5, py: 1.4, color: "var(--text)" }}
-            >
-              Browse Catalog
-            </Button>
-            <Button
-              component={Link}
-              href="/estimates"
-              variant="text"
-              size="large"
-              sx={{ px: 1.5, py: 1.4, color: "var(--text)" }}
-            >
-              Saved Estimates
-            </Button>
-            <Button
-              component={Link}
-              href="/architect"
-              variant="text"
-              size="large"
-              sx={{ px: 1.5, py: 1.4, color: "var(--text)" }}
-            >
-              Architecture Diagrams
-            </Button>
-          </Stack>
         </Stack>
       </Container>
     </Box>

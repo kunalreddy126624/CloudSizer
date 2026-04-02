@@ -12,6 +12,13 @@ frontend/.next/
 frontend/out/
 frontend/.vercel/
 frontend/.env.local
+frontend/*.log
+frontend/*.out.log
+frontend/*.err.log
 coverage/
 dist/
 build/
+
+*.sqlite3
+*.db-journal
+*.pid
