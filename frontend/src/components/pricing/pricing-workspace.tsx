@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
@@ -154,6 +154,28 @@ export function PricingWorkspace() {
     setSaveMessage(null);
   }, [provider]);
 
+  const selectedServiceCodes = useMemo(
+    () => new Set(selectedItems.map((item) => item.service_code)),
+    [selectedItems]
+  );
+
+  const handleAddService = useCallback((service: CatalogService) => {
+    if (selectedServiceCodes.has(service.service_code)) {
+      return;
+    }
+
+    setSelectedItems((current) => [
+      ...current,
+      {
+        service_code: service.service_code,
+        service_name: service.name,
+        category: service.category,
+        region: service.default_region,
+        usage: Object.fromEntries(service.dimensions.map((dimension) => [dimension.key, dimension.suggested_value]))
+      }
+    ]);
+  }, [selectedServiceCodes]);
+
   useEffect(() => {
     const providerParam = searchParams.get("provider") as CloudProvider | null;
     const serviceCodeParam = searchParams.get("service_code");
@@ -170,7 +192,7 @@ export function PricingWorkspace() {
     if (service && !selectedItems.some((item) => item.service_code === serviceCodeParam)) {
       handleAddService(service);
     }
-  }, [catalog, searchParams, selectedItems]);
+  }, [catalog, handleAddService, searchParams, selectedItems]);
 
   useEffect(() => {
     if (!pricingResult) {
@@ -179,28 +201,6 @@ export function PricingWorkspace() {
 
     setSaveName(`${formatProviderLabel(provider)} pricing estimate`);
   }, [pricingResult, provider]);
-
-  const selectedServiceCodes = useMemo(
-    () => new Set(selectedItems.map((item) => item.service_code)),
-    [selectedItems]
-  );
-
-  function handleAddService(service: CatalogService) {
-    if (selectedServiceCodes.has(service.service_code)) {
-      return;
-    }
-
-    setSelectedItems((current) => [
-      ...current,
-      {
-        service_code: service.service_code,
-        service_name: service.name,
-        category: service.category,
-        region: service.default_region,
-        usage: Object.fromEntries(service.dimensions.map((dimension) => [dimension.key, dimension.suggested_value]))
-      }
-    ]);
-  }
 
   function updateLineItem(index: number, updater: (item: DraftLineItem) => DraftLineItem) {
     setSelectedItems((current) => current.map((item, itemIndex) => (itemIndex === index ? updater(item) : item)));

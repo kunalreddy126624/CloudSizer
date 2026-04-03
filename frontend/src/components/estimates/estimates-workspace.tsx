@@ -24,15 +24,17 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { createActualObservation, deleteSavedEstimate, importBillingSnapshot, listActualObservations, listSavedEstimates } from "@/lib/api";
 import {
   deleteSavedArchitectureDraft,
+  loadSavedNoodlePipelines,
   loadSavedArchitectureDrafts,
   storeArchitectCanvasDraft,
+  storePendingNoodleDesignerSession,
   storePendingArchitectScenario,
   storePendingEstimatorScenario
 } from "@/lib/scenario-store";
 import type { SavedArchitectureDraft } from "@/lib/scenario-store";
-import type { CloudProvider, EstimateActualRecord, RecommendationRequest, SavedEstimateRecord, WorkloadType } from "@/lib/types";
+import type { CloudProvider, EstimateActualRecord, NoodlePipelineDesignerDocument, RecommendationRequest, SavedEstimateRecord, WorkloadType } from "@/lib/types";
 
-type SavedWorkFilter = "all" | "estimates" | "architectures";
+type SavedWorkFilter = "all" | "estimates" | "architectures" | "pipelines";
 
 function formatEstimateType(estimateType: SavedEstimateRecord["estimate_type"]) {
   return estimateType.replaceAll("_", " ");
@@ -225,10 +227,12 @@ export function EstimatesWorkspace() {
   const { isAuthenticated, loading: authLoading } = useAuth();
   const [estimates, setEstimates] = useState<SavedEstimateRecord[]>([]);
   const [architectures, setArchitectures] = useState<SavedArchitectureDraft[]>([]);
+  const [pipelines, setPipelines] = useState<NoodlePipelineDesignerDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEstimateId, setSelectedEstimateId] = useState<number | null>(null);
   const [selectedArchitectureId, setSelectedArchitectureId] = useState<string | null>(null);
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
   const [savedWorkFilter, setSavedWorkFilter] = useState<SavedWorkFilter>("all");
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deletingArchitectureId, setDeletingArchitectureId] = useState<string | null>(null);
@@ -247,6 +251,7 @@ export function EstimatesWorkspace() {
 
   useEffect(() => {
     setArchitectures(loadSavedArchitectureDrafts());
+    setPipelines(loadSavedNoodlePipelines());
   }, []);
 
   useEffect(() => {
@@ -299,6 +304,10 @@ export function EstimatesWorkspace() {
     () => architectures.find((draft) => draft.id === selectedArchitectureId) ?? null,
     [architectures, selectedArchitectureId]
   );
+  const selectedPipeline = useMemo(
+    () => pipelines.find((pipeline) => pipeline.id === selectedPipelineId) ?? null,
+    [pipelines, selectedPipelineId]
+  );
   const selectedEstimatorRequest = useMemo(
     () => (selectedEstimate ? extractEstimatorRequest(selectedEstimate) : null),
     [selectedEstimate]
@@ -316,6 +325,7 @@ export function EstimatesWorkspace() {
   );
   const showEstimates = savedWorkFilter === "all" || savedWorkFilter === "estimates";
   const showArchitectures = savedWorkFilter === "all" || savedWorkFilter === "architectures";
+  const showPipelines = savedWorkFilter === "all" || savedWorkFilter === "pipelines";
 
   async function handleDeleteEstimate(estimateId: number) {
     setDeletingId(estimateId);
@@ -343,6 +353,12 @@ export function EstimatesWorkspace() {
       setSelectedArchitectureId(architectures[0].id);
     }
   }, [architectures, selectedArchitectureId]);
+
+  useEffect(() => {
+    if (!selectedPipelineId && pipelines.length) {
+      setSelectedPipelineId(pipelines[0].id);
+    }
+  }, [pipelines, selectedPipelineId]);
 
   function handleOpenInEstimator(estimate: SavedEstimateRecord, request: RecommendationRequest) {
     storePendingEstimatorScenario({
@@ -373,6 +389,27 @@ export function EstimatesWorkspace() {
   function handleOpenSavedArchitecture(draft: SavedArchitectureDraft) {
     storeArchitectCanvasDraft(draft);
     router.push("/architect");
+  }
+
+  function handleOpenSavedPipeline(document: NoodlePipelineDesignerDocument) {
+    storePendingNoodleDesignerSession({
+      intent: {
+        name: document.name,
+        business_goal: `Continue refining ${document.name}.`,
+        deployment_scope: "hybrid",
+        latency_slo: "minutes",
+        requires_ml_features: document.nodes.some((node) => node.kind === "feature"),
+        requires_realtime_serving: document.nodes.some((node) => node.kind === "serve"),
+        contains_sensitive_data: document.metadata_assets.some((asset) => asset.classification !== "internal"),
+        target_consumers: document.metadata_assets.map((asset) => asset.owner).filter(Boolean),
+        sources: []
+      },
+      workflow_template: document.orchestrator_plan?.execution_target ?? "apache-airflow",
+      pipeline_document: document,
+      orchestrator_plan: document.orchestrator_plan ?? null,
+      opened_at: new Date().toISOString()
+    });
+    router.push("/noodle/designer");
   }
 
   function handleDeleteArchitecture(draftId: string) {
@@ -483,7 +520,7 @@ export function EstimatesWorkspace() {
                 </Typography>
                 <Typography variant="body1" sx={{ color: "var(--muted)", maxWidth: 760 }}>
                   Estimates are saved to your account. Architecture drafts are saved on this device. Use the filter
-                  to switch between both kinds of saved work from one workspace.
+                  to switch between estimates, architectures, and saved pipeline work from one workspace.
                 </Typography>
               </Stack>
             </CardContent>
@@ -508,6 +545,7 @@ export function EstimatesWorkspace() {
                   <MenuItem value="all">All saved work</MenuItem>
                   <MenuItem value="estimates">Saved estimates</MenuItem>
                   <MenuItem value="architectures">Saved architectures</MenuItem>
+                  <MenuItem value="pipelines">Saved pipelines</MenuItem>
                 </TextField>
               </Stack>
             </CardContent>
@@ -992,6 +1030,144 @@ export function EstimatesWorkspace() {
                     ) : (
                       <Typography variant="body2" sx={{ color: "var(--muted)" }}>
                         Select a saved architecture draft to inspect the stored layout and reopen it in Agent Architect.
+                      </Typography>
+                    )}
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+          ) : null}
+
+          {showPipelines ? (
+            <Grid container spacing={3}>
+              <Grid item xs={12} lg={5}>
+                <Stack spacing={2}>
+                  {pipelines.length ? (
+                    pipelines.map((pipeline) => (
+                      <Card
+                        key={pipeline.id}
+                        sx={{
+                          borderRadius: 4,
+                          border: "1px solid var(--line)",
+                          boxShadow: "none",
+                          bgcolor:
+                            pipeline.id === selectedPipelineId ? "var(--accent-soft)" : "var(--panel-strong)"
+                        }}
+                      >
+                        <CardContent>
+                          <Stack spacing={1.2}>
+                            <Stack direction="row" justifyContent="space-between" spacing={1.5} alignItems="flex-start">
+                              <Box>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                                  {pipeline.name}
+                                </Typography>
+                                <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                                  Version {pipeline.version} • {pipeline.status}
+                                </Typography>
+                              </Box>
+                              <Chip label="Pipeline" />
+                            </Stack>
+                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                              <Chip size="small" label={`${pipeline.nodes.length} nodes`} />
+                              <Chip size="small" label={`${pipeline.runs.length} runs`} />
+                              <Chip size="small" label={pipeline.orchestrator_plan?.execution_target ?? "apache-airflow"} />
+                            </Stack>
+                            <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                              Saved: {new Date(pipeline.saved_at).toLocaleString()}
+                            </Typography>
+                            <Button
+                              variant={pipeline.id === selectedPipelineId ? "contained" : "outlined"}
+                              onClick={() => setSelectedPipelineId(pipeline.id)}
+                              sx={
+                                pipeline.id === selectedPipelineId
+                                  ? {
+                                      bgcolor: "var(--accent)",
+                                      color: "#ffffff",
+                                      "&:hover": { bgcolor: "#265db8" }
+                                    }
+                                  : { borderColor: "var(--line)", color: "var(--text)" }
+                              }
+                            >
+                              {pipeline.id === selectedPipelineId ? "Viewing Details" : "View Details"}
+                            </Button>
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    ))
+                  ) : (
+                    <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
+                      <CardContent>
+                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                          No saved pipeline versions yet. Save a draft or publish a release from Noodle Pipeline Designer to add it here.
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  )}
+                </Stack>
+              </Grid>
+
+              <Grid item xs={12} lg={7}>
+                <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none", minHeight: "100%" }}>
+                  <CardContent>
+                    {selectedPipeline ? (
+                      <Stack spacing={2}>
+                        <Chip
+                          label="Showing saved pipeline version"
+                          sx={{ width: "fit-content", bgcolor: "var(--accent-soft)", color: "var(--accent)" }}
+                        />
+                        <Typography variant="h5">{selectedPipeline.name}</Typography>
+                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                          Version {selectedPipeline.version} • {selectedPipeline.status} • Saved{" "}
+                          {new Date(selectedPipeline.saved_at).toLocaleString()}
+                        </Typography>
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                          <Button
+                            variant="contained"
+                            onClick={() => handleOpenSavedPipeline(selectedPipeline)}
+                            sx={{ alignSelf: "flex-start", bgcolor: "var(--accent)", "&:hover": { bgcolor: "#265db8" } }}
+                          >
+                            Open In Pipeline Designer
+                          </Button>
+                        </Stack>
+                        <Grid container spacing={2}>
+                          <Grid item xs={12} md={6}>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                              Repository Coverage
+                            </Typography>
+                            <Typography variant="body2" sx={{ color: "var(--muted)", mt: 1 }}>
+                              {selectedPipeline.connection_refs.length} connections, {selectedPipeline.metadata_assets.length} metadata
+                              assets, {selectedPipeline.schemas.length} schemas, and {selectedPipeline.transformations.length} transformations.
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} md={6}>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                              Orchestrator Plan
+                            </Typography>
+                            <Typography variant="body2" sx={{ color: "var(--muted)", mt: 1 }}>
+                              {selectedPipeline.orchestrator_plan?.tasks.length ?? 0} tasks targeting {selectedPipeline.orchestrator_plan?.execution_target ?? "apache-airflow"}.
+                            </Typography>
+                          </Grid>
+                        </Grid>
+                        <Box
+                          component="pre"
+                          sx={{
+                            m: 0,
+                            p: 2,
+                            overflowX: "auto",
+                            borderRadius: 3,
+                            border: "1px solid var(--line)",
+                            bgcolor: "#f5f7f2",
+                            fontSize: "0.8rem",
+                            lineHeight: 1.5,
+                            fontFamily: '"Cascadia Mono", "Consolas", monospace'
+                          }}
+                        >
+                          {JSON.stringify(selectedPipeline, null, 2)}
+                        </Box>
+                      </Stack>
+                    ) : (
+                      <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                        Select a saved pipeline version to reopen it in the dedicated designer workspace.
                       </Typography>
                     )}
                   </CardContent>

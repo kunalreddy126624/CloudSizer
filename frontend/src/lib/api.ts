@@ -21,9 +21,13 @@ import type {
   LivePricingRefreshRequest,
   LivePricingRefreshResponse,
   NoodleArchitectureOverview,
+  NoodlePipelineDesignerDocument,
   NoodlePipelineIntent,
+  NoodlePipelinePlanningRequest,
   NoodlePipelinePlanResponse,
   NoodlePlatformBlueprint,
+  NoodlePipelineRunCreateRequest,
+  NoodlePipelineRunResponse,
   NoodleReferenceSpec,
   PendingApprovalListResponse,
   ProviderSummary,
@@ -111,8 +115,30 @@ export function listNoodleReferenceSpecs() {
   return apiRequest<NoodleReferenceSpec[]>("/noodle/reference-specs");
 }
 
-export function planNoodlePipeline(request: NoodlePipelineIntent) {
+export function planNoodlePipeline(request: NoodlePipelinePlanningRequest) {
   return apiRequest<NoodlePipelinePlanResponse>("/noodle/pipelines/plan", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function listNoodlePipelines() {
+  return apiRequest<NoodlePipelineDesignerDocument[]>("/noodle/pipelines");
+}
+
+export function getNoodlePipeline(pipelineId: string) {
+  return apiRequest<NoodlePipelineDesignerDocument>(`/noodle/pipelines/${pipelineId}`);
+}
+
+export function saveNoodlePipeline(request: NoodlePipelineDesignerDocument) {
+  return apiRequest<NoodlePipelineDesignerDocument>("/noodle/pipelines", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function createNoodlePipelineRun(pipelineId: string, request: NoodlePipelineRunCreateRequest) {
+  return apiRequest<NoodlePipelineRunResponse>(`/noodle/pipelines/${pipelineId}/runs`, {
     method: "POST",
     body: JSON.stringify(request)
   });

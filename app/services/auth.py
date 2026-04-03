@@ -7,11 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.db import get_connection
 from app.models import AuthenticatedUser
-
-
-DEFAULT_USER_EMAIL = "demo@cloudsizer.local"
-DEFAULT_USER_NAME = "CloudSizer Demo"
-DEFAULT_USER_PASSWORD = "CloudSizer123!"
+from app.settings import get_app_settings
 
 
 def hash_password(password: str) -> str:
@@ -37,10 +33,14 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def ensure_default_user() -> None:
+    settings = get_app_settings()
+    if not settings.bootstrap_legacy_demo_user:
+        return
+
     with get_connection() as connection:
         row = connection.execute(
             "SELECT id FROM users WHERE email = ?",
-            (DEFAULT_USER_EMAIL,),
+            (settings.legacy_demo_email,),
         ).fetchone()
         if row is None:
             cursor = connection.execute(
@@ -49,9 +49,9 @@ def ensure_default_user() -> None:
                 VALUES (?, ?, ?)
                 """,
                 (
-                    DEFAULT_USER_EMAIL,
-                    DEFAULT_USER_NAME,
-                    hash_password(DEFAULT_USER_PASSWORD),
+                    settings.legacy_demo_email,
+                    settings.legacy_demo_name,
+                    hash_password(settings.legacy_demo_password),
                 ),
             )
             user_id = cursor.lastrowid

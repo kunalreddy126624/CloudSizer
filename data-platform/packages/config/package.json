@@ -1,0 +1,10 @@
+{
+  "name": "@data-platform/config",
+  "version": "0.0.1",
+  "private": true,
+  "files": [
+    "tsconfig.base.json",
+    "eslint.base.cjs",
+    "prettier.config.cjs"
+  ]
+}

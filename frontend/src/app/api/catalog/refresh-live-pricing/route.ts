@@ -6,7 +6,8 @@ export async function POST(request: Request) {
     const response = await fetch(`${API_BASE_URL}/catalog/refresh-live-pricing`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        Authorization: request.headers.get("Authorization") ?? ""
       },
       body: payload,
       cache: "no-store"

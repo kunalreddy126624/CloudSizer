@@ -222,6 +222,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   const [diagramStyle, setDiagramStyle] = useState<DiagramStyle>("reference");
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [savedArchitectureId, setSavedArchitectureId] = useState<string | null>(null);
   const [selection, setSelection] = useState<CanvasSelection>(emptyCanvasSelection);
   const [connectFromId, setConnectFromId] = useState<string | null>(null);
   const [manualProvider, setManualProvider] = useState<DiagramProvider>("shared");
@@ -290,10 +291,12 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
 
     const draft = loadArchitectCanvasDraft();
     if (!draft) {
+      setSavedArchitectureId(null);
       setHistoryHydrated(true);
       return;
     }
 
+    setSavedArchitectureId(draft.id ?? null);
     setPrompt(draft.prompt);
     setSelectedPattern((draft.plan as unknown as DiagramPlan).pattern ?? architecturePatterns[0].id);
     setSelectedScenario((draft.plan as unknown as DiagramPlan).scenario ?? architectureScenarios[0].id);
@@ -335,6 +338,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setSelectedPattern(nextPlan.pattern);
     setSelectedScenario(nextScenario);
     setSelectedProviders(nextPlan.providers);
+    setSavedArchitectureId(null);
     setRequestContext(pendingScenario.request);
     setPlan(nextPlan);
     setZoneOverrides({});
@@ -351,6 +355,8 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     }
 
     storeArchitectCanvasDraft({
+      id: savedArchitectureId ?? undefined,
+      name: plan.title,
       prompt,
       selected_providers: selectedProviders,
       diagram_style: diagramStyle,
@@ -368,6 +374,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     plan,
     prompt,
     requestContext,
+    savedArchitectureId,
     selectedProviders,
     zoneOverrides
   ]);
@@ -572,23 +579,8 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     selectedZoneIds
   ]);
 
-  const persistArchitectureDraft = useCallback(() => {
-    storeArchitectCanvasDraft({
-      prompt,
-      selected_providers: selectedProviders,
-      diagram_style: diagramStyle,
-      request_context: requestContext,
-      plan: plan as unknown as Record<string, unknown>,
-      zone_overrides: zoneOverrides,
-      lane_overrides: laneOverrides,
-      saved_at: new Date().toISOString()
-    });
-  }, [diagramStyle, laneOverrides, plan, prompt, requestContext, selectedProviders, zoneOverrides]);
-
-  const saveArchitecture = useCallback(() => {
-    const savedAt = new Date().toISOString();
-    const draftId = createId("architecture");
-    const draftRecord = {
+  const buildSavedArchitectureRecord = useCallback((draftId: string, savedAt: string) => {
+    return {
       id: draftId,
       name: plan.title,
       prompt,
@@ -600,17 +592,24 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
       lane_overrides: laneOverrides,
       saved_at: savedAt
     };
+  }, [diagramStyle, laneOverrides, plan, prompt, requestContext, selectedProviders, zoneOverrides]);
+
+  const persistArchitectureDraft = useCallback(() => {
+    const savedAt = new Date().toISOString();
+    storeArchitectCanvasDraft(buildSavedArchitectureRecord(savedArchitectureId ?? createId("architecture"), savedAt));
+  }, [buildSavedArchitectureRecord, savedArchitectureId]);
+
+  const saveArchitecture = useCallback(() => {
+    const savedAt = new Date().toISOString();
+    const draftId = savedArchitectureId ?? createId("architecture");
+    const draftRecord = buildSavedArchitectureRecord(draftId, savedAt);
+    setSavedArchitectureId(draftId);
     storeArchitectCanvasDraft(draftRecord);
     upsertSavedArchitectureDraft(draftRecord);
-    setSaveMessage(`Saved "${plan.title}" to Saved Work.`);
+    setSaveMessage(`Saved "${draftRecord.name}" to Saved Work.`);
   }, [
-    diagramStyle,
-    laneOverrides,
-    plan,
-    prompt,
-    requestContext,
-    selectedProviders,
-    zoneOverrides
+    buildSavedArchitectureRecord,
+    savedArchitectureId
   ]);
 
   useEffect(() => {
@@ -669,7 +668,15 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     return () => {
       window.removeEventListener("keydown", handleWorkspaceKeyDown);
     };
-  }, [handleRedo, handleUndo, nudgeSelection, saveArchitecture]);
+  }, [
+    handleRedo,
+    handleUndo,
+    nudgeSelection,
+    saveArchitecture,
+    selectedLaneIds.length,
+    selectedNodeIds.length,
+    selectedZoneIds.length
+  ]);
 
   function regenerateDiagram(nextPrompt = prompt, nextProviders = selectedProviders, nextRequest = requestContext) {
     setImportMessage(null);

@@ -1,0 +1,13 @@
+node_modules
+.turbo
+.next
+dist
+.pytest_cache
+__pycache__
+.mypy_cache
+.ruff_cache
+.venv
+apps/api/.env
+apps/web/.env.local
+apps/api/alembic/versions/*.pyc
+apps/api/data

@@ -49,12 +49,17 @@ def create_allocator_run(
 
 
 @router.get("/runs", response_model=AllocatorRunListResponse)
-def list_allocator_runs() -> AllocatorRunListResponse:
+def list_allocator_runs(
+    _: Principal = Depends(require_permissions(PermissionName.VIEW_ESTIMATION)),
+) -> AllocatorRunListResponse:
     return get_allocator_control_plane().list_runs()
 
 
 @router.get("/runs/{run_id}", response_model=AllocatorRunRecord)
-def get_allocator_run(run_id: int) -> AllocatorRunRecord:
+def get_allocator_run(
+    run_id: int,
+    _: Principal = Depends(require_permissions(PermissionName.VIEW_ESTIMATION)),
+) -> AllocatorRunRecord:
     try:
         return get_allocator_control_plane().get_run(run_id)
     except KeyError as exc:
@@ -62,7 +67,9 @@ def get_allocator_run(run_id: int) -> AllocatorRunRecord:
 
 
 @router.get("/approvals/pending", response_model=PendingApprovalListResponse)
-def list_pending_allocator_approvals() -> PendingApprovalListResponse:
+def list_pending_allocator_approvals(
+    _: Principal = Depends(require_permissions(PermissionName.APPROVE_REQUEST)),
+) -> PendingApprovalListResponse:
     return get_allocator_control_plane().list_pending_approvals()
 
 

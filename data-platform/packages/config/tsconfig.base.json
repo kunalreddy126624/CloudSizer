@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "jsx": "preserve",
+    "baseUrl": ".",
+    "paths": {
+      "@data-platform/types": ["../types/src"],
+      "@data-platform/designer-core": ["../designer-core/src"],
+      "@data-platform/sdk": ["../sdk/src"],
+      "@data-platform/ui": ["../ui/src"]
+    }
+  }
+}

@@ -18,11 +18,10 @@ class NoodleSettings:
 def get_noodle_settings() -> NoodleSettings:
     return NoodleSettings(
         environment=os.getenv("NOODLE_ENVIRONMENT", "development"),
-        workflow_backend=os.getenv("NOODLE_WORKFLOW_BACKEND", "temporal"),
+        workflow_backend=os.getenv("NOODLE_WORKFLOW_BACKEND", "apache-airflow"),
         event_backbone=os.getenv("NOODLE_EVENT_BACKBONE", "kafka"),
         metadata_backend=os.getenv("NOODLE_METADATA_BACKEND", "datahub"),
         lakehouse_format=os.getenv("NOODLE_LAKEHOUSE_FORMAT", "iceberg"),
         serving_api_base=os.getenv("NOODLE_SERVING_API_BASE", "/noodle"),
         llm_provider=os.getenv("NOODLE_LLM_PROVIDER", "openai-compatible-gateway"),
     )
-

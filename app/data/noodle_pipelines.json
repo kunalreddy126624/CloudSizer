@@ -1,0 +1,415 @@
+[
+  {
+    "id": "pipeline-version-1775209472428-8pjcza",
+    "name": "edge-operations-control-plane",
+    "status": "published",
+    "version": 1,
+    "nodes": [
+      {
+        "id": "source-1775209454371-i1y8pe",
+        "label": "edge sensors",
+        "kind": "source",
+        "position": {
+          "x": 40.0,
+          "y": 70.0
+        },
+        "params": [
+          {
+            "key": "plugin",
+            "value": "source-plugin"
+          },
+          {
+            "key": "connection_ref",
+            "value": "source-connection"
+          }
+        ]
+      },
+      {
+        "id": "source-1775209454372-dw42mv",
+        "label": "erp work orders",
+        "kind": "source",
+        "position": {
+          "x": 40.0,
+          "y": 200.0
+        },
+        "params": [
+          {
+            "key": "plugin",
+            "value": "source-plugin"
+          },
+          {
+            "key": "connection_ref",
+            "value": "source-connection"
+          }
+        ]
+      },
+      {
+        "id": "ingest-1775209454372-i7eqjx",
+        "label": "Landing ingest",
+        "kind": "ingest",
+        "position": {
+          "x": 320.0,
+          "y": 130.0
+        },
+        "params": [
+          {
+            "key": "runner",
+            "value": "airflow-dag"
+          },
+          {
+            "key": "operator",
+            "value": "python"
+          },
+          {
+            "key": "target_zone",
+            "value": "bronze"
+          }
+        ]
+      },
+      {
+        "id": "transform-1775209454372-i32et1",
+        "label": "Curate transforms",
+        "kind": "transform",
+        "position": {
+          "x": 620.0,
+          "y": 130.0
+        },
+        "params": [
+          {
+            "key": "plugin",
+            "value": "transform-plugin"
+          },
+          {
+            "key": "target_zone",
+            "value": "silver"
+          }
+        ]
+      },
+      {
+        "id": "quality-1775209454372-6yav18",
+        "label": "Quality gate",
+        "kind": "quality",
+        "position": {
+          "x": 920.0,
+          "y": 130.0
+        },
+        "params": [
+          {
+            "key": "checks",
+            "value": "schema, freshness, nulls"
+          },
+          {
+            "key": "lineage_required",
+            "value": "true"
+          }
+        ]
+      },
+      {
+        "id": "serve-1775209454372-djkdmh",
+        "label": "Serve outputs",
+        "kind": "serve",
+        "position": {
+          "x": 1220.0,
+          "y": 130.0
+        },
+        "params": [
+          {
+            "key": "surface",
+            "value": "api"
+          },
+          {
+            "key": "artifact_sink",
+            "value": "serving"
+          }
+        ]
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-1775209454372-fk57de",
+        "source": "source-1775209454371-i1y8pe",
+        "target": "ingest-1775209454372-i7eqjx"
+      },
+      {
+        "id": "edge-1775209454372-3ogt9w",
+        "source": "source-1775209454372-dw42mv",
+        "target": "ingest-1775209454372-i7eqjx"
+      },
+      {
+        "id": "edge-1775209454372-jp0wdk",
+        "source": "ingest-1775209454372-i7eqjx",
+        "target": "transform-1775209454372-i32et1"
+      },
+      {
+        "id": "edge-1775209454372-pqvj6y",
+        "source": "transform-1775209454372-i32et1",
+        "target": "quality-1775209454372-6yav18"
+      },
+      {
+        "id": "edge-1775209454372-xp07fz",
+        "source": "quality-1775209454372-6yav18",
+        "target": "serve-1775209454372-djkdmh"
+      }
+    ],
+    "connection_refs": [
+      {
+        "id": "connection-1775209454372-vho0iw",
+        "name": "edge_sensors-connection",
+        "plugin": "iot-plugin",
+        "environment": "edge",
+        "auth_ref": "edge_sensors-secret",
+        "notes": "Iot plugin for edge_sensors."
+      },
+      {
+        "id": "connection-1775209454372-ldfgff",
+        "name": "erp_work_orders-connection",
+        "plugin": "database-plugin",
+        "environment": "on_prem",
+        "auth_ref": "erp_work_orders-secret",
+        "notes": "Database plugin for erp_work_orders."
+      }
+    ],
+    "metadata_assets": [
+      {
+        "id": "metadata-1775209454372-7a0ztd",
+        "name": "edge-operations-control-plane-bronze",
+        "zone": "bronze",
+        "owner": "data-platform",
+        "classification": "internal",
+        "tags": [
+          "raw",
+          "ingestion"
+        ]
+      },
+      {
+        "id": "metadata-1775209454372-ujuq6f",
+        "name": "edge-operations-control-plane-serving",
+        "zone": "serving",
+        "owner": "analytics",
+        "classification": "governed",
+        "tags": [
+          "serving",
+          "published"
+        ]
+      }
+    ],
+    "schemas": [
+      {
+        "id": "schema-1775209454372-eqq3if",
+        "name": "edge_sensors_schema",
+        "source_connection_id": "connection-1775209454372-vho0iw",
+        "fields": [
+          {
+            "id": "field-1775209454372-szk7nk",
+            "name": "event_time",
+            "type": "timestamp",
+            "nullable": false,
+            "description": "Primary ingestion event timestamp."
+          },
+          {
+            "id": "field-1775209454372-714rrx",
+            "name": "payload",
+            "type": "protobuf telemetry",
+            "nullable": false,
+            "description": "Raw source payload."
+          }
+        ]
+      },
+      {
+        "id": "schema-1775209454372-4gh8x9",
+        "name": "erp_work_orders_schema",
+        "source_connection_id": "connection-1775209454372-ldfgff",
+        "fields": [
+          {
+            "id": "field-1775209454372-iz5c22",
+            "name": "event_time",
+            "type": "timestamp",
+            "nullable": false,
+            "description": "Primary ingestion event timestamp."
+          },
+          {
+            "id": "field-1775209454372-m343l3",
+            "name": "payload",
+            "type": "oracle relational",
+            "nullable": false,
+            "description": "Raw source payload."
+          }
+        ]
+      }
+    ],
+    "schedule": {
+      "trigger": "manual",
+      "cron": "0 * * * *",
+      "timezone": "UTC",
+      "enabled": false,
+      "concurrency_policy": "forbid"
+    },
+    "runs": [
+      {
+        "id": "run-1775209454372-6ej1wh",
+        "label": "Manual run",
+        "orchestrator": "Apache Airflow",
+        "status": "running",
+        "trigger": "manual",
+        "started_at": "2026-04-03T09:36:14.372Z",
+        "finished_at": null,
+        "task_runs": [
+          {
+            "id": "task-run-1775209454372-tjwoe0",
+            "node_id": "source-1775209454371-i1y8pe",
+            "node_label": "edge sensors",
+            "state": "success",
+            "started_at": "2026-04-03T09:36:14.372Z",
+            "finished_at": "2026-04-03T09:37:14.372Z"
+          },
+          {
+            "id": "task-run-1775209454372-te7ojz",
+            "node_id": "source-1775209454372-dw42mv",
+            "node_label": "erp work orders",
+            "state": "success",
+            "started_at": "2026-04-03T09:37:14.372Z",
+            "finished_at": "2026-04-03T09:38:14.372Z"
+          },
+          {
+            "id": "task-run-1775209454372-7dema4",
+            "node_id": "ingest-1775209454372-i7eqjx",
+            "node_label": "Landing ingest",
+            "state": "queued",
+            "started_at": null,
+            "finished_at": null
+          },
+          {
+            "id": "task-run-1775209454372-nciaua",
+            "node_id": "transform-1775209454372-i32et1",
+            "node_label": "Curate transforms",
+            "state": "running",
+            "started_at": null,
+            "finished_at": null
+          },
+          {
+            "id": "task-run-1775209454372-vd77am",
+            "node_id": "quality-1775209454372-6yav18",
+            "node_label": "Quality gate",
+            "state": "queued",
+            "started_at": null,
+            "finished_at": null
+          },
+          {
+            "id": "task-run-1775209454372-vvmfvl",
+            "node_id": "serve-1775209454372-djkdmh",
+            "node_label": "Serve outputs",
+            "state": "queued",
+            "started_at": null,
+            "finished_at": null
+          }
+        ],
+        "logs": [
+          {
+            "id": "run-log-1775209454372-luwwdf",
+            "timestamp": "2026-04-03T09:44:14.372Z",
+            "level": "log",
+            "message": "Manual run: Airflow DAG parsed from the JSON pipeline spec.",
+            "node_id": null
+          },
+          {
+            "id": "run-log-1775209454372-5re8gv",
+            "timestamp": "2026-04-03T09:44:14.372Z",
+            "level": "info",
+            "message": "Manual run: Scheduler accepted the run and queued upstream tasks.",
+            "node_id": null
+          },
+          {
+            "id": "run-log-1775209454372-njukjv",
+            "timestamp": "2026-04-03T09:44:14.372Z",
+            "level": "warn",
+            "message": "Manual run: Quality gate is waiting on schema checks before downstream serving tasks can start.",
+            "node_id": "transform-1775209454372-i32et1"
+          }
+        ]
+      },
+      {
+        "id": "run-1775209454372-h8y526",
+        "label": "Scheduled hourly run",
+        "orchestrator": "Apache Airflow",
+        "status": "success",
+        "trigger": "schedule",
+        "started_at": "2026-04-03T08:14:14.372Z",
+        "finished_at": "2026-04-03T08:30:14.372Z",
+        "task_runs": [
+          {
+            "id": "task-run-1775209454372-hprriq",
+            "node_id": "source-1775209454371-i1y8pe",
+            "node_label": "edge sensors",
+            "state": "success",
+            "started_at": "2026-04-03T08:16:14.372Z",
+            "finished_at": "2026-04-03T08:28:14.372Z"
+          },
+          {
+            "id": "task-run-1775209454372-zdul10",
+            "node_id": "source-1775209454372-dw42mv",
+            "node_label": "erp work orders",
+            "state": "success",
+            "started_at": "2026-04-03T08:16:14.372Z",
+            "finished_at": "2026-04-03T08:28:14.372Z"
+          },
+          {
+            "id": "task-run-1775209454372-ax2bey",
+            "node_id": "ingest-1775209454372-i7eqjx",
+            "node_label": "Landing ingest",
+            "state": "success",
+            "started_at": "2026-04-03T08:16:14.372Z",
+            "finished_at": "2026-04-03T08:28:14.372Z"
+          },
+          {
+            "id": "task-run-1775209454372-bzmsxm",
+            "node_id": "transform-1775209454372-i32et1",
+            "node_label": "Curate transforms",
+            "state": "success",
+            "started_at": "2026-04-03T08:16:14.372Z",
+            "finished_at": "2026-04-03T08:28:14.372Z"
+          },
+          {
+            "id": "task-run-1775209454372-pnfrqk",
+            "node_id": "quality-1775209454372-6yav18",
+            "node_label": "Quality gate",
+            "state": "success",
+            "started_at": "2026-04-03T08:16:14.372Z",
+            "finished_at": "2026-04-03T08:28:14.372Z"
+          },
+          {
+            "id": "task-run-1775209454372-ayt4fc",
+            "node_id": "serve-1775209454372-djkdmh",
+            "node_label": "Serve outputs",
+            "state": "success",
+            "started_at": "2026-04-03T08:16:14.372Z",
+            "finished_at": "2026-04-03T08:28:14.372Z"
+          }
+        ],
+        "logs": [
+          {
+            "id": "run-log-1775209454372-5qii5j",
+            "timestamp": "2026-04-03T09:44:14.372Z",
+            "level": "log",
+            "message": "Scheduled hourly run: Airflow scheduler triggered the DAG from the cron definition.",
+            "node_id": null
+          },
+          {
+            "id": "run-log-1775209454372-3spmzg",
+            "timestamp": "2026-04-03T09:44:14.372Z",
+            "level": "info",
+            "message": "Scheduled hourly run: Source plugin edge sensors finished ingestion and emitted lineage.",
+            "node_id": null
+          },
+          {
+            "id": "run-log-1775209454372-d1wq1r",
+            "timestamp": "2026-04-03T09:44:14.372Z",
+            "level": "info",
+            "message": "Scheduled hourly run: Run completed successfully with artifacts and metrics persisted.",
+            "node_id": null
+          }
+        ]
+      }
+    ],
+    "saved_at": "2026-04-03T09:44:32.463825+00:00"
+  }
+]

@@ -20,6 +20,7 @@ from app.noodle.schemas import (
     NoodleMicroserviceCatalogResponse,
     NoodleMicroserviceDetailResponse,
     NoodlePipelineIntent,
+    NoodlePipelinePlanningRequest,
     NoodlePipelineObservability,
     NoodlePipelinePlanResponse,
     NoodlePolicyEvaluationRequest,
@@ -71,7 +72,7 @@ def get_microservice(service_name: str) -> NoodleMicroserviceDetailResponse:
 
 @router.post("/planner/generate", response_model=NoodlePipelinePlanResponse)
 def planner_generate(intent: NoodlePipelineIntent) -> NoodlePipelinePlanResponse:
-    return get_noodle_service().plan_pipeline(intent)
+    return get_noodle_service().plan_pipeline(NoodlePipelinePlanningRequest(intent=intent))
 
 
 @router.get("/planner/templates", response_model=list[str])

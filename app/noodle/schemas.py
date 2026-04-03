@@ -84,6 +84,101 @@ class NoodleScalabilityConcern(BaseModel):
     strategy: str
 
 
+class NoodleArchitecturePrinciple(BaseModel):
+    title: str
+    directive: str
+    rationale: str
+
+
+class NoodlePlatformPlane(BaseModel):
+    name: str
+    responsibility: str
+    components: list[str] = Field(default_factory=list)
+
+
+class NoodleRepositorySection(BaseModel):
+    root: str
+    paths: list[str] = Field(default_factory=list)
+
+
+class NoodleRecommendedStackItem(BaseModel):
+    layer: str
+    technologies: list[str] = Field(default_factory=list)
+
+
+class NoodleBuildPhase(BaseModel):
+    phase: str
+    outcomes: list[str] = Field(default_factory=list)
+
+
+class NoodleExecutionFlowStep(BaseModel):
+    step: str
+    description: str
+
+
+class NoodleTaskState(BaseModel):
+    name: str
+    description: str
+
+
+class NoodleExecutionEngineBlueprint(BaseModel):
+    summary: str
+    flow: list[NoodleExecutionFlowStep] = Field(default_factory=list)
+    task_states: list[NoodleTaskState] = Field(default_factory=list)
+
+
+class NoodleSavedArchitectureContext(BaseModel):
+    name: str
+    prompt: str
+    selected_providers: list[str] = Field(default_factory=list)
+    diagram_style: str | None = None
+    summary: str = ""
+    assumptions: list[str] = Field(default_factory=list)
+    components: list[str] = Field(default_factory=list)
+    cloud_services: list[str] = Field(default_factory=list)
+    data_flow: list[str] = Field(default_factory=list)
+    scaling_strategy: list[str] = Field(default_factory=list)
+    security_considerations: list[str] = Field(default_factory=list)
+    saved_at: str | None = None
+
+
+class NoodleArchitectureAlignmentItem(BaseModel):
+    area: str
+    guidance: str
+
+
+TaskExecutionPlane = Literal["control_plane", "airflow", "worker", "quality", "serving"]
+
+
+class NoodleOrchestratorTaskPlan(BaseModel):
+    id: str
+    node_id: str | None = None
+    name: str
+    stage: str
+    plugin: str
+    execution_plane: TaskExecutionPlane
+    depends_on: list[str] = Field(default_factory=list)
+    outputs: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+
+class NoodleOrchestratorPlan(BaseModel):
+    id: str
+    name: str
+    objective: str
+    trigger: Literal["manual", "schedule", "event"] = "manual"
+    execution_target: str
+    tasks: list[NoodleOrchestratorTaskPlan] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class NoodlePipelinePlanningRequest(BaseModel):
+    intent: NoodlePipelineIntent
+    architecture_context: NoodleSavedArchitectureContext | None = None
+    architecture_overview: NoodleArchitectureOverview | None = None
+    practice_principles: list[NoodleArchitecturePrinciple] = Field(default_factory=list)
+
+
 class NoodlePipelinePlanResponse(BaseModel):
     intent: NoodlePipelineIntent
     connectors: list[NoodleConnectorPlan]
@@ -93,6 +188,11 @@ class NoodlePipelinePlanResponse(BaseModel):
     observability: list[NoodleObservabilityCapability]
     serving_patterns: list[str]
     workflow_template: str
+    architecture_context_name: str | None = None
+    practice_principles_applied: list[str] = Field(default_factory=list)
+    architecture_alignment: list[NoodleArchitectureAlignmentItem] = Field(default_factory=list)
+    agent_momo_brief: str = ""
+    orchestrator_plan: NoodleOrchestratorPlan | None = None
 
 
 class NoodleReferenceSpec(BaseModel):
@@ -122,6 +222,12 @@ class NoodlePlatformBlueprint(BaseModel):
     governance_stack: list[str]
     ai_stack: list[str]
     observability_stack: list[str]
+    design_principles: list[NoodleArchitecturePrinciple]
+    platform_planes: list[NoodlePlatformPlane]
+    repository_layout: list[NoodleRepositorySection]
+    recommended_stack: list[NoodleRecommendedStackItem]
+    build_phases: list[NoodleBuildPhase]
+    execution_engine: NoodleExecutionEngineBlueprint
 
 
 class NoodleServiceEndpoint(BaseModel):
@@ -291,3 +397,145 @@ class NoodlePipelineObservability(BaseModel):
     error_rate_percent: float
     monthly_cost_usd: float
     quality_score: float
+
+
+DesignerNodeKind = Literal["source", "ingest", "transform", "quality", "feature", "serve"]
+DesignerDocumentStatus = Literal["draft", "published"]
+DesignerTargetZone = Literal["bronze", "silver", "gold", "feature_store", "serving", "control_plane"]
+DesignerTransformationMode = Literal["python", "sql", "dbt", "spark_sql", "custom"]
+DesignerRunStatus = Literal["queued", "running", "success", "failed", "cancelled"]
+DesignerTaskRunState = Literal["pending", "queued", "running", "success", "failed", "retrying", "skipped", "cancelled"]
+DesignerLogLevel = Literal["log", "info", "warn"]
+
+
+class NoodleDesignerParam(BaseModel):
+    key: str
+    value: str
+
+
+class NoodleDesignerPosition(BaseModel):
+    x: float
+    y: float
+
+
+class NoodleDesignerNode(BaseModel):
+    id: str
+    label: str
+    kind: DesignerNodeKind
+    position: NoodleDesignerPosition
+    params: list[NoodleDesignerParam] = Field(default_factory=list)
+
+
+class NoodleDesignerEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+
+
+class NoodleDesignerConnectionRef(BaseModel):
+    id: str
+    name: str
+    plugin: str
+    environment: str
+    auth_ref: str
+    notes: str
+
+
+class NoodleDesignerMetadataAsset(BaseModel):
+    id: str
+    name: str
+    zone: DesignerTargetZone
+    owner: str
+    classification: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class NoodleDesignerSchemaField(BaseModel):
+    id: str
+    name: str
+    type: str
+    nullable: bool
+    description: str
+
+
+class NoodleDesignerSchema(BaseModel):
+    id: str
+    name: str
+    source_connection_id: str | None = None
+    fields: list[NoodleDesignerSchemaField] = Field(default_factory=list)
+
+
+class NoodleDesignerTransformation(BaseModel):
+    id: str
+    node_id: str | None = None
+    name: str
+    plugin: str
+    mode: DesignerTransformationMode = "python"
+    description: str = ""
+    code: str = ""
+    config_json: str = "{}"
+    tags: list[str] = Field(default_factory=list)
+
+
+class NoodleDesignerSchedule(BaseModel):
+    trigger: Literal["manual", "schedule", "event"] = "manual"
+    cron: str = ""
+    timezone: str = "UTC"
+    enabled: bool = False
+    concurrency_policy: Literal["allow", "forbid", "replace"] = "forbid"
+
+
+class NoodleDesignerRunTask(BaseModel):
+    id: str
+    node_id: str
+    node_label: str
+    state: DesignerTaskRunState
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class NoodleDesignerRunLog(BaseModel):
+    id: str
+    timestamp: str
+    level: DesignerLogLevel
+    message: str
+    node_id: str | None = None
+
+
+class NoodleDesignerRun(BaseModel):
+    id: str
+    label: str
+    orchestrator: str
+    status: DesignerRunStatus
+    trigger: Literal["manual", "schedule", "event"]
+    started_at: str
+    finished_at: str | None = None
+    task_runs: list[NoodleDesignerRunTask] = Field(default_factory=list)
+    logs: list[NoodleDesignerRunLog] = Field(default_factory=list)
+
+
+class NoodlePipelineDocument(BaseModel):
+    id: str
+    name: str
+    status: DesignerDocumentStatus
+    version: int
+    nodes: list[NoodleDesignerNode] = Field(default_factory=list)
+    edges: list[NoodleDesignerEdge] = Field(default_factory=list)
+    connection_refs: list[NoodleDesignerConnectionRef] = Field(default_factory=list)
+    metadata_assets: list[NoodleDesignerMetadataAsset] = Field(default_factory=list)
+    schemas: list[NoodleDesignerSchema] = Field(default_factory=list)
+    transformations: list[NoodleDesignerTransformation] = Field(default_factory=list)
+    orchestrator_plan: NoodleOrchestratorPlan | None = None
+    schedule: NoodleDesignerSchedule
+    runs: list[NoodleDesignerRun] = Field(default_factory=list)
+    saved_at: str
+
+
+class NoodlePipelineRunCreateRequest(BaseModel):
+    trigger: Literal["manual", "event", "schedule"] = "manual"
+    document: NoodlePipelineDocument | None = None
+
+
+class NoodlePipelineRunResponse(BaseModel):
+    pipeline: NoodlePipelineDocument
+    run: NoodleDesignerRun

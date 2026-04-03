@@ -19,6 +19,7 @@ from app.rbac.schemas import (
     UserRead,
 )
 from app.rbac.security import create_access_token, hash_password, verify_password
+from app.settings import get_app_settings
 
 
 PERMISSION_DESCRIPTIONS: dict[PermissionName, str] = {
@@ -262,12 +263,16 @@ class RbacService:
             role.permissions = [permissions[name.value] for name in permission_names]
 
     def _ensure_default_admin(self, session: Session) -> None:
-        admin = self._get_user_by_email(session, "admin@cloudsizer.local")
+        settings = get_app_settings()
+        if not settings.bootstrap_rbac_admin_user:
+            return
+
+        admin = self._get_user_by_email(session, settings.rbac_admin_email)
         if admin is None:
             admin = User(
-                email="admin@cloudsizer.local",
-                full_name="CloudSizer Admin",
-                password_hash=hash_password("CloudSizer123!"),
+                email=settings.rbac_admin_email,
+                full_name=settings.rbac_admin_name,
+                password_hash=hash_password(settings.rbac_admin_password),
                 is_active=True,
             )
             session.add(admin)

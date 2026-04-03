@@ -755,6 +755,105 @@ export interface NoodleScalabilityConcern {
   strategy: string;
 }
 
+export interface NoodleArchitecturePrinciple {
+  title: string;
+  directive: string;
+  rationale: string;
+}
+
+export interface NoodlePlatformPlane {
+  name: string;
+  responsibility: string;
+  components: string[];
+}
+
+export interface NoodleRepositorySection {
+  root: string;
+  paths: string[];
+}
+
+export interface NoodleRecommendedStackItem {
+  layer: string;
+  technologies: string[];
+}
+
+export interface NoodleBuildPhase {
+  phase: string;
+  outcomes: string[];
+}
+
+export interface NoodleExecutionFlowStep {
+  step: string;
+  description: string;
+}
+
+export interface NoodleTaskState {
+  name: string;
+  description: string;
+}
+
+export interface NoodleExecutionEngineBlueprint {
+  summary: string;
+  flow: NoodleExecutionFlowStep[];
+  task_states: NoodleTaskState[];
+}
+
+export interface NoodleSavedArchitectureContext {
+  name: string;
+  prompt: string;
+  selected_providers: string[];
+  diagram_style?: string | null;
+  summary: string;
+  assumptions: string[];
+  components: string[];
+  cloud_services: string[];
+  data_flow: string[];
+  scaling_strategy: string[];
+  security_considerations: string[];
+  saved_at?: string | null;
+}
+
+export interface NoodleArchitectureAlignmentItem {
+  area: string;
+  guidance: string;
+}
+
+export type NoodleTaskExecutionPlane =
+  | "control_plane"
+  | "airflow"
+  | "worker"
+  | "quality"
+  | "serving";
+
+export interface NoodleOrchestratorTaskPlan {
+  id: string;
+  node_id?: string | null;
+  name: string;
+  stage: string;
+  plugin: string;
+  execution_plane: NoodleTaskExecutionPlane;
+  depends_on: string[];
+  outputs: string[];
+  notes: string;
+}
+
+export interface NoodleOrchestratorPlan {
+  id: string;
+  name: string;
+  objective: string;
+  trigger: "manual" | "schedule" | "event";
+  execution_target: string;
+  tasks: NoodleOrchestratorTaskPlan[];
+  notes: string[];
+}
+
+export interface NoodlePipelinePlanningRequest {
+  intent: NoodlePipelineIntent;
+  architecture_context?: NoodleSavedArchitectureContext | null;
+  architecture_overview?: NoodleArchitectureOverview | null;
+  practice_principles?: NoodleArchitecturePrinciple[];
+}
+
 export interface NoodlePipelinePlanResponse {
   intent: NoodlePipelineIntent;
   connectors: NoodleConnectorPlan[];
@@ -764,6 +863,11 @@ export interface NoodlePipelinePlanResponse {
   observability: NoodleObservabilityCapability[];
   serving_patterns: string[];
   workflow_template: string;
+  architecture_context_name?: string | null;
+  practice_principles_applied: string[];
+  architecture_alignment: NoodleArchitectureAlignmentItem[];
+  agent_momo_brief: string;
+  orchestrator_plan: NoodleOrchestratorPlan;
 }
 
 export interface NoodleReferenceSpec {
@@ -793,4 +897,172 @@ export interface NoodlePlatformBlueprint {
   governance_stack: string[];
   ai_stack: string[];
   observability_stack: string[];
+  design_principles: NoodleArchitecturePrinciple[];
+  platform_planes: NoodlePlatformPlane[];
+  repository_layout: NoodleRepositorySection[];
+  recommended_stack: NoodleRecommendedStackItem[];
+  build_phases: NoodleBuildPhase[];
+  execution_engine: NoodleExecutionEngineBlueprint;
+}
+
+export type NoodleDesignerNodeKind =
+  | "source"
+  | "ingest"
+  | "transform"
+  | "quality"
+  | "feature"
+  | "serve";
+
+export interface NoodleDesignerParam {
+  key: string;
+  value: string;
+}
+
+export interface NoodleDesignerNode {
+  id: string;
+  label: string;
+  kind: NoodleDesignerNodeKind;
+  position: {
+    x: number;
+    y: number;
+  };
+  params: NoodleDesignerParam[];
+}
+
+export interface NoodleDesignerEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+
+export type NoodleDesignerDocumentStatus = "draft" | "published";
+export type NoodleDesignerValidationLevel = "error" | "warning";
+
+export interface NoodleDesignerValidation {
+  id: string;
+  level: NoodleDesignerValidationLevel;
+  message: string;
+}
+
+export interface NoodlePipelineDesignerDocument {
+  id: string;
+  name: string;
+  status: NoodleDesignerDocumentStatus;
+  version: number;
+  nodes: NoodleDesignerNode[];
+  edges: NoodleDesignerEdge[];
+  connection_refs: NoodleDesignerConnectionRef[];
+  metadata_assets: NoodleDesignerMetadataAsset[];
+  schemas: NoodleDesignerSchema[];
+  transformations: NoodleDesignerTransformation[];
+  orchestrator_plan: NoodleOrchestratorPlan;
+  schedule: NoodleDesignerSchedule;
+  runs: NoodleDesignerRun[];
+  saved_at: string;
+}
+
+export interface NoodleDesignerConnectionRef {
+  id: string;
+  name: string;
+  plugin: string;
+  environment: string;
+  auth_ref: string;
+  notes: string;
+}
+
+export interface NoodleDesignerMetadataAsset {
+  id: string;
+  name: string;
+  zone: NoodleTargetZone | "control_plane";
+  owner: string;
+  classification: string;
+  tags: string[];
+}
+
+export interface NoodleDesignerSchemaField {
+  id: string;
+  name: string;
+  type: string;
+  nullable: boolean;
+  description: string;
+}
+
+export interface NoodleDesignerSchema {
+  id: string;
+  name: string;
+  source_connection_id?: string | null;
+  fields: NoodleDesignerSchemaField[];
+}
+
+export type NoodleDesignerTransformationMode = "python" | "sql" | "dbt" | "spark_sql" | "custom";
+
+export interface NoodleDesignerTransformation {
+  id: string;
+  node_id?: string | null;
+  name: string;
+  plugin: string;
+  mode: NoodleDesignerTransformationMode;
+  description: string;
+  code: string;
+  config_json: string;
+  tags: string[];
+}
+
+export interface NoodleDesignerSchedule {
+  trigger: "manual" | "schedule" | "event";
+  cron: string;
+  timezone: string;
+  enabled: boolean;
+  concurrency_policy: "allow" | "forbid" | "replace";
+}
+
+export type NoodleDesignerRunStatus = "queued" | "running" | "success" | "failed" | "cancelled";
+export type NoodleDesignerTaskRunState =
+  | "pending"
+  | "queued"
+  | "running"
+  | "success"
+  | "failed"
+  | "retrying"
+  | "skipped"
+  | "cancelled";
+export type NoodleDesignerLogLevel = "log" | "info" | "warn";
+
+export interface NoodleDesignerRunTask {
+  id: string;
+  node_id: string;
+  node_label: string;
+  state: NoodleDesignerTaskRunState;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+export interface NoodleDesignerRunLog {
+  id: string;
+  timestamp: string;
+  level: NoodleDesignerLogLevel;
+  message: string;
+  node_id?: string | null;
+}
+
+export interface NoodleDesignerRun {
+  id: string;
+  label: string;
+  orchestrator: string;
+  status: NoodleDesignerRunStatus;
+  trigger: "manual" | "schedule" | "event";
+  started_at: string;
+  finished_at?: string | null;
+  task_runs: NoodleDesignerRunTask[];
+  logs: NoodleDesignerRunLog[];
+}
+
+export interface NoodlePipelineRunCreateRequest {
+  trigger: "manual" | "schedule" | "event";
+  document?: NoodlePipelineDesignerDocument | null;
+}
+
+export interface NoodlePipelineRunResponse {
+  pipeline: NoodlePipelineDesignerDocument;
+  run: NoodleDesignerRun;
 }

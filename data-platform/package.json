@@ -1,0 +1,16 @@
+{
+  "name": "data-platform",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "seed": "python apps/api/app/seed.py"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.3"
+  }
+}
