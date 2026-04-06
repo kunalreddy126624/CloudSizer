@@ -2,9 +2,12 @@
 name = "cloudsizer"
 version = "0.1.0"
 description = "CloudSizer backend"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
+    "httpx>=0.28.1",
     "pydantic>=2.10.0",
+    "sqlalchemy>=2.0.36",
+    "pyjwt>=2.10.1",
     "uvicorn>=0.34.0",
 ]

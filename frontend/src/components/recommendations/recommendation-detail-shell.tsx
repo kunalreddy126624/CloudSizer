@@ -147,7 +147,7 @@ export function RecommendationDetailShell() {
                       <MetricCard label="Actual comparisons" value={String(recommendation.accuracy.compared_actuals_count)} />
                     </Grid>
                     <Grid item xs={12} md={3}>
-                      <MetricCard label="Live pricing" value={`${recommendation.accuracy.live_pricing_coverage_percent}%`} />
+                      <MetricCard label="Pricing coverage" value={`${recommendation.accuracy.live_pricing_coverage_percent}%`} />
                     </Grid>
                   </>
                 ) : null}
@@ -200,6 +200,9 @@ export function RecommendationDetailShell() {
                               <Typography variant="subtitle2">Verification</Typography>
                               <Typography variant="body2" sx={{ color: "var(--muted)" }}>
                                 Confidence label: {recommendation.accuracy.confidence_label}
+                              </Typography>
+                              <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                                Coverage is weighted across direct live provider rates, benchmark-live family rates, snapshots, and generated comparisons.
                               </Typography>
                               {recommendation.accuracy.mean_absolute_percentage_error != null ? (
                                 <Typography variant="body2" sx={{ color: "var(--muted)" }}>

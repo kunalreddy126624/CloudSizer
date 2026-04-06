@@ -80,7 +80,7 @@ export function SignupWorkspace() {
     );
 
     setSuccess(
-      "Signup details saved on this device. Self-service account creation is not connected to the backend yet, so use the demo login or have an admin create the account."
+      "Signup details saved on this device. Self-service account creation is not connected to the backend yet, so have an admin create the account."
     );
   }
 
@@ -126,7 +126,7 @@ export function SignupWorkspace() {
                         Best current path
                       </Typography>
                       <Typography variant="body2" sx={{ color: "var(--muted)", mt: 1, lineHeight: 1.6 }}>
-                        Use the demo login for immediate access, or save your details here and have an admin create the account.
+                        Save your details here and have an admin create the account until self-service signup is connected.
                       </Typography>
                     </CardContent>
                   </Card>
@@ -161,10 +161,6 @@ export function SignupWorkspace() {
                       Save your access request details and continue with demo access until backend signup is enabled.
                     </Typography>
                   </Box>
-
-                  <Alert severity="info">
-                    Demo login: <strong>demo@cloudsizer.local</strong> / <strong>CloudSizer123!</strong>
-                  </Alert>
 
                   {isAuthenticated && user ? (
                     <Alert severity="success">You are already signed in as {user.full_name}. Open the workspace or agent estimator.</Alert>

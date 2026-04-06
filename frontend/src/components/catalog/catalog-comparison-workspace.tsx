@@ -33,7 +33,8 @@ const categoryOptions: { value: ServiceCategory | "all"; label: string }[] = [
   { value: "networking", label: "Networking" },
   { value: "analytics", label: "Analytics" },
   { value: "ai_ml", label: "AI / ML" },
-  { value: "security", label: "Security" }
+  { value: "security", label: "Security" },
+  { value: "saas", label: "SaaS Applications" }
 ];
 
 export function CatalogComparisonWorkspace() {

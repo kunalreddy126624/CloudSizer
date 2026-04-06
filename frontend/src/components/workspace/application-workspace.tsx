@@ -28,6 +28,18 @@ const applications = [
     description: "Describe the workload in plain language and get a full recommendation set in one run."
   },
   {
+    name: "Agent Allocator",
+    href: "/allocator",
+    tag: "Provision",
+    description: "Turn an approved estimate into a cloud-account plan, Terraform bundle, and gated provisioning run."
+  },
+  {
+    name: "Noodle Orchestrator",
+    href: "/noodle",
+    tag: "Data Platform",
+    description: "Design AI-driven data orchestration across hybrid, multi-cloud, and edge environments from one control plane."
+  },
+  {
     name: "Form Estimator",
     href: "/estimator",
     tag: "Structured",
@@ -52,10 +64,10 @@ const applications = [
     description: "Browse comparable services across providers before you estimate or price."
   },
   {
-    name: "Saved Estimates",
+    name: "Saved Work",
     href: "/estimates",
     tag: "History",
-    description: "Reopen saved advisor and pricing outputs, then continue from where you stopped."
+    description: "Reopen saved estimates and architecture drafts, then continue from where you stopped."
   }
 ] as const;
 
@@ -199,7 +211,7 @@ export function ApplicationWorkspace() {
                   <Grid item xs={12} md={4}>
                     <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "var(--panel-strong)" }}>
                       <CardContent>
-                        <Typography variant="overline">Saved Estimates</Typography>
+                        <Typography variant="overline">Saved Work</Typography>
                         <Typography variant="h4">{isAuthenticated ? savedEstimateCount : "--"}</Typography>
                         <Typography variant="body2" sx={{ color: "var(--muted)" }}>
                           {isAuthenticated ? formatSavedEstimateDate(latestSavedEstimateAt) : "Available after sign-in"}

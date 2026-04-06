@@ -80,7 +80,7 @@ class EstimateVerificationTest(unittest.TestCase):
 
         self.assertEqual(summary.compared_actuals_count, 1)
         self.assertAlmostEqual(summary.mean_absolute_percentage_error or 0.0, 16.67, places=2)
-        self.assertEqual(summary.live_pricing_coverage_percent, 50.0)
+        self.assertEqual(summary.live_pricing_coverage_percent, 70.0)
         self.assertGreater(summary.confidence_score, 0.0)
 
     def test_pricing_response_contains_accuracy_metadata(self) -> None:

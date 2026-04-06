@@ -10,6 +10,13 @@ from app.models import (
     WorkloadType,
 )
 
+SOURCE_CONFIDENCE_WEIGHTS: dict[PricingSource, float] = {
+    PricingSource.LIVE_API: 1.0,
+    PricingSource.BENCHMARK_LIVE: 0.72,
+    PricingSource.CATALOG_SNAPSHOT: 0.4,
+    PricingSource.GENERATED: 0.0,
+}
+
 
 def build_accuracy_summary(
     provider: CloudProvider,
@@ -19,10 +26,7 @@ def build_accuracy_summary(
     provider_observations = _load_provider_observations(provider, workload_type)
     errors = _collect_percentage_errors(provider_observations)
     compared_actuals_count = len(errors)
-    live_service_count = sum(
-        1 for service in services if service.pricing_source == PricingSource.LIVE_API
-    )
-    live_pricing_coverage = round((live_service_count / len(services)) * 100, 2) if services else 0.0
+    live_pricing_coverage = _compute_weighted_coverage(services)
     pricing_sources = sorted({service.pricing_source for service in services}, key=lambda item: item.value)
 
     mean_error = round(mean(errors), 2) if errors else None
@@ -39,7 +43,9 @@ def build_accuracy_summary(
     if compared_actuals_count == 0:
         caveats.append("No actual billing records have been linked for this provider and workload yet.")
     if live_pricing_coverage < 100:
-        caveats.append("Live pricing is only partially available; snapshot or generated catalog prices are still in use.")
+        caveats.append("Provider-published live pricing is only partially available; benchmark or snapshot catalog prices are still in use.")
+    if any(source == PricingSource.BENCHMARK_LIVE for source in pricing_sources):
+        caveats.append("Some services are priced from benchmark-live family ratios derived from the freshest available live provider feeds.")
     if any(source == PricingSource.GENERATED for source in pricing_sources):
         caveats.append("Some services still rely on generated comparison pricing rather than provider-published rates.")
 
@@ -71,7 +77,9 @@ def build_service_accuracy(
     caveats: list[str] = []
     if not observations:
         caveats.append("No service-specific actual billing records have been imported yet.")
-    if service.pricing_source != PricingSource.LIVE_API:
+    if service.pricing_source == PricingSource.BENCHMARK_LIVE:
+        caveats.append("This service uses benchmark-live pricing derived from a live provider family reference.")
+    elif service.pricing_source != PricingSource.LIVE_API:
         caveats.append("This service is not currently backed by a live provider pricing feed.")
     if service.pricing_source == PricingSource.GENERATED:
         caveats.append("This service still uses generated comparison pricing.")
@@ -154,11 +162,11 @@ def _score_confidence(
     live_pricing_coverage_percent: float,
     generated_service_count: int,
 ) -> float:
-    sample_component = min(compared_actuals_count * 8, 32)
-    error_component = 10.0 if mean_absolute_percentage_error is None else max(0.0, 38.0 - min(mean_absolute_percentage_error, 38.0))
-    live_component = live_pricing_coverage_percent * 0.2
-    generation_penalty = min(generated_service_count * 6, 18)
-    score = 20.0 + sample_component + error_component + live_component - generation_penalty
+    sample_component = min(compared_actuals_count * 9, 36)
+    error_component = 8.0 if mean_absolute_percentage_error is None else max(0.0, 28.0 - min(mean_absolute_percentage_error, 28.0))
+    live_component = live_pricing_coverage_percent * 0.28
+    generation_penalty = min(generated_service_count * 7, 21)
+    score = 12.0 + sample_component + error_component + live_component - generation_penalty
     return round(max(0.0, min(score, 100.0)), 2)
 
 
@@ -168,13 +176,14 @@ def _score_service_confidence(
     pricing_source: PricingSource,
 ) -> float:
     sample_component = min(compared_actuals_count * 12, 36)
-    error_component = 10.0 if mean_absolute_percentage_error is None else max(0.0, 42.0 - min(mean_absolute_percentage_error, 42.0))
+    error_component = 8.0 if mean_absolute_percentage_error is None else max(0.0, 34.0 - min(mean_absolute_percentage_error, 34.0))
     source_component = {
-        PricingSource.LIVE_API: 28.0,
-        PricingSource.CATALOG_SNAPSHOT: 18.0,
-        PricingSource.GENERATED: 8.0,
+        PricingSource.LIVE_API: 34.0,
+        PricingSource.BENCHMARK_LIVE: 24.0,
+        PricingSource.CATALOG_SNAPSHOT: 14.0,
+        PricingSource.GENERATED: 4.0,
     }[pricing_source]
-    score = 8.0 + sample_component + error_component + source_component
+    score = 10.0 + sample_component + error_component + source_component
     return round(max(0.0, min(score, 100.0)), 2)
 
 
@@ -184,3 +193,14 @@ def _confidence_label(score: float) -> str:
     if score >= 55:
         return "medium"
     return "low"
+
+
+def _compute_weighted_coverage(services: list[ServiceEstimate]) -> float:
+    if not services:
+        return 0.0
+
+    weighted_total = sum(
+        SOURCE_CONFIDENCE_WEIGHTS.get(service.pricing_source, 0.0)
+        for service in services
+    )
+    return round((weighted_total / len(services)) * 100, 2)

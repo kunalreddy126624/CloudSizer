@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
@@ -45,7 +45,8 @@ const categoryOptions: { value: ServiceCategory | "all"; label: string }[] = [
   { value: "networking", label: "Networking" },
   { value: "analytics", label: "Analytics" },
   { value: "ai_ml", label: "AI / ML" },
-  { value: "security", label: "Security" }
+  { value: "security", label: "Security" },
+  { value: "saas", label: "SaaS Applications" }
 ];
 
 interface DraftLineItem extends ServicePricingLineItemRequest {
@@ -153,6 +154,28 @@ export function PricingWorkspace() {
     setSaveMessage(null);
   }, [provider]);
 
+  const selectedServiceCodes = useMemo(
+    () => new Set(selectedItems.map((item) => item.service_code)),
+    [selectedItems]
+  );
+
+  const handleAddService = useCallback((service: CatalogService) => {
+    if (selectedServiceCodes.has(service.service_code)) {
+      return;
+    }
+
+    setSelectedItems((current) => [
+      ...current,
+      {
+        service_code: service.service_code,
+        service_name: service.name,
+        category: service.category,
+        region: service.default_region,
+        usage: Object.fromEntries(service.dimensions.map((dimension) => [dimension.key, dimension.suggested_value]))
+      }
+    ]);
+  }, [selectedServiceCodes]);
+
   useEffect(() => {
     const providerParam = searchParams.get("provider") as CloudProvider | null;
     const serviceCodeParam = searchParams.get("service_code");
@@ -169,7 +192,7 @@ export function PricingWorkspace() {
     if (service && !selectedItems.some((item) => item.service_code === serviceCodeParam)) {
       handleAddService(service);
     }
-  }, [catalog, searchParams, selectedItems]);
+  }, [catalog, handleAddService, searchParams, selectedItems]);
 
   useEffect(() => {
     if (!pricingResult) {
@@ -178,28 +201,6 @@ export function PricingWorkspace() {
 
     setSaveName(`${formatProviderLabel(provider)} pricing estimate`);
   }, [pricingResult, provider]);
-
-  const selectedServiceCodes = useMemo(
-    () => new Set(selectedItems.map((item) => item.service_code)),
-    [selectedItems]
-  );
-
-  function handleAddService(service: CatalogService) {
-    if (selectedServiceCodes.has(service.service_code)) {
-      return;
-    }
-
-    setSelectedItems((current) => [
-      ...current,
-      {
-        service_code: service.service_code,
-        service_name: service.name,
-        category: service.category,
-        region: service.default_region,
-        usage: Object.fromEntries(service.dimensions.map((dimension) => [dimension.key, dimension.suggested_value]))
-      }
-    ]);
-  }
 
   function updateLineItem(index: number, updater: (item: DraftLineItem) => DraftLineItem) {
     setSelectedItems((current) => current.map((item, itemIndex) => (itemIndex === index ? updater(item) : item)));
@@ -307,6 +308,29 @@ export function PricingWorkspace() {
     }
   }
 
+  async function handleRefreshAllLivePricing() {
+    setRefreshingLivePricing(true);
+    setError(null);
+    setRefreshMessage(null);
+
+    try {
+      const response = await refreshLivePricing({
+        providers: providerOptions.map((option) => option.value)
+      });
+      const totalUpdated = response.results.reduce((sum, item) => sum + item.updated_services, 0);
+      const totalSkipped = response.results.reduce((sum, item) => sum + item.skipped_services, 0);
+      setRefreshMessage(
+        `All supported clouds refreshed: updated ${totalUpdated} services and skipped ${totalSkipped}.`
+      );
+      const refreshedCatalog = await getCatalogServices(provider, category === "all" ? undefined : category);
+      setCatalog(refreshedCatalog);
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "Failed to refresh live pricing for all clouds.");
+    } finally {
+      setRefreshingLivePricing(false);
+    }
+  }
+
   return (
     <Box sx={{ py: { xs: 4, md: 7 } }}>
       <Container maxWidth="xl">
@@ -394,14 +418,24 @@ export function PricingWorkspace() {
                         Add services to the estimate builder. Switching provider resets the current draft so you can
                         explore one cloud service stack at a time.
                       </Typography>
-                      <Button
-                        variant="outlined"
-                        onClick={handleRefreshLivePricing}
-                        disabled={refreshingLivePricing}
-                        sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
-                      >
-                        {refreshingLivePricing ? "Refreshing..." : "Refresh Live Pricing"}
-                      </Button>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                        <Button
+                          variant="outlined"
+                          onClick={handleRefreshLivePricing}
+                          disabled={refreshingLivePricing}
+                          sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
+                        >
+                          {refreshingLivePricing ? "Refreshing..." : `Refresh ${formatProviderLabel(provider)}`}
+                        </Button>
+                        <Button
+                          variant="contained"
+                          onClick={handleRefreshAllLivePricing}
+                          disabled={refreshingLivePricing}
+                          sx={{ alignSelf: "flex-start", bgcolor: "var(--accent)", "&:hover": { bgcolor: "#095847" } }}
+                        >
+                          {refreshingLivePricing ? "Refreshing..." : "Refresh All Clouds"}
+                        </Button>
+                      </Stack>
                     </Stack>
                     {loadingCatalog ? (
                       <Stack direction="row" spacing={1.5} alignItems="center">

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PipelineSpec",
+  "type": "object",
+  "required": ["pipelineId", "name", "description", "version", "schedule", "defaults", "nodes", "edges", "metadata"],
+  "properties": {
+    "pipelineId": { "type": "string" },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1 },
+    "schedule": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["manual", "cron", "event"] },
+        "cron": { "type": ["string", "null"] },
+        "timezone": { "type": ["string", "null"] }
+      }
+    },
+    "defaults": { "type": "object" },
+    "nodes": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "edges": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "metadata": { "type": "object" }
+  }
+}

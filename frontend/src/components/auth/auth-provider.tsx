@@ -9,16 +9,22 @@ import {
   type ReactNode
 } from "react";
 
-import { getCurrentUser, loginUser, logoutUser } from "@/lib/api";
-import type { AuthenticatedUser } from "@/lib/types";
+import { getRbacPrincipal, loginRbacUser, logoutUser } from "@/lib/api";
+import type { AuthenticatedUser, PermissionName, RbacAuthenticatedUser, RbacPrincipal, RoleName } from "@/lib/types";
 
 const LOCAL_TOKEN_KEY = "cloudsizer.auth_token";
 const SESSION_TOKEN_KEY = "cloudsizer.auth_token_session";
 
 interface AuthContextValue {
   user: AuthenticatedUser | null;
+  principal: RbacPrincipal | null;
+  roles: RoleName[];
+  permissions: PermissionName[];
   loading: boolean;
   isAuthenticated: boolean;
+  isRbacSession: boolean;
+  hasRole: (...roles: RoleName[]) => boolean;
+  hasPermission: (...permissions: PermissionName[]) => boolean;
   login: (email: string, password: string, rememberMe: boolean) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -41,8 +47,31 @@ function clearToken() {
   window.sessionStorage.removeItem(SESSION_TOKEN_KEY);
 }
 
+function buildFallbackUserFromPrincipal(principal: RbacPrincipal): AuthenticatedUser {
+  return {
+    id: principal.sub,
+    email: principal.email,
+    full_name: principal.email,
+    created_at: new Date(0).toISOString()
+  };
+}
+
+function buildPrincipalFromRbacUser(user: RbacAuthenticatedUser): RbacPrincipal {
+  const permissions = Array.from(
+    new Set(user.roles.flatMap((role) => role.permissions.map((permission) => permission.name)))
+  );
+
+  return {
+    sub: user.id,
+    email: user.email,
+    roles: user.roles.map((role) => role.name),
+    permissions
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
+  const [principal, setPrincipal] = useState<RbacPrincipal | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -58,20 +87,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     async function loadUser() {
+      let currentPrincipal: RbacPrincipal | null = null;
+
       try {
-        const currentUser = await getCurrentUser();
-        if (active) {
-          setUser(currentUser);
-        }
+        currentPrincipal = await getRbacPrincipal();
       } catch {
-        clearToken();
-        if (active) {
+        currentPrincipal = null;
+      }
+
+      if (active) {
+        if (currentPrincipal) {
+          setPrincipal(currentPrincipal);
+          setUser(buildFallbackUserFromPrincipal(currentPrincipal));
+        } else {
+          clearToken();
+          setPrincipal(null);
           setUser(null);
         }
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     }
 
@@ -85,27 +118,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
+      principal,
+      roles: principal?.roles ?? [],
+      permissions: principal?.permissions ?? [],
       loading,
       isAuthenticated: Boolean(user),
+      isRbacSession: Boolean(principal),
+      hasRole: (...roles: RoleName[]) => Boolean(principal && roles.some((role) => principal.roles.includes(role))),
+      hasPermission: (...permissions: PermissionName[]) =>
+        Boolean(principal && permissions.every((permission) => principal.permissions.includes(permission))),
       async login(email: string, password: string, rememberMe: boolean) {
-        const response = await loginUser({
+        const response = await loginRbacUser({
           email,
           password,
           remember_me: rememberMe
         });
         persistToken(response.access_token, rememberMe);
-        setUser(response.user);
+        setPrincipal(buildPrincipalFromRbacUser(response.user));
+        setUser({
+          id: response.user.id,
+          email: response.user.email,
+          full_name: response.user.full_name,
+          created_at: new Date(0).toISOString()
+        });
       },
       async logout() {
         try {
           await logoutUser();
         } finally {
           clearToken();
+          setPrincipal(null);
           setUser(null);
         }
       }
     }),
-    [loading, user]
+    [loading, principal, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,4 +1,11 @@
-import type { RecommendationRequest } from "@/lib/types";
+import type {
+  NoodleArchitectureOverview,
+  NoodleArchitecturePrinciple,
+  NoodlePipelineDesignerDocument,
+  NoodleOrchestratorPlan,
+  NoodlePipelineIntent,
+  RecommendationRequest
+} from "@/lib/types";
 
 export interface SavedScenario {
   id: string;
@@ -34,6 +41,8 @@ export interface PendingArchitectScenario {
 }
 
 export interface ArchitectCanvasDraft {
+  id?: string;
+  name?: string;
   prompt: string;
   selected_providers: string[];
   diagram_style?: string;
@@ -44,11 +53,32 @@ export interface ArchitectCanvasDraft {
   saved_at: string;
 }
 
+export interface SavedArchitectureDraft extends ArchitectCanvasDraft {
+  id: string;
+  name: string;
+}
+
+export interface PendingNoodleDesignerSession {
+  intent: NoodlePipelineIntent;
+  workflow_template?: string | null;
+  architecture_overview?: NoodleArchitectureOverview | null;
+  design_principles?: NoodleArchitecturePrinciple[];
+  saved_architecture?: SavedArchitectureDraft | null;
+  agent_momo_brief?: string | null;
+  pipeline_document?: NoodlePipelineDesignerDocument | null;
+  orchestrator_plan?: NoodleOrchestratorPlan | null;
+  opened_at: string;
+}
+
 const SAVED_SCENARIOS_KEY = "cloudsizer.saved-scenarios";
 const HISTORY_KEY = "cloudsizer.comparison-history";
 const PENDING_ESTIMATOR_SCENARIO_KEY = "cloudsizer.pending-estimator-scenario";
 const PENDING_ARCHITECT_SCENARIO_KEY = "cloudsizer.pending-architect-scenario";
 const ARCHITECT_CANVAS_DRAFT_KEY = "cloudsizer.architect-canvas-draft";
+const SAVED_ARCHITECTURES_KEY = "cloudsizer.saved-architectures";
+const NOODLE_PIPELINE_DRAFT_KEY = "cloudsizer.noodle-pipeline-draft";
+const SAVED_NOODLE_PIPELINES_KEY = "cloudsizer.saved-noodle-pipelines";
+const PENDING_NOODLE_DESIGNER_SESSION_KEY = "cloudsizer.pending-noodle-designer-session";
 
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) {
@@ -121,4 +151,88 @@ export function storeArchitectCanvasDraft(draft: ArchitectCanvasDraft) {
 
 export function clearArchitectCanvasDraft() {
   window.localStorage.removeItem(ARCHITECT_CANVAS_DRAFT_KEY);
+}
+
+export function loadSavedArchitectureDrafts() {
+  return parseJson<SavedArchitectureDraft[]>(window.localStorage.getItem(SAVED_ARCHITECTURES_KEY), []);
+}
+
+export function storeSavedArchitectureDrafts(drafts: SavedArchitectureDraft[]) {
+  window.localStorage.setItem(SAVED_ARCHITECTURES_KEY, JSON.stringify(drafts));
+}
+
+export function mergeSavedArchitectureDrafts(
+  drafts: SavedArchitectureDraft[],
+  draft: SavedArchitectureDraft
+) {
+  return [draft, ...drafts.filter((entry) => entry.id !== draft.id)];
+}
+
+export function upsertSavedArchitectureDraft(draft: SavedArchitectureDraft) {
+  const drafts = loadSavedArchitectureDrafts();
+  const nextDrafts = mergeSavedArchitectureDrafts(drafts, draft);
+  storeSavedArchitectureDrafts(nextDrafts);
+}
+
+export function deleteSavedArchitectureDraft(draftId: string) {
+  const drafts = loadSavedArchitectureDrafts();
+  storeSavedArchitectureDrafts(drafts.filter((draft) => draft.id !== draftId));
+}
+
+export function loadNoodlePipelineDraft() {
+  return parseJson<NoodlePipelineDesignerDocument | null>(
+    window.localStorage.getItem(NOODLE_PIPELINE_DRAFT_KEY),
+    null
+  );
+}
+
+export function storeNoodlePipelineDraft(draft: NoodlePipelineDesignerDocument) {
+  window.localStorage.setItem(NOODLE_PIPELINE_DRAFT_KEY, JSON.stringify(draft));
+}
+
+export function clearNoodlePipelineDraft() {
+  window.localStorage.removeItem(NOODLE_PIPELINE_DRAFT_KEY);
+}
+
+export function loadSavedNoodlePipelines() {
+  return parseJson<NoodlePipelineDesignerDocument[]>(
+    window.localStorage.getItem(SAVED_NOODLE_PIPELINES_KEY),
+    []
+  );
+}
+
+export function storeSavedNoodlePipelines(documents: NoodlePipelineDesignerDocument[]) {
+  window.localStorage.setItem(SAVED_NOODLE_PIPELINES_KEY, JSON.stringify(documents));
+}
+
+export function mergeSavedNoodlePipelines(
+  documents: NoodlePipelineDesignerDocument[],
+  document: NoodlePipelineDesignerDocument
+) {
+  return [document, ...documents.filter((entry) => entry.id !== document.id)];
+}
+
+export function upsertSavedNoodlePipeline(document: NoodlePipelineDesignerDocument) {
+  const documents = loadSavedNoodlePipelines();
+  storeSavedNoodlePipelines(mergeSavedNoodlePipelines(documents, document));
+}
+
+export function appendSavedNoodlePipeline(document: NoodlePipelineDesignerDocument) {
+  const documents = loadSavedNoodlePipelines();
+  storeSavedNoodlePipelines([document, ...documents]);
+}
+
+export function loadPendingNoodleDesignerSession() {
+  return parseJson<PendingNoodleDesignerSession | null>(
+    window.localStorage.getItem(PENDING_NOODLE_DESIGNER_SESSION_KEY),
+    null
+  );
+}
+
+export function storePendingNoodleDesignerSession(session: PendingNoodleDesignerSession) {
+  window.localStorage.setItem(PENDING_NOODLE_DESIGNER_SESSION_KEY, JSON.stringify(session));
+}
+
+export function clearPendingNoodleDesignerSession() {
+  window.localStorage.removeItem(PENDING_NOODLE_DESIGNER_SESSION_KEY);
 }

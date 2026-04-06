@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.models import (
+    ResourceAllocatorContractResponse,
+    ResourceAllocatorRequest,
+    ResourceAllocatorResponse,
     AuthLoginRequest,
     AuthLoginResponse,
     AuthenticatedUser,
@@ -48,8 +51,14 @@ from app.services.estimates import (
     list_saved_estimates,
 )
 from app.services.live_pricing import refresh_live_pricing
+from app.services.resource_allocator import (
+    allocate_cloud_resources,
+    get_resource_allocator_contracts,
+)
 from app.services.recommendation import build_recommendations
 from app.services.service_pricing import calculate_service_pricing
+from app.rbac.security import decode_access_token
+from app.rbac.service import get_rbac_service
 
 
 router = APIRouter()
@@ -66,6 +75,33 @@ def get_current_user(
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid or expired session.")
 
+    return user
+
+
+def require_authenticated_actor(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+) -> AuthenticatedUser:
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+    try:
+        principal = decode_access_token(get_rbac_service().settings, credentials.credentials)
+    except Exception:
+        principal = None
+
+    if principal is not None:
+        request.state.rbac_principal = principal
+        return AuthenticatedUser(
+            id=principal.sub,
+            email=principal.email,
+            full_name=principal.email,
+            created_at="1970-01-01T00:00:00+00:00",
+        )
+
+    user = get_user_for_token(credentials.credentials)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session.")
     return user
 
 
@@ -100,7 +136,9 @@ def catalog_metadata() -> dict[str, int | str]:
 
 
 @router.post("/catalog/reload")
-def catalog_reload() -> dict[str, str]:
+def catalog_reload(
+    _: AuthenticatedUser = Depends(require_authenticated_actor),
+) -> dict[str, str]:
     reload_catalog()
     return {"status": "reloaded"}
 
@@ -108,6 +146,7 @@ def catalog_reload() -> dict[str, str]:
 @router.post("/catalog/import-local", response_model=CatalogImportResponse)
 def catalog_import_local(
     request: CatalogImportRequest,
+    _: AuthenticatedUser = Depends(require_authenticated_actor),
 ) -> CatalogImportResponse:
     return import_catalog_snapshot(request)
 
@@ -115,6 +154,7 @@ def catalog_import_local(
 @router.post("/catalog/refresh-live-pricing", response_model=LivePricingRefreshResponse)
 def catalog_refresh_live_pricing(
     request: LivePricingRefreshRequest,
+    _: AuthenticatedUser = Depends(require_authenticated_actor),
 ) -> LivePricingRefreshResponse:
     return refresh_live_pricing(request)
 
@@ -240,3 +280,16 @@ def recommend_architecture(
     request: RecommendationRequest,
 ) -> RecommendationResponse:
     return build_recommendations(request)
+
+
+@router.get("/allocator/contracts", response_model=ResourceAllocatorContractResponse)
+def allocator_contracts() -> ResourceAllocatorContractResponse:
+    return get_resource_allocator_contracts()
+
+
+@router.post("/allocator/execute", response_model=ResourceAllocatorResponse)
+def allocator_execute(
+    request: ResourceAllocatorRequest,
+    _: AuthenticatedUser = Depends(require_authenticated_actor),
+) -> ResourceAllocatorResponse:
+    return allocate_cloud_resources(request)

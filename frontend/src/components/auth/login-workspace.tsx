@@ -159,9 +159,6 @@ export function LoginWorkspace() {
                   </Box>
 
                   <Alert severity="info">
-                    Demo access: <strong>demo@cloudsizer.local</strong> / <strong>CloudSizer123!</strong>
-                  </Alert>
-                  <Alert severity="info">
                     Guest users can explore the tools for 3 estimate runs total. Sign in to unlock unlimited usage,
                     saved estimates, and the full workspace.
                   </Alert>
@@ -228,7 +225,7 @@ export function LoginWorkspace() {
                     architect, catalog, and saved estimates after sign-in.
                   </Typography>
                   <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                    New here? Visit the sign-up page to request access or use the demo login while signup is being finalized.
+                    New here? Visit the sign-up page to request access while self-service signup is being finalized.
                   </Typography>
                 </Stack>
               </CardContent>

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PositiveInt
 
@@ -51,6 +51,7 @@ class ServiceCategory(str, Enum):
     ANALYTICS = "analytics"
     AI_ML = "ai_ml"
     SECURITY = "security"
+    SAAS = "saas"
 
 
 class EstimateType(str, Enum):
@@ -62,6 +63,7 @@ class EstimateType(str, Enum):
 class PricingSource(str, Enum):
     CATALOG_SNAPSHOT = "catalog_snapshot"
     LIVE_API = "live_api"
+    BENCHMARK_LIVE = "benchmark_live"
     GENERATED = "generated"
 
 
@@ -360,6 +362,14 @@ class LivePricingRefreshRequest(BaseModel):
             CloudProvider.AWS,
             CloudProvider.AZURE,
             CloudProvider.GCP,
+            CloudProvider.ORACLE,
+            CloudProvider.ALIBABA,
+            CloudProvider.IBM,
+            CloudProvider.TENCENT,
+            CloudProvider.DIGITALOCEAN,
+            CloudProvider.AKAMAI,
+            CloudProvider.OVHCLOUD,
+            CloudProvider.CLOUDFLARE,
         ]
     )
 
@@ -417,3 +427,251 @@ class CatalogImportResponse(BaseModel):
     status: str
     imported_services: int
     snapshot_path: str
+
+
+class DeploymentEnvironment(str, Enum):
+    DEV = "dev"
+    TEST = "test"
+    STAGING = "staging"
+    PROD = "prod"
+
+
+class AccountStrategyAction(str, Enum):
+    REUSE_EXISTING = "reuse_existing_account"
+    CREATE_NEW = "create_new_account"
+
+
+class AllocatorStatus(str, Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    NEEDS_APPROVAL = "needs_approval"
+
+
+class ApprovedEstimationInput(BaseModel):
+    approval_reference: str = Field(min_length=3)
+    approved: bool = True
+    baseline_request: RecommendationRequest
+    recommended_provider: CloudProvider
+    estimated_monthly_cost_usd: float | None = Field(default=None, ge=0.0)
+    approved_services: list[ServiceEstimate] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class AllocatorBudgetConstraints(BaseModel):
+    currency: str = Field(default="USD", min_length=3, max_length=8)
+    max_monthly_cost: float = Field(gt=0.0)
+
+
+class AllocatorOrganizationContext(BaseModel):
+    allowed_clouds: list[CloudProvider] = Field(default_factory=lambda: [CloudProvider.AWS, CloudProvider.AZURE, CloudProvider.GCP])
+    approved_account_ids: list[str] = Field(default_factory=list)
+    billing_scope: str = Field(min_length=3)
+    account_vending_enabled: bool = True
+    default_parent_org_unit: str | None = None
+    tagging_policy: list[str] = Field(default_factory=lambda: ["project", "env", "owner"])
+    iam_boundary_name: str = Field(min_length=3)
+    private_network_required: bool = True
+    network_guardrails: list[str] = Field(default_factory=list)
+    terraform_runner_enabled: bool = False
+    terraform_artifact_root: str | None = None
+
+
+class AllocatorDeploymentRequest(BaseModel):
+    env: DeploymentEnvironment
+    region: str = Field(min_length=2)
+    owner: str = Field(min_length=2)
+    project: str = Field(min_length=2)
+    public_ingress_required: bool = False
+    approval_to_apply: bool = False
+    existing_account_id: str | None = None
+    requires_new_account: bool = False
+    account_name: str | None = None
+    account_purpose: str | None = None
+    parent_org_unit: str | None = None
+    additional_tags: dict[str, str] = Field(default_factory=dict)
+
+
+class ResourceAllocatorRequest(BaseModel):
+    approved_estimation: ApprovedEstimationInput
+    budget_constraints: AllocatorBudgetConstraints
+    architecture_type: str = Field(min_length=2)
+    organization_context: AllocatorOrganizationContext
+    deployment_request: AllocatorDeploymentRequest
+
+
+class AllocatorAccountDetails(BaseModel):
+    account_id: str | None = None
+    account_name: str | None = None
+    parent_org_unit: str | None = None
+    billing_scope: str | None = None
+
+
+class AllocatorAccountStrategy(BaseModel):
+    action: AccountStrategyAction
+    reason: str
+    target_cloud: CloudProvider
+    account_details: AllocatorAccountDetails
+
+
+class AllocatorPlannedService(BaseModel):
+    service_code: str | None = None
+    service_name: str
+    purpose: str
+    category: str
+    estimated_monthly_cost_usd: float = Field(ge=0.0)
+    managed: bool = True
+    public: bool = False
+
+
+class AllocatorNetworkingPlan(BaseModel):
+    region: str
+    public_ingress: bool = False
+    private_network: bool = True
+    connectivity: list[str] = Field(default_factory=list)
+
+
+class AllocatorIamPlan(BaseModel):
+    boundary_name: str
+    roles: list[str] = Field(default_factory=list)
+    least_privilege: bool = True
+
+
+class AllocatorInfrastructurePlan(BaseModel):
+    architecture_type: str
+    region: str
+    services: list[AllocatorPlannedService] = Field(default_factory=list)
+    networking: AllocatorNetworkingPlan
+    iam: AllocatorIamPlan
+    tags: dict[str, str] = Field(default_factory=dict)
+
+
+class AllocatorTerraformFile(BaseModel):
+    path: str
+    content: str
+
+
+class AllocatorTerraformBundle(BaseModel):
+    generated: bool = False
+    modules: list[str] = Field(default_factory=list)
+    files: list[AllocatorTerraformFile] = Field(default_factory=list)
+
+
+class AllocatorCostEstimate(BaseModel):
+    currency: str
+    estimated_monthly_cost: float = Field(ge=0.0)
+    budget_limit: float = Field(ge=0.0)
+    within_budget: bool
+
+
+class AllocatorPolicyValidation(BaseModel):
+    passed: bool
+    violations: list[str] = Field(default_factory=list)
+
+
+class AllocatorProvisioning(BaseModel):
+    applied: bool = False
+    approval_required: bool = True
+    reason: str
+    execution_mode: str = "bundle_only"
+    artifact_path: str | None = None
+
+
+class AllocatorToolRun(BaseModel):
+    name: str
+    status: Literal["completed", "skipped", "failed"]
+    detail: str
+
+
+class ResourceAllocatorResponse(BaseModel):
+    status: AllocatorStatus
+    summary: str
+    account_strategy: AllocatorAccountStrategy
+    infra_plan: AllocatorInfrastructurePlan | None = None
+    terraform: AllocatorTerraformBundle
+    cost_estimate: AllocatorCostEstimate
+    policy_validation: AllocatorPolicyValidation
+    provisioning: AllocatorProvisioning
+    errors: list[str] = Field(default_factory=list)
+    tool_runs: list[AllocatorToolRun] = Field(default_factory=list)
+
+
+class CreateCloudAccountToolInput(BaseModel):
+    target_cloud: CloudProvider
+    account_name: str = Field(min_length=3)
+    account_purpose: str = Field(min_length=3)
+    parent_org_unit: str = Field(min_length=2)
+    billing_scope: str = Field(min_length=3)
+    project: str = Field(min_length=2)
+    env: DeploymentEnvironment
+    owner: str = Field(min_length=2)
+
+
+class CreateCloudAccountToolOutput(BaseModel):
+    account_id: str
+    account_name: str
+    parent_org_unit: str
+    billing_scope: str
+    status: str
+
+
+class GenerateTerraformToolInput(BaseModel):
+    provider: CloudProvider
+    architecture_type: str = Field(min_length=2)
+    infra_plan: AllocatorInfrastructurePlan
+
+
+class GenerateTerraformToolOutput(BaseModel):
+    modules: list[str] = Field(default_factory=list)
+    files: list[AllocatorTerraformFile] = Field(default_factory=list)
+
+
+class EstimateCostToolInput(BaseModel):
+    provider: CloudProvider
+    services: list[AllocatorPlannedService] = Field(default_factory=list)
+    budget_constraints: AllocatorBudgetConstraints
+
+
+class EstimateCostToolOutput(BaseModel):
+    estimated_monthly_cost: float = Field(ge=0.0)
+    within_budget: bool
+    currency: str
+
+
+class ValidatePolicyToolInput(BaseModel):
+    account_strategy: AllocatorAccountStrategy
+    infra_plan: AllocatorInfrastructurePlan
+    cost_estimate: AllocatorCostEstimate
+    organization_context: AllocatorOrganizationContext
+    deployment_request: AllocatorDeploymentRequest
+
+
+class ValidatePolicyToolOutput(BaseModel):
+    passed: bool
+    violations: list[str] = Field(default_factory=list)
+
+
+class ApplyTerraformToolInput(BaseModel):
+    terraform: AllocatorTerraformBundle
+    provider: CloudProvider
+    approval_to_apply: bool
+    artifact_root: str | None = None
+
+
+class ApplyTerraformToolOutput(BaseModel):
+    applied: bool
+    execution_mode: str
+    artifact_path: str | None = None
+    detail: str
+
+
+class AllocatorToolContract(BaseModel):
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+
+
+class ResourceAllocatorContractResponse(BaseModel):
+    system_prompt: str
+    tool_contracts: list[AllocatorToolContract]
+    output_schema: dict[str, Any]

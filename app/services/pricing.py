@@ -5,6 +5,7 @@ from app.models import (
     CatalogService,
     CloudProvider,
     PricingDimension,
+    PricingSource,
     RecommendationRequest,
     ServiceEstimate,
     WorkloadType,
@@ -412,7 +413,7 @@ def _estimate_catalog_services(
     ]
     if not selected_services:
         return []
-    if any(service.pricing_source.value == "generated" for service in selected_services):
+    if any(service.pricing_source == PricingSource.GENERATED for service in selected_services):
         # Generated catalog entries are synthetic comparison placeholders, not
         # provider-backed price points. Fall back to the explicit provider
         # workload profiles instead of treating generated services as real.

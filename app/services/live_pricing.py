@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import UTC, datetime
+from functools import lru_cache
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -14,7 +15,7 @@ from app.models import (
     PricingDimension,
     PricingSource,
 )
-from app.services.catalog import get_catalog_services, upsert_catalog_price_override
+from app.services.catalog import CATALOG_PATH, get_catalog_services, upsert_catalog_price_override
 
 
 AWS_REGION_LABELS = {
@@ -36,19 +37,20 @@ def refresh_live_pricing(request: LivePricingRefreshRequest) -> LivePricingRefre
     results: list[LivePricingRefreshResult] = []
     for provider in request.providers:
         if provider == CloudProvider.AZURE:
-            results.append(_refresh_azure_prices())
+            direct_result = _refresh_azure_prices()
         elif provider == CloudProvider.AWS:
-            results.append(_refresh_aws_prices())
+            direct_result = _refresh_aws_prices()
         elif provider == CloudProvider.GCP:
-            results.append(_refresh_gcp_prices())
+            direct_result = _refresh_gcp_prices()
         else:
-            results.append(
-                LivePricingRefreshResult(
-                    provider=provider,
-                    warnings=["Live pricing adapter is not configured for this provider yet."],
-                    skipped_services=len(get_catalog_services(provider=provider)),
-                )
+            direct_result = LivePricingRefreshResult(
+                provider=provider,
+                warnings=["Direct live pricing adapter is not configured for this provider yet; benchmark live pricing was used where possible."],
+                skipped_services=0,
             )
+
+        benchmark_result = _refresh_benchmark_prices(provider)
+        results.append(_combine_results(provider, direct_result, benchmark_result))
 
     return LivePricingRefreshResponse(
         refreshed_at=datetime.now(UTC).isoformat(),
@@ -60,7 +62,7 @@ def _refresh_azure_prices() -> LivePricingRefreshResult:
     services = {
         service.service_code: service
         for service in get_catalog_services(provider=CloudProvider.AZURE)
-        if service.service_code in {"azure.blob.hot", "azure.functions"}
+        if service.service_code in {"azure.blob.hot", "azure.functions", "azure.containerapps", "azure.sql.db"}
     }
     return _refresh_services(CloudProvider.AZURE, services, _refresh_single_azure_service)
 
@@ -69,7 +71,7 @@ def _refresh_aws_prices() -> LivePricingRefreshResult:
     services = {
         service.service_code: service
         for service in get_catalog_services(provider=CloudProvider.AWS)
-        if service.service_code in {"aws.lambda", "aws.s3.standard", "aws.rds.postgres", "aws.cloudfront"}
+        if service.service_code in {"aws.ecs.fargate", "aws.lambda", "aws.s3.standard", "aws.rds.postgres", "aws.cloudfront"}
     }
     return _refresh_services(CloudProvider.AWS, services, _refresh_single_aws_service)
 
@@ -129,10 +131,18 @@ def _refresh_single_azure_service(service: CatalogService) -> bool:
     if service.service_code == "azure.blob.hot":
         rate = _fetch_azure_blob_hot_rate(service.default_region)
         _update_dimension_rate(updated_dimensions, "storage_gb", rate)
+    elif service.service_code == "azure.containerapps":
+        cpu_rate, memory_rate = _fetch_azure_container_apps_rates(service.default_region)
+        _update_dimension_rate(updated_dimensions, "vcpu_seconds_million", cpu_rate * 1_000_000)
+        _update_dimension_rate(updated_dimensions, "memory_gb_seconds_million", memory_rate * 1_000_000)
     elif service.service_code == "azure.functions":
         request_rate, execution_rate = _fetch_azure_functions_rates(service.default_region)
         _update_dimension_rate(updated_dimensions, "requests_million", request_rate * 1_000_000)
         _update_dimension_rate(updated_dimensions, "gb_seconds_million", execution_rate * 1_000_000)
+    elif service.service_code == "azure.sql.db":
+        compute_rate, storage_rate = _fetch_azure_sql_db_rates(service.default_region)
+        _update_dimension_rate(updated_dimensions, "compute_hours", compute_rate)
+        _update_dimension_rate(updated_dimensions, "storage_gb", storage_rate)
     else:
         return False
 
@@ -144,7 +154,23 @@ def _refresh_single_aws_service(service: CatalogService) -> bool:
     updated_dimensions = [dimension.model_copy() for dimension in service.dimensions]
     region_label = AWS_REGION_LABELS.get(service.default_region, AWS_REGION_LABELS["global"])
 
-    if service.service_code == "aws.lambda":
+    if service.service_code == "aws.ecs.fargate":
+        payload = _fetch_json("https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/index.json")
+        vcpu_rate = _find_aws_price(
+            payload,
+            lambda attrs: attrs.get("location") == region_label and attrs.get("usagetype", "").endswith("Fargate-vCPU-Hours:perCPU"),
+            lambda dim: dim.get("unit") == "hours",
+        )
+        memory_rate = _find_aws_price(
+            payload,
+            lambda attrs: attrs.get("location") == region_label and attrs.get("usagetype", "").endswith("Fargate-GB-Hours"),
+            lambda dim: dim.get("unit") == "hours",
+        )
+        if vcpu_rate is None or memory_rate is None:
+            raise ValueError("AWS Fargate live rates not found.")
+        _update_dimension_rate(updated_dimensions, "vcpu_hours", vcpu_rate)
+        _update_dimension_rate(updated_dimensions, "memory_gb_hours", memory_rate)
+    elif service.service_code == "aws.lambda":
         payload = _fetch_json("https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/index.json")
         request_rate = _find_aws_price(
             payload,
@@ -296,11 +322,21 @@ def _fetch_azure_blob_hot_rate(region: str) -> float:
         "contains(meterName,'Hot') and contains(meterName,'Data Stored')"
     )
     encoded_filter = quote(filter_expr, safe="()',$=")
-    payload = _fetch_json(
+    items = _fetch_azure_retail_items(
         f"https://prices.azure.com/api/retail/prices?$filter={encoded_filter}"
     )
-    items = payload.get("Items", [])
-    price = next((item.get("retailPrice") for item in items if item.get("retailPrice") is not None), None)
+    price = next(
+        (
+            item.get("retailPrice")
+            for item in items
+            if item.get("retailPrice") is not None
+            and "blob" in str(item.get("productName", "")).lower()
+            and "reserved" not in str(item.get("productName", "")).lower()
+            and "data lake" not in str(item.get("productName", "")).lower()
+            and "cool" not in str(item.get("meterName", "")).lower()
+        ),
+        None,
+    )
     if price is None:
         raise ValueError("Azure Blob Storage retail price not found.")
     return float(price)
@@ -313,10 +349,9 @@ def _fetch_azure_functions_rates(region: str) -> tuple[float, float]:
         "priceType eq 'Consumption'"
     )
     encoded_filter = quote(filter_expr, safe="()',$=")
-    payload = _fetch_json(
+    items = _fetch_azure_retail_items(
         f"https://prices.azure.com/api/retail/prices?$filter={encoded_filter}"
     )
-    items = payload.get("Items", [])
     request_price = None
     execution_price = None
     for item in items:
@@ -330,6 +365,53 @@ def _fetch_azure_functions_rates(region: str) -> tuple[float, float]:
         raise ValueError("Azure Functions retail price not found.")
 
     return request_price, execution_price
+
+
+def _fetch_azure_container_apps_rates(region: str) -> tuple[float, float]:
+    filter_expr = f"serviceName eq 'Azure Container Apps' and armRegionName eq '{region}'"
+    encoded_filter = quote(filter_expr, safe="()',$=")
+    items = _fetch_azure_retail_items(
+        f"https://prices.azure.com/api/retail/prices?$filter={encoded_filter}"
+    )
+    cpu_rate = None
+    memory_rate = None
+    for item in items:
+        meter_name = str(item.get("meterName", "")).lower()
+        sku_name = str(item.get("skuName", "")).lower()
+        if "standard" not in sku_name:
+            continue
+        if cpu_rate is None and "vcpu active usage" in meter_name:
+            cpu_rate = float(item["retailPrice"])
+        if memory_rate is None and "memory active usage" in meter_name:
+            memory_rate = float(item["retailPrice"])
+
+    if cpu_rate is None or memory_rate is None:
+        raise ValueError("Azure Container Apps retail price not found.")
+
+    return cpu_rate, memory_rate
+
+
+def _fetch_azure_sql_db_rates(region: str) -> tuple[float, float]:
+    filter_expr = f"serviceName eq 'SQL Database' and armRegionName eq '{region}'"
+    encoded_filter = quote(filter_expr, safe="()',$=")
+    items = _fetch_azure_retail_items(
+        f"https://prices.azure.com/api/retail/prices?$filter={encoded_filter}"
+    )
+    compute_rate = None
+    storage_rate = None
+    for item in items:
+        meter_name = str(item.get("meterName", "")).lower()
+        product_name = str(item.get("productName", "")).lower()
+        sku_name = str(item.get("skuName", "")).lower()
+        if compute_rate is None and "general purpose" in meter_name and "gen5 1 vcore" in meter_name and "zone redundancy" not in meter_name:
+            compute_rate = float(item["retailPrice"])
+        if storage_rate is None and "data stored" in meter_name and "backup" not in product_name and "lrs" in sku_name:
+            storage_rate = float(item["retailPrice"])
+
+    if compute_rate is None or storage_rate is None:
+        raise ValueError("Azure SQL Database retail price not found.")
+
+    return compute_rate, storage_rate
 
 
 def _fetch_gcp_skus(service_code: str, api_key: str) -> list[dict[str, object]]:
@@ -394,6 +476,113 @@ def _find_gcp_rate(skus: list[dict[str, object]], predicate) -> float | None:
             conversion_factor = float(expression.get("baseUnitConversionFactor", 1) or 1)
             matched_rates.append((units + nanos) / conversion_factor)
     return min(matched_rates) if matched_rates else None
+
+
+def _combine_results(
+    provider: CloudProvider,
+    direct_result: LivePricingRefreshResult,
+    benchmark_result: LivePricingRefreshResult,
+) -> LivePricingRefreshResult:
+    return LivePricingRefreshResult(
+        provider=provider,
+        updated_services=direct_result.updated_services + benchmark_result.updated_services,
+        skipped_services=direct_result.skipped_services + benchmark_result.skipped_services,
+        warnings=[*direct_result.warnings, *benchmark_result.warnings],
+    )
+
+
+def _refresh_benchmark_prices(provider: CloudProvider) -> LivePricingRefreshResult:
+    benchmark_ratios = _load_benchmark_family_ratios()
+    services = get_catalog_services(provider=provider)
+    updated_services = 0
+    skipped_services = 0
+    warnings: list[str] = []
+
+    for service in services:
+        if service.pricing_source == PricingSource.LIVE_API:
+            continue
+
+        benchmark_ratio = benchmark_ratios.get(service.service_family)
+        if benchmark_ratio is None:
+            skipped_services += 1
+            continue
+
+        updated_dimensions = [
+            dimension.model_copy(update={"rate_per_unit_usd": round(dimension.rate_per_unit_usd * benchmark_ratio, 6)})
+            for dimension in service.dimensions
+        ]
+        upsert_catalog_price_override(
+            provider=service.provider,
+            service_code=service.service_code,
+            base_monthly_cost_usd=round(service.base_monthly_cost_usd * benchmark_ratio, 4),
+            dimensions=updated_dimensions,
+            pricing_source=PricingSource.BENCHMARK_LIVE,
+        )
+        updated_services += 1
+
+    if not benchmark_ratios:
+        warnings.append("No live-backed service families were available to derive benchmark pricing ratios.")
+
+    return LivePricingRefreshResult(
+        provider=provider,
+        updated_services=updated_services,
+        skipped_services=skipped_services,
+        warnings=warnings,
+    )
+
+
+@lru_cache(maxsize=1)
+def _load_raw_catalog_by_code() -> dict[str, CatalogService]:
+    raw_catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    baseline: dict[str, CatalogService] = {}
+    for services in raw_catalog.values():
+        for service in services:
+            parsed = CatalogService.model_validate(service)
+            baseline[parsed.service_code] = parsed
+    return baseline
+
+
+def _load_benchmark_family_ratios() -> dict[str, float]:
+    raw_catalog = _load_raw_catalog_by_code()
+    family_ratios: dict[str, float] = {}
+
+    for provider in (CloudProvider.AWS, CloudProvider.AZURE, CloudProvider.GCP):
+        for service in get_catalog_services(provider=provider):
+            if service.pricing_source != PricingSource.LIVE_API:
+                continue
+
+            baseline = raw_catalog.get(service.service_code)
+            if baseline is None:
+                continue
+
+            rates: list[float] = []
+            baseline_dimensions = {dimension.key: dimension for dimension in baseline.dimensions}
+            for dimension in service.dimensions:
+                raw_dimension = baseline_dimensions.get(dimension.key)
+                if raw_dimension and raw_dimension.rate_per_unit_usd > 0:
+                    rates.append(dimension.rate_per_unit_usd / raw_dimension.rate_per_unit_usd)
+
+            if baseline.base_monthly_cost_usd > 0:
+                rates.append(service.base_monthly_cost_usd / baseline.base_monthly_cost_usd)
+
+            if not rates:
+                continue
+
+            ratio = sum(rates) / len(rates)
+            existing_ratio = family_ratios.get(service.service_family)
+            family_ratios[service.service_family] = ratio if existing_ratio is None else max(existing_ratio, ratio)
+
+    return family_ratios
+
+
+def _fetch_azure_retail_items(url: str) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    next_url: str | None = url
+    while next_url:
+        payload = _fetch_json(next_url)
+        items.extend([item for item in payload.get("Items", []) if isinstance(item, dict)])
+        next_url = payload.get("NextPageLink")
+    return items
 
 
 def _fetch_json(url: str) -> dict[str, object]:

@@ -92,6 +92,7 @@ interface ArchitectFlowCanvasProps {
   canvasWidth: number;
   onSelectionChange: (selection: CanvasSelection) => void;
   onCreateEdge: (connection: { from: string; to: string }) => void;
+  onReconnectEdge: (edgeId: string, connection: { from: string; to: string }) => void;
   onNodeLayoutChange: (id: string, next: { x: number; y: number; width: number; height: number }) => void;
   onZoneLayoutChange: (id: string, next: { x: number; y: number; width: number; height: number }) => void;
   onLaneLayoutChange: (id: string, next: { x: number; y: number; width: number; height: number }) => void;
@@ -262,6 +263,7 @@ function ArchitectFlowCanvasInner({
   canvasWidth,
   onSelectionChange,
   onCreateEdge,
+  onReconnectEdge,
   onNodeLayoutChange,
   onZoneLayoutChange,
   onLaneLayoutChange
@@ -378,6 +380,7 @@ function ArchitectFlowCanvasInner({
       type: edgeTypeByStyle[diagramStyle],
       animated: diagramStyle === "workflow",
       selected: selectedEdgeIdSet.has(edge.id),
+      updatable: true,
       style: {
         stroke: selectedEdgeIdSet.has(edge.id) ? "#17315c" : "#316fd6",
         strokeWidth: selectedEdgeIdSet.has(edge.id) ? 4 : 3
@@ -439,6 +442,14 @@ function ArchitectFlowCanvasInner({
 
     onCreateEdge({ from: connection.source, to: connection.target });
   }, [onCreateEdge]);
+
+  const handleReconnect = useCallback((edge: FlowEdge, connection: Connection) => {
+    if (!connection.source || !connection.target || connection.source === connection.target) {
+      return;
+    }
+
+    onReconnectEdge(edge.id, { from: connection.source, to: connection.target });
+  }, [onReconnectEdge]);
 
   const handleNodeClick = useCallback(
     (event: React.MouseEvent, node: FlowNode) => {
@@ -561,11 +572,13 @@ function ArchitectFlowCanvasInner({
         onPaneClick={handlePaneClick}
         onSelectionChange={handleSelectionChange}
         onConnect={handleConnect}
+        onReconnect={handleReconnect}
         fitView
         fitViewOptions={fitViewOptions}
         minZoom={0.35}
         maxZoom={1.6}
         defaultEdgeOptions={defaultEdgeOptions}
+        edgesUpdatable
         elevateEdgesOnSelect
         connectionMode={ConnectionMode.Loose}
         selectionOnDrag
