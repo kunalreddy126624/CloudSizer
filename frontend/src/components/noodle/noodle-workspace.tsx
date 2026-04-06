@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import {
   Alert,
   Box,
@@ -14,9 +15,11 @@ import {
   Container,
   Divider,
   Grid,
+  IconButton,
   MenuItem,
   Stack,
   TextField,
+  Tooltip,
   Typography
 } from "@mui/material";
 
@@ -26,7 +29,13 @@ import {
   listNoodleReferenceSpecs,
   planNoodlePipeline
 } from "@/lib/api";
-import { loadSavedArchitectureDrafts, storePendingNoodleDesignerSession, type SavedArchitectureDraft } from "@/lib/scenario-store";
+import {
+  loadSavedArchitectureDrafts,
+  storePendingNoodleDesignerSession,
+  storePendingNoodleSchedulerSession,
+  type SavedArchitectureDraft
+} from "@/lib/scenario-store";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import type {
   NoodleArchitectureOverview,
   NoodleLatencySlo,
@@ -150,6 +159,7 @@ export function NoodleWorkspace() {
   const [orchestratorPlan, setOrchestratorPlan] = useState<NoodleOrchestratorPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState<{ severity: "success" | "warning"; message: string } | null>(null);
   const designPrinciples = blueprint?.design_principles ?? [];
   const selectedArchitecture = savedArchitectures.find((entry) => entry.id === selectedArchitectureId) ?? null;
 
@@ -229,6 +239,32 @@ export function NoodleWorkspace() {
     router.push("/noodle/designer");
   }
 
+  function openSoupSchedulerPage() {
+    storePendingNoodleSchedulerSession({
+      source: "orchestrator",
+      intent_name: intent.name,
+      orchestrator_plan: orchestratorPlan,
+      opened_at: new Date().toISOString()
+    });
+    router.push("/noodle/scheduler");
+  }
+
+  const copyPlanJson = useCallback(async () => {
+    if (!plan) {
+      setCopyNotice({
+        severity: "warning",
+        message: "Generate a plan first, then copy the JSON."
+      });
+      return;
+    }
+
+    const copied = await copyTextToClipboard(JSON.stringify(plan, null, 2));
+    setCopyNotice({
+      severity: copied ? "success" : "warning",
+      message: copied ? "Generated plan JSON copied." : "Clipboard copy failed in this environment."
+    });
+  }, [plan]);
+
   return (
     <Box
       sx={{
@@ -257,6 +293,9 @@ export function NoodleWorkspace() {
               <Button onClick={() => void loadWorkspace()} variant="outlined" disabled={busy} sx={noodleSecondaryButtonSx}>
                 Refresh
               </Button>
+              <Button onClick={openSoupSchedulerPage} variant="outlined" sx={noodleSecondaryButtonSx}>
+                Soup Scheduler
+              </Button>
               <Button onClick={() => void generatePlan()} variant="contained" disabled={busy} sx={noodlePrimaryButtonSx}>
                 {busy ? "Planning..." : "Generate Plan"}
               </Button>
@@ -264,6 +303,7 @@ export function NoodleWorkspace() {
           </Stack>
 
           {error ? <Alert severity="error">{error}</Alert> : null}
+          {copyNotice ? <Alert severity={copyNotice.severity}>{copyNotice.message}</Alert> : null}
 
           <Grid container spacing={3}>
             <Grid item xs={12} lg={5}>
@@ -393,7 +433,16 @@ export function NoodleWorkspace() {
                 <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
                   <CardContent sx={{ p: 3 }}>
                     <Stack spacing={2}>
-                      <Typography variant="h5">Generated Plan</Typography>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                        <Typography variant="h5">Generated Plan</Typography>
+                        <Tooltip title="Copy generated plan JSON">
+                          <span>
+                            <IconButton size="small" onClick={() => void copyPlanJson()} disabled={!plan} aria-label="Copy generated plan JSON">
+                              <ContentCopyRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Stack>
                       {plan ? (
                         <>
                           <Chip label={`Workflow template: ${plan.workflow_template}`} sx={{ width: "fit-content", bgcolor: "#eef6ff", color: "#1c4f95" }} />

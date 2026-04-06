@@ -9,7 +9,7 @@ import {
   type ReactNode
 } from "react";
 
-import { getCurrentUser, getRbacPrincipal, loginRbacUser, loginUser, logoutUser } from "@/lib/api";
+import { getRbacPrincipal, loginRbacUser, logoutUser } from "@/lib/api";
 import type { AuthenticatedUser, PermissionName, RbacAuthenticatedUser, RbacPrincipal, RoleName } from "@/lib/types";
 
 const LOCAL_TOKEN_KEY = "cloudsizer.auth_token";
@@ -88,7 +88,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     async function loadUser() {
       let currentPrincipal: RbacPrincipal | null = null;
-      let currentUser: AuthenticatedUser | null = null;
 
       try {
         currentPrincipal = await getRbacPrincipal();
@@ -96,22 +95,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         currentPrincipal = null;
       }
 
-      try {
-        currentUser = await getCurrentUser();
-      } catch {
-        currentUser = null;
-      } finally {
-        if (active) {
-          if (currentPrincipal || currentUser) {
-            setPrincipal(currentPrincipal);
-            setUser(currentUser ?? (currentPrincipal ? buildFallbackUserFromPrincipal(currentPrincipal) : null));
-          } else {
-            clearToken();
-            setPrincipal(null);
-            setUser(null);
-          }
-          setLoading(false);
+      if (active) {
+        if (currentPrincipal) {
+          setPrincipal(currentPrincipal);
+          setUser(buildFallbackUserFromPrincipal(currentPrincipal));
+        } else {
+          clearToken();
+          setPrincipal(null);
+          setUser(null);
         }
+        setLoading(false);
       }
     }
 
@@ -135,31 +128,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       hasPermission: (...permissions: PermissionName[]) =>
         Boolean(principal && permissions.every((permission) => principal.permissions.includes(permission))),
       async login(email: string, password: string, rememberMe: boolean) {
-        try {
-          const response = await loginRbacUser({
-            email,
-            password,
-            remember_me: rememberMe
-          });
-          persistToken(response.access_token, rememberMe);
-          setPrincipal(buildPrincipalFromRbacUser(response.user));
-          setUser({
-            id: response.user.id,
-            email: response.user.email,
-            full_name: response.user.full_name,
-            created_at: new Date(0).toISOString()
-          });
-          return;
-        } catch {
-          const response = await loginUser({
-            email,
-            password,
-            remember_me: rememberMe
-          });
-          persistToken(response.access_token, rememberMe);
-          setPrincipal(null);
-          setUser(response.user);
-        }
+        const response = await loginRbacUser({
+          email,
+          password,
+          remember_me: rememberMe
+        });
+        persistToken(response.access_token, rememberMe);
+        setPrincipal(buildPrincipalFromRbacUser(response.user));
+        setUser({
+          id: response.user.id,
+          email: response.user.email,
+          full_name: response.user.full_name,
+          created_at: new Date(0).toISOString()
+        });
       },
       async logout() {
         try {

@@ -22,7 +22,9 @@ export type CloudProvider =
   | "digitalocean"
   | "akamai"
   | "ovhcloud"
-  | "cloudflare";
+  | "cloudflare"
+  | "salesforce"
+  | "snowflake";
 export type ServiceCategory =
   | "compute"
   | "storage"
@@ -101,6 +103,17 @@ export interface RbacLoginResponse {
   user: RbacAuthenticatedUser;
 }
 
+export interface RbacUserCreateRequest {
+  email: string;
+  full_name: string;
+  password: string;
+  roles: RoleName[];
+}
+
+export interface RbacRoleAssignmentRequest {
+  roles: RoleName[];
+}
+
 export interface RecommendationRequest {
   workload_type: WorkloadType;
   region: string;
@@ -112,10 +125,20 @@ export interface RecommendationRequest {
   requires_managed_database: boolean;
   availability_tier: AvailabilityTier;
   budget_preference: BudgetPreference;
+  enable_decoupled_compute?: boolean;
+  selective_services?: SelectiveServicePreference[];
   preferred_providers: CloudProvider[];
 }
 
+export interface SelectiveServicePreference {
+  service_family: string;
+  provider: CloudProvider;
+  region?: string | null;
+  required?: boolean;
+}
+
 export interface ServiceEstimate {
+  provider?: CloudProvider | null;
   service_code?: string | null;
   name: string;
   purpose: string;
@@ -445,6 +468,7 @@ export interface AllocatorAccountStrategy {
 }
 
 export interface AllocatorPlannedService {
+  provider?: CloudProvider | null;
   service_code?: string | null;
   service_name: string;
   purpose: string;
@@ -841,7 +865,7 @@ export interface NoodleOrchestratorPlan {
   id: string;
   name: string;
   objective: string;
-  trigger: "manual" | "schedule" | "event";
+  trigger: "manual" | "schedule" | "event" | "if";
   execution_target: string;
   tasks: NoodleOrchestratorTaskPlan[];
   notes: string[];
@@ -1009,11 +1033,13 @@ export interface NoodleDesignerTransformation {
 }
 
 export interface NoodleDesignerSchedule {
-  trigger: "manual" | "schedule" | "event";
+  trigger: "manual" | "schedule" | "event" | "if";
   cron: string;
   timezone: string;
   enabled: boolean;
   concurrency_policy: "allow" | "forbid" | "replace";
+  orchestration_mode: "tasks" | "plan";
+  if_condition: string;
 }
 
 export type NoodleDesignerRunStatus = "queued" | "running" | "success" | "failed" | "cancelled";
@@ -1050,7 +1076,8 @@ export interface NoodleDesignerRun {
   label: string;
   orchestrator: string;
   status: NoodleDesignerRunStatus;
-  trigger: "manual" | "schedule" | "event";
+  trigger: "manual" | "schedule" | "event" | "if";
+  orchestration_mode: "tasks" | "plan";
   started_at: string;
   finished_at?: string | null;
   task_runs: NoodleDesignerRunTask[];
@@ -1058,11 +1085,43 @@ export interface NoodleDesignerRun {
 }
 
 export interface NoodlePipelineRunCreateRequest {
-  trigger: "manual" | "schedule" | "event";
+  trigger: "manual" | "schedule" | "event" | "if";
+  orchestration_mode: "tasks" | "plan";
+  if_condition?: string | null;
+  test_node_id?: string | null;
   document?: NoodlePipelineDesignerDocument | null;
 }
 
 export interface NoodlePipelineRunResponse {
   pipeline: NoodlePipelineDesignerDocument;
   run: NoodleDesignerRun;
+}
+
+export interface NoodleSchedulerPlanTask {
+  id: string;
+  task_name: string;
+  pipeline_id: string;
+  pipeline_name: string;
+  trigger: NoodlePipelineRunCreateRequest["trigger"];
+  orchestration_mode: NoodlePipelineRunCreateRequest["orchestration_mode"];
+  depends_on: string[];
+  notes: string;
+  last_run_id?: string | null;
+  last_status?: NoodleDesignerRunStatus | null;
+}
+
+export interface NoodleSchedulerPlan {
+  id: string;
+  name: string;
+  objective: string;
+  tasks: NoodleSchedulerPlanTask[];
+  saved_at: string;
+}
+
+export interface PendingNoodleSchedulerSession {
+  source: "orchestrator" | "designer";
+  intent_name?: string | null;
+  orchestrator_plan?: NoodleOrchestratorPlan | null;
+  document?: NoodlePipelineDesignerDocument | null;
+  opened_at: string;
 }

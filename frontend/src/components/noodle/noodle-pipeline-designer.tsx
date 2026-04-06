@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import CloseFullscreenRoundedIcon from "@mui/icons-material/CloseFullscreenRounded";
+import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import ExpandLessRoundedIcon from "@mui/icons-material/ExpandLessRounded";
 import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import OpenInFullRoundedIcon from "@mui/icons-material/OpenInFullRounded";
@@ -56,6 +57,8 @@ import {
   listNoodlePipelines,
   saveNoodlePipeline
 } from "@/lib/api";
+import { providerColors } from "@/lib/architect-diagram";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import type {
   NoodleArchitectureOverview,
   NoodleArchitecturePrinciple,
@@ -121,13 +124,14 @@ const NODE_LIBRARY: Array<{ kind: NoodleDesignerNodeKind; label: string; descrip
 ];
 
 const NODE_COLORS: Record<NoodleDesignerNodeKind, { fill: string; stroke: string; accent: string }> = {
-  source: { fill: "#eff6ff", stroke: "#2563eb", accent: "#1d4ed8" },
-  ingest: { fill: "#ecfeff", stroke: "#0891b2", accent: "#0e7490" },
-  transform: { fill: "#f5f3ff", stroke: "#7c3aed", accent: "#6d28d9" },
-  quality: { fill: "#fff7ed", stroke: "#ea580c", accent: "#c2410c" },
-  feature: { fill: "#f0fdf4", stroke: "#16a34a", accent: "#15803d" },
-  serve: { fill: "#fdf2f8", stroke: "#db2777", accent: "#be185d" }
+  source: { fill: providerColors.shared.fill, stroke: providerColors.shared.stroke, accent: providerColors.shared.text },
+  ingest: { fill: providerColors.azure.fill, stroke: providerColors.azure.stroke, accent: providerColors.azure.text },
+  transform: { fill: providerColors.aws.fill, stroke: providerColors.aws.stroke, accent: providerColors.aws.text },
+  quality: { fill: providerColors.gcp.fill, stroke: providerColors.gcp.stroke, accent: providerColors.gcp.text },
+  feature: { fill: providerColors.ibm.fill, stroke: providerColors.ibm.stroke, accent: providerColors.ibm.text },
+  serve: { fill: providerColors.oracle.fill, stroke: providerColors.oracle.stroke, accent: providerColors.oracle.text }
 };
+const NODE_CONNECTOR_POSITIONS = [20, 40, 60, 80] as const;
 
 const DEFAULT_SCHEDULE: NoodleDesignerSchedule = {
   trigger: "manual",
@@ -178,6 +182,30 @@ const panelIconButtonSx = {
   "&:hover": {
     borderColor: "#9db8d8",
     bgcolor: "#f8fbff"
+  }
+};
+const workspaceTabsSx = {
+  minHeight: 0,
+  p: 0.5,
+  borderRadius: 999,
+  bgcolor: "#e7f0fa",
+  "& .MuiTabs-indicator": {
+    display: "none"
+  },
+  "& .MuiTab-root": {
+    minHeight: 0,
+    minWidth: 0,
+    px: 1.8,
+    py: 1.1,
+    borderRadius: 999,
+    textTransform: "none",
+    fontWeight: 700,
+    color: "#4b6581"
+  },
+  "& .Mui-selected": {
+    color: "#113a67 !important",
+    bgcolor: "#ffffff",
+    boxShadow: "0 8px 18px rgba(15, 23, 42, 0.08)"
   }
 };
 
@@ -839,7 +867,10 @@ function buildMomoReply(
 ) {
   const lowerPrompt = prompt.toLowerCase();
   const validationErrors = validations.filter((item) => item.level === "error");
+  const transformationIssues = validations.filter((item) => item.id.startsWith("transformation-"));
   const sourceCount = document.nodes.filter((node) => node.kind === "source").length;
+  const transformNodeCount = document.nodes.filter((node) => node.kind === "transform").length;
+  const linkedTransformationCount = document.transformations.filter((item) => item.node_id).length;
   const architecturePlan = savedArchitecture?.plan as Record<string, unknown> | undefined;
   const architectureSummary =
     typeof architecturePlan?.summary === "string"
@@ -853,6 +884,23 @@ function buildMomoReply(
   }
   if (lowerPrompt.includes("schema")) {
     return `Schema guidance: every source plugin should map to a stored schema entry and quality gate. This design currently stores ${document.schemas.length} schema definitions for ${sourceCount} source nodes. ${architectureSummary}`;
+  }
+  if (
+    lowerPrompt.includes("transform") ||
+    lowerPrompt.includes("transformation") ||
+    lowerPrompt.includes("mapping") ||
+    lowerPrompt.includes("rule")
+  ) {
+    return [
+      `Transformation rules: 1) One transform node must have one linked transformation record (current: ${linkedTransformationCount}/${transformNodeCount} linked).`,
+      "2) Keep logic in `Transformation Code` and keep runtime parameters in `Config JSON` only.",
+      "3) Use deterministic, idempotent transforms; avoid side effects or external writes in transformation steps.",
+      "4) Validate config JSON and enforce schema compatibility before publish.",
+      "5) Version transformation changes with the pipeline release and preserve tags for lineage/audit.",
+      transformationIssues.length
+        ? `Current transformation issues to fix: ${transformationIssues.map((item) => item.message).join(" | ")}.`
+        : "Current transformation validation is clean."
+    ].join(" ");
   }
   if (lowerPrompt.includes("connection")) {
     return `Connection guidance: treat each external system as a plugin-backed connection reference, not a special case in task code. The repository currently stores ${document.connection_refs.length} connection references. ${architectureSummary}`;
@@ -876,38 +924,46 @@ const DesignerNodeCard = ({ data }: NodeProps<DesignerNodeData>) => {
 
   return (
     <>
-      <Handle
-        type="target"
-        position={Position.Left}
-        data-testid="node-target-handle"
-        style={{ background: colors.stroke, border: "2px solid #ffffff", width: 10, height: 10, left: -6 }}
-      />
+      {NODE_CONNECTOR_POSITIONS.map((top, index) => (
+        <Handle
+          key={`target-${index}`}
+          id={`target-${index}`}
+          type="target"
+          position={Position.Left}
+          data-testid={`node-target-handle-${index}`}
+          style={{ top: `${top}%`, background: colors.stroke, border: "2px solid #ffffff", width: 10, height: 10, left: -6 }}
+        />
+      ))}
       <Box
         data-testid={`designer-node-${data.id}`}
         sx={{
           width: 210,
           minHeight: 88,
           borderRadius: 3,
-          border: data.selected ? `3px solid ${colors.accent}` : `2px solid ${colors.stroke}`,
+          border: data.selected ? "3px solid #17315c" : `2px solid ${colors.stroke}`,
           bgcolor: colors.fill,
           px: 2,
           py: 1.4,
           boxShadow: data.selected ? "0 16px 32px rgba(15, 23, 42, 0.12)" : "0 8px 18px rgba(15, 23, 42, 0.06)"
         }}
       >
-        <Typography sx={{ fontWeight: 700, color: colors.accent, lineHeight: 1.1 }}>
+        <Typography sx={{ fontWeight: 700, color: "#17315c", lineHeight: 1.1 }}>
           {data.label}
         </Typography>
-        <Typography variant="body2" sx={{ mt: 0.75, color: "#475569" }}>
+        <Typography variant="body2" sx={{ mt: 0.75, color: "#60779c" }}>
           {titleize(data.kind)}
         </Typography>
       </Box>
-      <Handle
-        type="source"
-        position={Position.Right}
-        data-testid="node-source-handle"
-        style={{ background: colors.stroke, border: "2px solid #ffffff", width: 10, height: 10, right: -6 }}
-      />
+      {NODE_CONNECTOR_POSITIONS.map((top, index) => (
+        <Handle
+          key={`source-${index}`}
+          id={`source-${index}`}
+          type="source"
+          position={Position.Right}
+          data-testid={`node-source-handle-${index}`}
+          style={{ top: `${top}%`, background: colors.stroke, border: "2px solid #ffffff", width: 10, height: 10, right: -6 }}
+        />
+      ))}
     </>
   );
 };
@@ -938,7 +994,6 @@ function NoodlePipelineDesignerInner({
   const [selectedMetadataId, setSelectedMetadataId] = useState<string | null>(null);
   const [selectedSchemaId, setSelectedSchemaId] = useState<string | null>(null);
   const [selectedTransformationId, setSelectedTransformationId] = useState<string | null>(null);
-  const [selectedTaskPlanId, setSelectedTaskPlanId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<(typeof RUN_TABS)[number]>("builder");
   const [repositorySection, setRepositorySection] = useState<(typeof REPOSITORY_SECTIONS)[number]>("palette");
@@ -947,6 +1002,8 @@ function NoodlePipelineDesignerInner({
   const [rawSpecText, setRawSpecText] = useState("");
   const [rawSpecDirty, setRawSpecDirty] = useState(false);
   const [rawSpecError, setRawSpecError] = useState<string | null>(null);
+  const [cacheLogText, setCacheLogText] = useState("");
+  const [cacheLogRunLabel, setCacheLogRunLabel] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [canvasExpanded, setCanvasExpanded] = useState(false);
   const [canvasCollapsed, setCanvasCollapsed] = useState(false);
@@ -957,6 +1014,9 @@ function NoodlePipelineDesignerInner({
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [notice, setNotice] = useState<DesignerNotice | null>(null);
+  const [runNotice, setRunNotice] = useState<DesignerNotice | null>(null);
+  const runNotificationSnapshotRef = useRef<Map<string, NoodleDesignerRun["status"]>>(new Map());
+  const runNotificationInitializedRef = useRef(false);
   const [momoMessages, setMomoMessages] = useState<MomoMessage[]>([
     {
       id: createId("momo"),
@@ -1063,10 +1123,6 @@ function NoodlePipelineDesignerInner({
     () => (selectedNode ? document.transformations.find((item) => item.node_id === selectedNode.id) ?? null : null),
     [document.transformations, selectedNode]
   );
-  const selectedTaskPlan = useMemo(
-    () => document.orchestrator_plan.tasks.find((task) => task.id === selectedTaskPlanId) ?? null,
-    [document.orchestrator_plan.tasks, selectedTaskPlanId]
-  );
   const selectedRun = useMemo(() => document.runs.find((run) => run.id === selectedRunId) ?? null, [document.runs, selectedRunId]);
 
   const flowNodes = useMemo<FlowNode<DesignerNodeData>[]>(
@@ -1082,16 +1138,29 @@ function NoodlePipelineDesignerInner({
   );
 
   const flowEdges = useMemo<FlowEdge[]>(
-    () =>
-      document.edges.map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        type: "smoothstep",
-        selected: edge.id === selectedEdgeId,
-        markerEnd: { type: MarkerType.ArrowClosed, color: edge.id === selectedEdgeId ? "#0f172a" : "#316fd6" },
-        style: { stroke: edge.id === selectedEdgeId ? "#0f172a" : "#316fd6", strokeWidth: edge.id === selectedEdgeId ? 3.5 : 2.5 }
-      })),
+    () => {
+      const outgoingCounts = new Map<string, number>();
+      const incomingCounts = new Map<string, number>();
+
+      return document.edges.map((edge) => {
+        const sourceCount = outgoingCounts.get(edge.source) ?? 0;
+        const targetCount = incomingCounts.get(edge.target) ?? 0;
+        outgoingCounts.set(edge.source, sourceCount + 1);
+        incomingCounts.set(edge.target, targetCount + 1);
+
+        return {
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          sourceHandle: `source-${sourceCount % NODE_CONNECTOR_POSITIONS.length}`,
+          targetHandle: `target-${targetCount % NODE_CONNECTOR_POSITIONS.length}`,
+          type: "smoothstep",
+          selected: edge.id === selectedEdgeId,
+          markerEnd: { type: MarkerType.ArrowClosed, color: edge.id === selectedEdgeId ? "#0f172a" : "#316fd6" },
+          style: { stroke: edge.id === selectedEdgeId ? "#0f172a" : "#316fd6", strokeWidth: edge.id === selectedEdgeId ? 3.5 : 2.5 }
+        };
+      });
+    },
     [document.edges, selectedEdgeId]
   );
 
@@ -1266,19 +1335,6 @@ function NoodlePipelineDesignerInner({
     }));
   }, [selectedTransformationId, updateDocument]);
 
-  const updateSelectedTaskPlan = useCallback((updater: (item: NoodleOrchestratorTaskPlan) => NoodleOrchestratorTaskPlan) => {
-    if (!selectedTaskPlanId) {
-      return;
-    }
-    updateDocument((current) => ({
-      ...current,
-      orchestrator_plan: {
-        ...current.orchestrator_plan,
-        tasks: current.orchestrator_plan.tasks.map((item) => (item.id === selectedTaskPlanId ? updater(item) : item))
-      }
-    }));
-  }, [selectedTaskPlanId, updateDocument]);
-
   const renameNode = useCallback((nodeId: string) => {
     const node = document.nodes.find((entry) => entry.id === nodeId);
     if (!node) {
@@ -1321,6 +1377,24 @@ function NoodlePipelineDesignerInner({
     setRawSpecDirty(false);
     setRawSpecError(null);
   }, [document]);
+
+  const copyRawSpec = useCallback(async () => {
+    if (!rawSpecText.trim()) {
+      setNotice({
+        id: createId("notice"),
+        severity: "info",
+        message: "Nothing to copy from the pipeline JSON editor."
+      });
+      return;
+    }
+
+    const copied = await copyTextToClipboard(rawSpecText);
+    setNotice({
+      id: createId("notice"),
+      severity: copied ? "success" : "warning",
+      message: copied ? "Pipeline JSON copied." : "Clipboard copy failed in this environment."
+    });
+  }, [rawSpecText]);
 
   const deleteSelection = useCallback(() => {
     if (selectedNodeId) {
@@ -1391,18 +1465,6 @@ function NoodlePipelineDesignerInner({
   }, [document.transformations, selectedTransformationId]);
 
   useEffect(() => {
-    if (!document.orchestrator_plan.tasks.length) {
-      if (selectedTaskPlanId !== null) {
-        setSelectedTaskPlanId(null);
-      }
-      return;
-    }
-    if (!selectedTaskPlanId || !document.orchestrator_plan.tasks.some((item) => item.id === selectedTaskPlanId)) {
-      setSelectedTaskPlanId(document.orchestrator_plan.tasks[0].id);
-    }
-  }, [document.orchestrator_plan.tasks, selectedTaskPlanId]);
-
-  useEffect(() => {
     if (!document.runs.length) {
       if (selectedRunId !== null) {
         setSelectedRunId(null);
@@ -1413,6 +1475,33 @@ function NoodlePipelineDesignerInner({
       setSelectedRunId(document.runs[0].id);
     }
   }, [document.runs, selectedRunId]);
+
+  useEffect(() => {
+    const previousSnapshot = runNotificationSnapshotRef.current;
+    const nextSnapshot = new Map<string, NoodleDesignerRun["status"]>();
+    for (const run of document.runs) {
+      nextSnapshot.set(run.id, run.status);
+    }
+
+    if (!runNotificationInitializedRef.current) {
+      runNotificationSnapshotRef.current = nextSnapshot;
+      runNotificationInitializedRef.current = true;
+      return;
+    }
+
+    const changedRun =
+      document.runs.find((run) => !previousSnapshot.has(run.id) || previousSnapshot.get(run.id) !== run.status) ?? null;
+
+    if (changedRun) {
+      setRunNotice({
+        id: createId("run-notice"),
+        severity: changedRun.status === "failed" || changedRun.status === "cancelled" ? "warning" : changedRun.status === "success" ? "success" : "info",
+        message: `${changedRun.label} ${titleize(changedRun.status)} at ${new Date(changedRun.started_at).toLocaleTimeString()}.`
+      });
+    }
+
+    runNotificationSnapshotRef.current = nextSnapshot;
+  }, [document.runs]);
 
   useEffect(() => {
     if (selectedNodeId && !document.nodes.some((node) => node.id === selectedNodeId)) {
@@ -1559,6 +1648,53 @@ function NoodlePipelineDesignerInner({
     () => selectedRun?.logs.filter((entry) => (logFilter === "all" ? true : entry.level === logFilter)) ?? [],
     [logFilter, selectedRun]
   );
+  const latestRunForCache = selectedRun ?? document.runs[0] ?? null;
+
+  const captureCacheLog = useCallback(() => {
+    if (!latestRunForCache) {
+      setNotice({
+        id: createId("notice"),
+        severity: "info",
+        message: "No run available yet. Trigger a test run first."
+      });
+      return;
+    }
+
+    const serialized = latestRunForCache.logs.length
+      ? latestRunForCache.logs
+          .map(
+            (entry) =>
+              `[${entry.level.toUpperCase()}] ${new Date(entry.timestamp).toLocaleString()} ${entry.message}${entry.node_id ? ` (${entry.node_id})` : ""}`
+          )
+          .join("\n")
+      : `No log entries found for ${latestRunForCache.label}.`;
+
+    setCacheLogText(serialized);
+    setCacheLogRunLabel(latestRunForCache.label);
+    setNotice({
+      id: createId("notice"),
+      severity: "success",
+      message: `Captured output from ${latestRunForCache.label}.`
+    });
+  }, [latestRunForCache]);
+
+  const copyCacheLog = useCallback(async () => {
+    if (!cacheLogText.trim()) {
+      setNotice({
+        id: createId("notice"),
+        severity: "info",
+        message: "Nothing to copy. Capture run output first."
+      });
+      return;
+    }
+
+    const copied = await copyTextToClipboard(cacheLogText);
+    setNotice({
+      id: createId("notice"),
+      severity: copied ? "success" : "warning",
+      message: copied ? "Cache log copied." : "Clipboard copy failed in this environment."
+    });
+  }, [cacheLogText]);
 
   const latestPublished = savedDocuments.find((entry) => entry.status === "published" && entry.name === document.name) ?? null;
   const publishReadinessLabel = validationErrors.length
@@ -1566,11 +1702,6 @@ function NoodlePipelineDesignerInner({
     : "Ready to publish";
   const repositoryCoverage = document.connection_refs.length + document.metadata_assets.length + document.schemas.length + document.transformations.length;
   const graphDensityLabel = `${document.nodes.length} nodes / ${document.edges.length} edges`;
-  const latestRunNotifications: Array<{ id: string; message: string; severity: "success" | "info" | "warning" }> = document.runs.slice(0, 4).map((run) => ({
-    id: run.id,
-    message: `${run.label} ${titleize(run.status)} at ${new Date(run.started_at).toLocaleTimeString()}.`,
-    severity: run.status === "failed" ? "warning" : run.status === "success" ? "success" : "info"
-  }));
   const repositoryVisible = panelFocus === null || panelFocus === "repository";
   const centerVisible = panelFocus === null || panelFocus === "canvas";
   const momoVisible = panelFocus === null || panelFocus === "momo";
@@ -1702,272 +1833,25 @@ function NoodlePipelineDesignerInner({
 
       {syncError ? <Alert severity="info">{syncError}</Alert> : null}
 
-      <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "#f8fbff" }}>
-        <CardContent sx={{ p: { xs: 1.25, md: 1.5 } }}>
-          <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5} alignItems={{ xs: "flex-start", md: "center" }}>
-            <Box>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Workspace Mode</Typography>
-              <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                Switch between authoring the DAG and reviewing live-style run execution.
-              </Typography>
-            </Box>
-            <Tabs
-              value={activeTab}
-              onChange={(_, value) => setActiveTab(value)}
-              sx={{
-                minHeight: 0,
-                p: 0.5,
-                borderRadius: 999,
-                bgcolor: "#e7f0fa",
-                "& .MuiTabs-indicator": {
-                  display: "none"
-                },
-                "& .MuiTab-root": {
-                  minHeight: 0,
-                  minWidth: 0,
-                  px: 1.8,
-                  py: 1.1,
-                  borderRadius: 999,
-                  textTransform: "none",
-                  fontWeight: 700,
-                  color: "#4b6581"
-                },
-                "& .Mui-selected": {
-                  color: "#113a67 !important",
-                  bgcolor: "#ffffff",
-                  boxShadow: "0 8px 18px rgba(15, 23, 42, 0.08)"
-                }
-              }}
-            >
-              <Tab value="builder" label="Design Studio" />
-              <Tab value="runs" label={`Runs And Logs (${document.runs.length})`} />
-            </Tabs>
-          </Stack>
-        </CardContent>
-      </Card>
-
       <Grid container spacing={2.5}>
         {centerVisible ? (
         <Grid item xs={12} lg={centerLg} sx={{ order: { xs: 2, lg: 2 } }}>
           <Stack spacing={2}>
             {activeTab === "builder" ? (
               <>
-            <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
-              <CardContent sx={{ p: 2.2 }}>
-                <Stack spacing={1.25}>
-                  <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1.5}>
-                    <Box>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Scheduler</Typography>
-                    </Box>
-                  </Stack>
-                  <Grid container spacing={1.5}>
-                    <Grid item xs={12} sm={4}>
-                      <TextField select fullWidth size="small" label="Trigger" value={document.schedule.trigger} onChange={(event) => updateDocument((current) => ({ ...current, schedule: { ...current.schedule, trigger: event.target.value as NoodleDesignerSchedule["trigger"] } }))}>
-                        <MenuItem value="manual">manual</MenuItem>
-                        <MenuItem value="schedule">schedule</MenuItem>
-                        <MenuItem value="event">event</MenuItem>
-                      </TextField>
-                    </Grid>
-                    <Grid item xs={12} sm={4}>
-                      <TextField fullWidth size="small" label="Timezone" value={document.schedule.timezone} onChange={(event) => updateDocument((current) => ({ ...current, schedule: { ...current.schedule, timezone: event.target.value } }))} />
-                    </Grid>
-                    <Grid item xs={12} sm={4}>
-                      <TextField select fullWidth size="small" label="Concurrency" value={document.schedule.concurrency_policy} onChange={(event) => updateDocument((current) => ({ ...current, schedule: { ...current.schedule, concurrency_policy: event.target.value as NoodleDesignerSchedule["concurrency_policy"] } }))}>
-                        <MenuItem value="allow">allow</MenuItem>
-                        <MenuItem value="forbid">forbid</MenuItem>
-                        <MenuItem value="replace">replace</MenuItem>
-                      </TextField>
-                    </Grid>
-                    <Grid item xs={12} sm={8}>
-                      <TextField fullWidth size="small" label="Cron" value={document.schedule.cron} disabled={document.schedule.trigger !== "schedule"} onChange={(event) => updateDocument((current) => ({ ...current, schedule: { ...current.schedule, cron: event.target.value } }))} />
-                    </Grid>
-                    <Grid item xs={12} sm={4}>
-                      <Stack direction="row" spacing={1} alignItems="center" sx={{ height: "100%", px: 1 }}>
-                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>Enabled</Typography>
-                        <Switch checked={document.schedule.enabled} onChange={(_, checked) => updateDocument((current) => ({ ...current, schedule: { ...current.schedule, enabled: checked } }))} />
-                      </Stack>
-                    </Grid>
-                  </Grid>
-                  <Divider />
-                  <Stack spacing={1}>
-                    <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
-                      <Box>
-                        <Typography variant="body2" sx={{ fontWeight: 700 }}>Orchestrator Plan</Typography>
-                        <Typography variant="caption" sx={{ color: "var(--muted)" }}>
-                          Create and edit the control-plane task plan before handing the versioned spec to Apache Airflow.
-                        </Typography>
-                      </Box>
-                      <Stack direction="row" spacing={1}>
-                        <Chip
-                          label={document.orchestrator_plan.execution_target}
-                          size="small"
-                          sx={{ bgcolor: "#eef6ff", fontWeight: 700, textTransform: "capitalize" }}
-                        />
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            const nextTask: NoodleOrchestratorTaskPlan = {
-                              id: createId("task-plan"),
-                              node_id: null,
-                              name: `Task ${document.orchestrator_plan.tasks.length + 1}`,
-                              stage: "custom-stage",
-                              plugin: "custom-plugin",
-                              execution_plane: "worker",
-                              depends_on: [],
-                              outputs: [],
-                              notes: "Manual control-plane task."
-                            };
-                            updateDocument((current) => ({
-                              ...current,
-                              orchestrator_plan: {
-                                ...current.orchestrator_plan,
-                                tasks: [...current.orchestrator_plan.tasks, nextTask]
-                              }
-                            }));
-                            setSelectedTaskPlanId(nextTask.id);
-                          }}
-                        >
-                          Add Task
-                        </Button>
-                      </Stack>
-                    </Stack>
-                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                      {document.orchestrator_plan.tasks.map((task) => (
-                        <Chip
-                          key={task.id}
-                          label={task.name}
-                          color={task.id === selectedTaskPlanId ? "primary" : "default"}
-                          onClick={() => setSelectedTaskPlanId(task.id)}
-                          variant={task.id === selectedTaskPlanId ? "filled" : "outlined"}
-                        />
-                      ))}
-                    </Stack>
-                    {selectedTaskPlan ? (
-                      <Stack spacing={1}>
-                        <TextField
-                          label="Task Name"
-                          size="small"
-                          value={selectedTaskPlan.name}
-                          onChange={(event) => updateSelectedTaskPlan((item) => ({ ...item, name: event.target.value }))}
-                        />
-                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                          <TextField
-                            label="Stage"
-                            size="small"
-                            value={selectedTaskPlan.stage}
-                            onChange={(event) => updateSelectedTaskPlan((item) => ({ ...item, stage: event.target.value }))}
-                            sx={{ flex: 1 }}
-                          />
-                          <TextField
-                            label="Plugin"
-                            size="small"
-                            value={selectedTaskPlan.plugin}
-                            onChange={(event) => updateSelectedTaskPlan((item) => ({ ...item, plugin: event.target.value }))}
-                            sx={{ flex: 1 }}
-                          />
-                        </Stack>
-                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                          <TextField
-                            select
-                            label="Execution Plane"
-                            size="small"
-                            value={selectedTaskPlan.execution_plane}
-                            onChange={(event) =>
-                              updateSelectedTaskPlan((item) => ({
-                                ...item,
-                                execution_plane: event.target.value as NoodleOrchestratorTaskPlan["execution_plane"]
-                              }))
-                            }
-                            sx={{ flex: 1 }}
-                          >
-                            <MenuItem value="control_plane">control_plane</MenuItem>
-                            <MenuItem value="airflow">airflow</MenuItem>
-                            <MenuItem value="worker">worker</MenuItem>
-                            <MenuItem value="quality">quality</MenuItem>
-                            <MenuItem value="serving">serving</MenuItem>
-                          </TextField>
-                          <TextField
-                            select
-                            label="Linked Node"
-                            size="small"
-                            value={selectedTaskPlan.node_id ?? ""}
-                            onChange={(event) =>
-                              updateSelectedTaskPlan((item) => ({
-                                ...item,
-                                node_id: event.target.value || null
-                              }))
-                            }
-                            sx={{ flex: 1 }}
-                          >
-                            <MenuItem value="">No linked node</MenuItem>
-                            {document.nodes.map((node) => (
-                              <MenuItem key={node.id} value={node.id}>{node.label}</MenuItem>
-                            ))}
-                          </TextField>
-                        </Stack>
-                        <TextField
-                          label="Depends On"
-                          size="small"
-                          value={selectedTaskPlan.depends_on.join(", ")}
-                          onChange={(event) =>
-                            updateSelectedTaskPlan((item) => ({
-                              ...item,
-                              depends_on: event.target.value.split(",").map((value) => value.trim()).filter(Boolean)
-                            }))
-                          }
-                          helperText="Comma-separated task ids."
-                        />
-                        <TextField
-                          label="Outputs"
-                          size="small"
-                          value={selectedTaskPlan.outputs.join(", ")}
-                          onChange={(event) =>
-                            updateSelectedTaskPlan((item) => ({
-                              ...item,
-                              outputs: event.target.value.split(",").map((value) => value.trim()).filter(Boolean)
-                            }))
-                          }
-                          helperText="Comma-separated zones or artifacts."
-                        />
-                        <TextField
-                          label="Notes"
-                          size="small"
-                          multiline
-                          minRows={2}
-                          value={selectedTaskPlan.notes}
-                          onChange={(event) => updateSelectedTaskPlan((item) => ({ ...item, notes: event.target.value }))}
-                        />
-                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                          {selectedTaskPlan.node_id ? (
-                            <Button
-                              onClick={() => {
-                                setSelectedNodeId(selectedTaskPlan.node_id ?? null);
-                                setSelectedEdgeId(null);
-                              }}
-                            >
-                              Focus Node
-                            </Button>
-                          ) : null}
-                          <Button
-                            color="error"
-                            onClick={() =>
-                              updateDocument((current) => ({
-                                ...current,
-                                orchestrator_plan: {
-                                  ...current.orchestrator_plan,
-                                  tasks: current.orchestrator_plan.tasks.filter((task) => task.id !== selectedTaskPlan.id)
-                                }
-                              }))
-                            }
-                          >
-                            Remove Task
-                          </Button>
-                        </Stack>
-                      </Stack>
-                    ) : (
-                      <Alert severity="info">Add a task to create the orchestrator execution plan.</Alert>
-                    )}
-                  </Stack>
+            <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "#f8fbff" }}>
+              <CardContent sx={{ p: { xs: 1.25, md: 1.5 } }}>
+                <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5} alignItems={{ xs: "flex-start", md: "center" }}>
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Test Run</Typography>
+                    <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                      Test run tab is placed below the canvas for quick execution checks.
+                    </Typography>
+                  </Box>
+                  <Tabs value={activeTab} onChange={(_, value) => setActiveTab(value)} sx={workspaceTabsSx}>
+                    <Tab value="builder" label="Design Studio" />
+                    <Tab value="runs" label={`Test Run (${document.runs.length})`} />
+                  </Tabs>
                 </Stack>
               </CardContent>
             </Card>
@@ -2173,6 +2057,23 @@ function NoodlePipelineDesignerInner({
               </>
             ) : (
               <>
+                <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "#f8fbff" }}>
+                  <CardContent sx={{ p: { xs: 1.25, md: 1.5 } }}>
+                    <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5} alignItems={{ xs: "flex-start", md: "center" }}>
+                      <Box>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Test Run</Typography>
+                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                          Review cached outputs, task states, and execution logs from test runs.
+                        </Typography>
+                      </Box>
+                      <Tabs value={activeTab} onChange={(_, value) => setActiveTab(value)} sx={workspaceTabsSx}>
+                        <Tab value="builder" label="Design Studio" />
+                        <Tab value="runs" label={`Test Run (${document.runs.length})`} />
+                      </Tabs>
+                    </Stack>
+                  </CardContent>
+                </Card>
+
                 <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
                   <CardContent sx={{ p: 2.2 }}>
                     <Stack spacing={1.25}>
@@ -2180,16 +2081,15 @@ function NoodlePipelineDesignerInner({
                         <Box>
                           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Run Control</Typography>
                           <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                            Trigger and inspect Apache Airflow-backed runs without leaving the designer.
+                            Trigger and inspect test runs without leaving the designer.
                           </Typography>
                         </Box>
                         <Button variant="contained" onClick={() => void triggerRun()} sx={noodleButtonPrimarySx} disabled={remoteBusy}>
-                          {remoteBusy ? "Working..." : "Trigger Airflow Run"}
+                          {remoteBusy ? "Working..." : "Trigger Test Run"}
                         </Button>
                       </Stack>
                       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                         <Chip label={`Runs: ${document.runs.length}`} sx={{ bgcolor: "#eef6ff" }} />
-                        <Chip label={`Orchestrator: Apache Airflow`} sx={{ bgcolor: "#fff4e8" }} />
                         <Chip label={`Latest: ${selectedRun ? titleize(selectedRun.status) : "No runs"}`} sx={{ bgcolor: "#f8fbff" }} />
                       </Stack>
                     </Stack>
@@ -2216,7 +2116,7 @@ function NoodlePipelineDesignerInner({
                             <Box>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>{run.label}</Typography>
                               <Typography variant="caption" sx={{ color: "var(--muted)" }}>
-                                {new Date(run.started_at).toLocaleString()} via {run.orchestrator}
+                                {new Date(run.started_at).toLocaleString()}
                               </Typography>
                             </Box>
                             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -2380,19 +2280,76 @@ function NoodlePipelineDesignerInner({
                           event.dataTransfer.setData("application/noodle-node-kind", entry.kind);
                           event.dataTransfer.effectAllowed = "move";
                         }}
-                        sx={{ p: 1.2, borderRadius: 2.5, border: "1px solid var(--line)", bgcolor: "#fff", cursor: "grab" }}
+                        sx={{
+                          p: 1.2,
+                          borderRadius: 2.5,
+                          border: `1px solid ${NODE_COLORS[entry.kind].stroke}`,
+                          bgcolor: NODE_COLORS[entry.kind].fill,
+                          cursor: "grab",
+                          boxShadow: "0 6px 14px rgba(15, 23, 42, 0.05)"
+                        }}
                       >
                         <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
                           <Box>
-                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{entry.label}</Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 700, color: NODE_COLORS[entry.kind].accent }}>
+                              {entry.label}
+                            </Typography>
                             <Typography variant="caption" sx={{ color: "var(--muted)" }}>{entry.description}</Typography>
                           </Box>
-                          <Button size="small" onClick={() => insertNode(entry.kind)}>
+                          <Button
+                            size="small"
+                            onClick={() => insertNode(entry.kind)}
+                            sx={{
+                              borderColor: NODE_COLORS[entry.kind].stroke,
+                              color: NODE_COLORS[entry.kind].accent,
+                              bgcolor: "#ffffffbf",
+                              "&:hover": { bgcolor: "#fff" }
+                            }}
+                          >
                             Add
                           </Button>
                         </Stack>
                       </Box>
                     ))}
+
+                    <Divider sx={{ mt: 0.5 }} />
+                    <Stack spacing={1}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>Cache Log Component</Typography>
+                        <Stack direction="row" spacing={0.6}>
+                          <Button size="small" onClick={captureCacheLog}>
+                            Catch Output
+                          </Button>
+                          <IconButton size="small" onClick={() => void copyCacheLog()} aria-label="Copy cache log" sx={panelIconButtonSx}>
+                            <ContentCopyRoundedIcon fontSize="small" />
+                          </IconButton>
+                        </Stack>
+                      </Stack>
+                      <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                        {cacheLogRunLabel
+                          ? `Captured from ${cacheLogRunLabel}.`
+                          : "Capture output from the selected/latest test run."}
+                      </Typography>
+                      <TextField
+                        label="Cached Test Run Output"
+                        multiline
+                        minRows={6}
+                        value={cacheLogText}
+                        InputProps={{ readOnly: true }}
+                        placeholder="Run a test and click Catch Output to cache execution logs here."
+                      />
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button size="small" onClick={() => setActiveTab("runs")}>
+                          Open Test Run Tab
+                        </Button>
+                        <Button size="small" color="error" onClick={() => {
+                          setCacheLogText("");
+                          setCacheLogRunLabel(null);
+                        }}>
+                          Clear Cache
+                        </Button>
+                      </Stack>
+                    </Stack>
                   </Stack>
                     </>
                   ) : null}
@@ -2758,6 +2715,11 @@ function NoodlePipelineDesignerInner({
                     <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
                       <Typography variant="body2" sx={{ fontWeight: 700 }}>Raw Pipeline JSON</Typography>
                       <Stack direction="row" spacing={1}>
+                        <Tooltip title="Copy pipeline JSON">
+                          <IconButton size="small" onClick={() => void copyRawSpec()} aria-label="Copy pipeline JSON" sx={panelIconButtonSx}>
+                            <ContentCopyRoundedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                         <Button size="small" onClick={resetRawSpec}>
                           Reset
                         </Button>
@@ -2884,26 +2846,6 @@ function NoodlePipelineDesignerInner({
                 <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
                   <CardContent sx={{ p: 2.2 }}>
                     <Stack spacing={1.25}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Run Notifications</Typography>
-                      <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                        Recent pipeline activity appears here as runs change state.
-                      </Typography>
-                      {latestRunNotifications.length ? (
-                        latestRunNotifications.map((entry) => (
-                          <Alert key={entry.id} severity={entry.severity}>
-                            {entry.message}
-                          </Alert>
-                        ))
-                      ) : (
-                        <Alert severity="info">Trigger a run to start receiving execution notifications.</Alert>
-                      )}
-                    </Stack>
-                  </CardContent>
-                </Card>
-
-                <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
-                  <CardContent sx={{ p: 2.2 }}>
-                    <Stack spacing={1.25}>
                   <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Validation Status</Typography>
                   {validations.length ? (
                     validations.map((validation) => (
@@ -2921,6 +2863,18 @@ function NoodlePipelineDesignerInner({
         </Grid>
         ) : null}
       </Grid>
+      <Snackbar
+        open={Boolean(runNotice)}
+        autoHideDuration={7000}
+        onClose={() => setRunNotice(null)}
+        anchorOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        {runNotice ? (
+          <Alert severity={runNotice.severity} onClose={() => setRunNotice(null)} sx={{ width: "100%" }}>
+            {runNotice.message}
+          </Alert>
+        ) : <span />}
+      </Snackbar>
       <Snackbar
         open={Boolean(notice)}
         autoHideDuration={3600}

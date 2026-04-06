@@ -31,8 +31,11 @@ import type {
   NoodleReferenceSpec,
   PendingApprovalListResponse,
   ProviderSummary,
+  RbacAuthenticatedUser,
   RbacLoginResponse,
+  RbacRoleAssignmentRequest,
   RbacPrincipal,
+  RbacUserCreateRequest,
   RecommendationRequest,
   RecommendationResponse,
   ResourceAllocatorContractResponse,
@@ -167,6 +170,24 @@ export function getCurrentUser() {
 
 export function getRbacPrincipal() {
   return apiRequest<RbacPrincipal>("/rbac/auth/me");
+}
+
+export function listRbacUsers() {
+  return apiRequest<RbacAuthenticatedUser[]>("/rbac/users");
+}
+
+export function createRbacUser(request: RbacUserCreateRequest) {
+  return apiRequest<RbacAuthenticatedUser>("/rbac/users", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function assignRbacUserRoles(userId: number, request: RbacRoleAssignmentRequest) {
+  return apiRequest<RbacAuthenticatedUser>(`/rbac/users/${userId}/roles`, {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
 }
 
 export function logoutUser() {

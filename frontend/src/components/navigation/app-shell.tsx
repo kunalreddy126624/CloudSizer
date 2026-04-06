@@ -4,20 +4,26 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { Box, Button, Chip, Container, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, Container, Stack, Typography } from "@mui/material";
 
 import { useAuth } from "@/components/auth/auth-provider";
+import type { PermissionName } from "@/lib/types";
 
 const navItems = [
   { href: "/workspace", label: "Workspace" },
-  { href: "/advisor", label: "Agent Estimator" },
-  { href: "/allocator", label: "Agent Allocator" },
+  { href: "/rbac", label: "RBAC", requiredAnyPermission: ["manage_users"] as PermissionName[] },
+  { href: "/advisor", label: "Agent Estimator", requiredAnyPermission: ["create_estimation", "view_estimation"] as PermissionName[] },
+  {
+    href: "/allocator",
+    label: "Agent Allocator",
+    requiredAnyPermission: ["create_estimation", "approve_request", "reject_request", "view_cost", "allocate_resources"] as PermissionName[]
+  },
   { href: "/noodle", label: "Noodle" },
-  { href: "/estimator", label: "Form Estimator" },
-  { href: "/pricing", label: "Pricing" },
-  { href: "/architect", label: "Architect" },
+  { href: "/estimator", label: "Form Estimator", requiredAnyPermission: ["create_estimation", "view_estimation"] as PermissionName[] },
+  { href: "/pricing", label: "Pricing", requiredAnyPermission: ["view_cost"] as PermissionName[] },
+  { href: "/architect", label: "Architect", requiredAnyPermission: ["create_estimation", "view_estimation"] as PermissionName[] },
   { href: "/catalog", label: "Catalog" },
-  { href: "/estimates", label: "Saved Work" }
+  { href: "/estimates", label: "Saved Work", requiredAnyPermission: ["view_estimation", "create_estimation"] as PermissionName[] }
 ] as const;
 
 function isRouteActive(pathname: string, href: string) {
@@ -30,7 +36,7 @@ function isRouteActive(pathname: string, href: string) {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { isAuthenticated, loading, logout, user } = useAuth();
+  const { isAuthenticated, isRbacSession, loading, logout, permissions, roles, user } = useAuth();
 
   return (
     <Box sx={{ minHeight: "100vh" }}>
@@ -96,6 +102,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               {navItems.map((item) => {
                 const active = isRouteActive(pathname, item.href);
+                const isRestricted = isRbacSession && Boolean(item.requiredAnyPermission?.length);
+                const hasAnyRequiredPermission = item.requiredAnyPermission
+                  ? item.requiredAnyPermission.some((permission) => permissions.includes(permission))
+                  : true;
+                const canAccess = !isRestricted || hasAnyRequiredPermission;
 
                 return (
                   <Button
@@ -104,6 +115,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     href={item.href}
                     variant={active ? "contained" : "outlined"}
                     size="small"
+                    disabled={!canAccess}
                     sx={
                       active
                         ? {
@@ -113,7 +125,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                           }
                         : {
                             borderColor: "var(--line)",
-                            color: "var(--text)"
+                            color: "var(--text)",
+                            opacity: canAccess ? 1 : 0.5
                           }
                     }
                   >
@@ -122,6 +135,32 @@ export function AppShell({ children }: { children: ReactNode }) {
                 );
               })}
             </Stack>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Chip
+                label={isRbacSession ? "RBAC Session Active" : "RBAC Session Not Active"}
+                color={isRbacSession ? "success" : "default"}
+                variant={isRbacSession ? "filled" : "outlined"}
+              />
+              {isRbacSession ? (
+                <>
+                  <Chip label={`Roles: ${roles.length ? roles.join(", ") : "none"}`} variant="outlined" />
+                  <Chip label={`Permissions: ${permissions.length}`} variant="outlined" />
+                </>
+              ) : (
+                <Typography variant="caption" sx={{ color: "var(--muted)", alignSelf: "center" }}>
+                  Sign in with RBAC credentials to enable role-based navigation and guarded actions.
+                </Typography>
+              )}
+            </Stack>
+            {isRbacSession ? (
+              <Alert severity="success" variant="outlined">
+                RBAC enabled. Roles: {roles.length ? roles.join(", ") : "none"}.
+              </Alert>
+            ) : (
+              <Alert severity="warning" variant="outlined">
+                This session does not include RBAC roles. Actions are hidden and the dashboard is read-only until you sign in with an RBAC JWT.
+              </Alert>
+            )}
           </Stack>
         </Container>
       </Box>
