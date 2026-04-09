@@ -29,7 +29,9 @@ function buildPipeline(overrides: Partial<NoodlePipelineDesignerDocument> = {}):
       cron: "",
       timezone: "UTC",
       enabled: false,
-      concurrency_policy: "forbid"
+      concurrency_policy: "forbid",
+      orchestration_mode: "tasks",
+      if_condition: ""
     },
     runs: overrides.runs ?? [],
     saved_at: overrides.saved_at ?? "2026-04-03T12:00:00.000Z"

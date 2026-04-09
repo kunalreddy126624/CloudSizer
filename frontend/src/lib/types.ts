@@ -933,6 +933,7 @@ export type NoodleDesignerNodeKind =
   | "source"
   | "ingest"
   | "transform"
+  | "cache"
   | "quality"
   | "feature"
   | "serve";
@@ -1071,6 +1072,23 @@ export interface NoodleDesignerRunLog {
   node_id?: string | null;
 }
 
+export interface NoodleDesignerCachedOutput {
+  id: string;
+  node_id: string;
+  node_label: string;
+  source_node_id?: string | null;
+  source_node_label?: string | null;
+  format: "jsonl" | "json" | "csv" | "text";
+  content_type: string;
+  summary: string;
+  preview_text: string;
+  preview_bytes: number;
+  captured_bytes: number;
+  max_capture_bytes: number;
+  truncated: boolean;
+  approx_records: number;
+}
+
 export interface NoodleDesignerRun {
   id: string;
   label: string;
@@ -1082,6 +1100,7 @@ export interface NoodleDesignerRun {
   finished_at?: string | null;
   task_runs: NoodleDesignerRunTask[];
   logs: NoodleDesignerRunLog[];
+  cached_outputs: NoodleDesignerCachedOutput[];
 }
 
 export interface NoodlePipelineRunCreateRequest {

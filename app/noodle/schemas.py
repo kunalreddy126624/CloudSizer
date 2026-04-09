@@ -148,6 +148,8 @@ class NoodleArchitectureAlignmentItem(BaseModel):
 
 
 TaskExecutionPlane = Literal["control_plane", "airflow", "worker", "quality", "serving"]
+DesignerTrigger = Literal["manual", "schedule", "event", "if"]
+DesignerOrchestrationMode = Literal["tasks", "plan"]
 
 
 class NoodleOrchestratorTaskPlan(BaseModel):
@@ -166,7 +168,7 @@ class NoodleOrchestratorPlan(BaseModel):
     id: str
     name: str
     objective: str
-    trigger: Literal["manual", "schedule", "event"] = "manual"
+    trigger: DesignerTrigger = "manual"
     execution_target: str
     tasks: list[NoodleOrchestratorTaskPlan] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
@@ -256,7 +258,7 @@ class NoodleMicroserviceDetailResponse(BaseModel):
 class NoodleWorkflowStartRequest(BaseModel):
     pipeline_name: str
     workflow_template: str
-    trigger: Literal["manual", "event", "schedule"] = "manual"
+    trigger: DesignerTrigger = "manual"
 
 
 class NoodleWorkflowRunStatus(BaseModel):
@@ -399,7 +401,7 @@ class NoodlePipelineObservability(BaseModel):
     quality_score: float
 
 
-DesignerNodeKind = Literal["source", "ingest", "transform", "quality", "feature", "serve"]
+DesignerNodeKind = Literal["source", "ingest", "transform", "cache", "quality", "feature", "serve"]
 DesignerDocumentStatus = Literal["draft", "published"]
 DesignerTargetZone = Literal["bronze", "silver", "gold", "feature_store", "serving", "control_plane"]
 DesignerTransformationMode = Literal["python", "sql", "dbt", "spark_sql", "custom"]
@@ -478,11 +480,13 @@ class NoodleDesignerTransformation(BaseModel):
 
 
 class NoodleDesignerSchedule(BaseModel):
-    trigger: Literal["manual", "schedule", "event"] = "manual"
+    trigger: DesignerTrigger = "manual"
     cron: str = ""
     timezone: str = "UTC"
     enabled: bool = False
     concurrency_policy: Literal["allow", "forbid", "replace"] = "forbid"
+    orchestration_mode: DesignerOrchestrationMode = "tasks"
+    if_condition: str = ""
 
 
 class NoodleDesignerRunTask(BaseModel):
@@ -502,16 +506,35 @@ class NoodleDesignerRunLog(BaseModel):
     node_id: str | None = None
 
 
+class NoodleDesignerCachedOutput(BaseModel):
+    id: str
+    node_id: str
+    node_label: str
+    source_node_id: str | None = None
+    source_node_label: str | None = None
+    format: Literal["jsonl", "json", "csv", "text"] = "jsonl"
+    content_type: str = "application/x-ndjson"
+    summary: str = ""
+    preview_text: str = ""
+    preview_bytes: int = 0
+    captured_bytes: int = 0
+    max_capture_bytes: int = 0
+    truncated: bool = False
+    approx_records: int = 0
+
+
 class NoodleDesignerRun(BaseModel):
     id: str
     label: str
     orchestrator: str
     status: DesignerRunStatus
-    trigger: Literal["manual", "schedule", "event"]
+    trigger: DesignerTrigger
+    orchestration_mode: DesignerOrchestrationMode = "tasks"
     started_at: str
     finished_at: str | None = None
     task_runs: list[NoodleDesignerRunTask] = Field(default_factory=list)
     logs: list[NoodleDesignerRunLog] = Field(default_factory=list)
+    cached_outputs: list[NoodleDesignerCachedOutput] = Field(default_factory=list)
 
 
 class NoodlePipelineDocument(BaseModel):
@@ -532,7 +555,10 @@ class NoodlePipelineDocument(BaseModel):
 
 
 class NoodlePipelineRunCreateRequest(BaseModel):
-    trigger: Literal["manual", "event", "schedule"] = "manual"
+    trigger: DesignerTrigger = "manual"
+    orchestration_mode: DesignerOrchestrationMode = "tasks"
+    if_condition: str | None = None
+    test_node_id: str | None = None
     document: NoodlePipelineDocument | None = None
 
 

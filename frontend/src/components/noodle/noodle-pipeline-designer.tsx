@@ -62,6 +62,7 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import type {
   NoodleArchitectureOverview,
   NoodleArchitecturePrinciple,
+  NoodleDesignerCachedOutput,
   NoodleDesignerConnectionRef,
   NoodleDesignerDocumentStatus,
   NoodleDesignerEdge,
@@ -118,6 +119,7 @@ const NODE_LIBRARY: Array<{ kind: NoodleDesignerNodeKind; label: string; descrip
   { kind: "source", label: "Source", description: "Declare plugin-backed entry points and external connection refs." },
   { kind: "ingest", label: "Ingest", description: "Land data through durable control-plane and worker handoff." },
   { kind: "transform", label: "Transform", description: "Run plugin-based transforms and curated processing stages." },
+  { kind: "cache", label: "Cache", description: "Buffer transformed output so operators can inspect large intermediate payloads safely." },
   { kind: "quality", label: "Quality", description: "Enforce contracts, schema rules, tests, and observability gates." },
   { kind: "feature", label: "Feature", description: "Materialize reusable ML and agent-ready feature outputs." },
   { kind: "serve", label: "Serve", description: "Publish governed outputs to analytics, APIs, and downstream consumers." }
@@ -127,18 +129,24 @@ const NODE_COLORS: Record<NoodleDesignerNodeKind, { fill: string; stroke: string
   source: { fill: providerColors.shared.fill, stroke: providerColors.shared.stroke, accent: providerColors.shared.text },
   ingest: { fill: providerColors.azure.fill, stroke: providerColors.azure.stroke, accent: providerColors.azure.text },
   transform: { fill: providerColors.aws.fill, stroke: providerColors.aws.stroke, accent: providerColors.aws.text },
+  cache: { fill: providerColors.alibaba.fill, stroke: providerColors.alibaba.stroke, accent: providerColors.alibaba.text },
   quality: { fill: providerColors.gcp.fill, stroke: providerColors.gcp.stroke, accent: providerColors.gcp.text },
   feature: { fill: providerColors.ibm.fill, stroke: providerColors.ibm.stroke, accent: providerColors.ibm.text },
   serve: { fill: providerColors.oracle.fill, stroke: providerColors.oracle.stroke, accent: providerColors.oracle.text }
 };
 const NODE_CONNECTOR_POSITIONS = [20, 40, 60, 80] as const;
+const CACHE_CAPTURE_LIMIT_BYTES = 30 * 1024 * 1024;
+const CACHE_PREVIEW_LIMIT_BYTES = 256 * 1024;
+const CACHE_OBSERVABLE_UPSTREAM_KINDS = new Set<NoodleDesignerNodeKind>(["transform", "quality", "feature", "serve"]);
 
 const DEFAULT_SCHEDULE: NoodleDesignerSchedule = {
   trigger: "manual",
   cron: "0 * * * *",
   timezone: "UTC",
   enabled: false,
-  concurrency_policy: "forbid"
+  concurrency_policy: "forbid",
+  orchestration_mode: "tasks",
+  if_condition: ""
 };
 
 const CANVAS_HEIGHT = 720;
@@ -217,6 +225,16 @@ function titleize(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+function formatBytes(bytes: number) {
+  if (bytes <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** exponent;
+  return `${value >= 10 || exponent === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[exponent]}`;
+}
+
 function isEditableTarget(target: EventTarget | null) {
   return (
     target instanceof HTMLElement &&
@@ -249,6 +267,13 @@ function defaultParamsForKind(kind: NoodleDesignerNodeKind): NoodleDesignerParam
       return [
         { key: "plugin", value: "transform-plugin" },
         { key: "target_zone", value: "silver" }
+      ];
+    case "cache":
+      return [
+        { key: "capture_mode", value: "transformed_output" },
+        { key: "max_capture_mb", value: "30" },
+        { key: "preview_kb", value: "256" },
+        { key: "format", value: "jsonl" }
       ];
     case "quality":
       return [
@@ -414,6 +439,8 @@ function defaultPluginForKind(kind: NoodleDesignerNodeKind) {
       return "airflow-ingest";
     case "transform":
       return "transform-plugin";
+    case "cache":
+      return "cache-observer-plugin";
     case "quality":
       return "quality-plugin";
     case "feature":
@@ -429,6 +456,8 @@ function defaultExecutionPlaneForKind(kind: NoodleDesignerNodeKind): NoodleOrche
       return "control_plane";
     case "ingest":
       return "airflow";
+    case "cache":
+      return "worker";
     case "quality":
       return "quality";
     case "serve":
@@ -447,6 +476,8 @@ function stageNameForKind(kind: NoodleDesignerNodeKind) {
       return "ingestion";
     case "transform":
       return "transformation";
+    case "cache":
+      return "cache-observer";
     case "quality":
       return "quality-gate";
     case "feature":
@@ -465,7 +496,15 @@ function createTaskPlanForNode(node: NoodleDesignerNode): NoodleOrchestratorTask
     plugin: defaultPluginForKind(node.kind),
     execution_plane: defaultExecutionPlaneForKind(node.kind),
     depends_on: [],
-    outputs: [node.kind === "serve" ? "serving" : node.kind === "quality" ? "quality-report" : `${node.kind}-output`],
+    outputs: [
+      node.kind === "serve"
+        ? "serving"
+        : node.kind === "quality"
+          ? "quality-report"
+          : node.kind === "cache"
+            ? "cached-preview"
+            : `${node.kind}-output`
+    ],
     notes: `Version and execute ${node.label} through the portable JSON spec.`
   };
 }
@@ -558,10 +597,163 @@ function createRunLogs(label: string, level: NoodleDesignerLogLevel, message: st
   };
 }
 
-function createSeedRuns(nodes: NoodleDesignerNode[]): NoodleDesignerRun[] {
+function nodeParamsToMap(node: NoodleDesignerNode) {
+  return Object.fromEntries(
+    node.params
+      .map((param) => [param.key.trim().toLowerCase(), param.value.trim()] as const)
+      .filter(([key]) => Boolean(key))
+  );
+}
+
+function coercePositiveInt(value: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function repeatToSize(seed: string, targetBytes: number) {
+  const encoder = new TextEncoder();
+  if (targetBytes <= 0) {
+    return "";
+  }
+  const encoded = encoder.encode(seed);
+  if (encoded.length >= targetBytes) {
+    return new TextDecoder().decode(encoded.slice(0, targetBytes));
+  }
+
+  let output = seed;
+  while (encoder.encode(output).length < targetBytes) {
+    output += `\n${seed}`;
+  }
+  return new TextDecoder().decode(encoder.encode(output).slice(0, targetBytes));
+}
+
+function buildCachedOutputs(
+  nodes: NoodleDesignerNode[],
+  edges: NoodleDesignerEdge[],
+  transformations: NoodleDesignerTransformation[],
+  scopedNodeId?: string | null
+): NoodleDesignerCachedOutput[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const upstreamMap = new Map<string, string[]>();
+  for (const edge of edges) {
+    upstreamMap.set(edge.target, [...(upstreamMap.get(edge.target) ?? []), edge.source]);
+  }
+  const transformationByNodeId = new Map(
+    transformations
+      .filter((transformation): transformation is NoodleDesignerTransformation & { node_id: string } => Boolean(transformation.node_id))
+      .map((transformation) => [transformation.node_id, transformation])
+  );
+  const selectedNode = scopedNodeId ? nodeById.get(scopedNodeId) ?? null : null;
+
+  return nodes
+    .filter((node) => node.kind === "cache")
+    .filter((cacheNode) => {
+      if (!selectedNode) {
+        return true;
+      }
+      const upstreamIds = upstreamMap.get(cacheNode.id) ?? [];
+      return cacheNode.id === selectedNode.id || upstreamIds.includes(selectedNode.id);
+    })
+    .flatMap((cacheNode) => {
+      const upstreamNodes = (upstreamMap.get(cacheNode.id) ?? [])
+        .map((nodeId) => nodeById.get(nodeId) ?? null)
+        .filter((node): node is NoodleDesignerNode => Boolean(node));
+      if (!upstreamNodes.length) {
+        return [];
+      }
+
+      const sourceNode = upstreamNodes.find((node) => CACHE_OBSERVABLE_UPSTREAM_KINDS.has(node.kind)) ?? upstreamNodes[0];
+      const params = nodeParamsToMap(cacheNode);
+      const maxCaptureBytes = Math.min(coercePositiveInt(params.max_capture_mb, 30) * 1024 * 1024, CACHE_CAPTURE_LIMIT_BYTES);
+      const previewBytesLimit = Math.min(coercePositiveInt(params.preview_kb, 256) * 1024, maxCaptureBytes, CACHE_PREVIEW_LIMIT_BYTES);
+      const rawFormat = (params.format ?? "jsonl").toLowerCase();
+      const format: NoodleDesignerCachedOutput["format"] =
+        rawFormat === "json" || rawFormat === "csv" || rawFormat === "text" || rawFormat === "jsonl"
+          ? rawFormat
+          : "jsonl";
+      const transformName = transformationByNodeId.get(sourceNode.id)?.name ?? `${sourceNode.label} pass-through`;
+
+      const seedPreview =
+        format === "json"
+          ? JSON.stringify(
+              {
+                cache_node: cacheNode.label,
+                source_node: sourceNode.label,
+                transform: transformName,
+                partition: "2026-04-09/hour=17",
+                rows_out: 176884,
+                status: "captured"
+              },
+              null,
+              2
+            )
+          : format === "csv"
+            ? [
+                "cache_node,source_node,transform,partition,status,rows_out",
+                `${cacheNode.label},${sourceNode.label},${transformName},2026-04-09/hour=17,captured,176884`
+              ].join("\n")
+            : format === "text"
+              ? [
+                  `Cache node: ${cacheNode.label}`,
+                  `Source node: ${sourceNode.label}`,
+                  `Transformation: ${transformName}`,
+                  "Rows out: 176884",
+                  "Status: captured"
+                ].join("\n")
+              : Array.from({ length: 6 }, (_, index) =>
+                  JSON.stringify({
+                    cache_node: cacheNode.label,
+                    source_node: sourceNode.label,
+                    transform: transformName,
+                    record_id: index + 1,
+                    normalized_value: `value-${String(index + 1).padStart(5, "0")}`,
+                    quality_state: (index + 1) % 5 === 0 ? "needs_review" : "accepted",
+                    captured_at: new Date().toISOString()
+                  })
+                ).join("\n");
+
+      const previewText = repeatToSize(seedPreview, previewBytesLimit);
+      const previewBytes = new TextEncoder().encode(previewText).length;
+      const capturedBytes = Math.min(maxCaptureBytes, Math.max(previewBytes, 12 * 1024 * 1024));
+
+      return [
+        {
+          id: createId("cache-output"),
+          node_id: cacheNode.id,
+          node_label: cacheNode.label,
+          source_node_id: sourceNode.id,
+          source_node_label: sourceNode.label,
+          format,
+          content_type:
+            format === "json"
+              ? "application/json"
+              : format === "csv"
+                ? "text/csv"
+                : format === "text"
+                  ? "text/plain"
+                  : "application/x-ndjson",
+          summary: `${cacheNode.label} buffered transformed output from ${sourceNode.label} with a ${Math.round(maxCaptureBytes / 1024 / 1024)} MB ceiling.`,
+          preview_text: previewText,
+          preview_bytes: previewBytes,
+          captured_bytes: capturedBytes,
+          max_capture_bytes: maxCaptureBytes,
+          truncated: capturedBytes > previewBytes,
+          approx_records: Math.max(1, Math.floor(capturedBytes / 512))
+        }
+      ];
+    });
+}
+
+function createSeedRuns(
+  nodes: NoodleDesignerNode[],
+  edges: NoodleDesignerEdge[],
+  transformations: NoodleDesignerTransformation[]
+): NoodleDesignerRun[] {
   const now = Date.now();
   const sourceNode = nodes.find((node) => node.kind === "source") ?? nodes[0];
   const runningNode = nodes.find((node) => node.kind === "transform") ?? nodes[1] ?? nodes[0];
+  const manualCachedOutputs = buildCachedOutputs(nodes, edges, transformations);
+  const scheduledCachedOutputs = buildCachedOutputs(nodes, edges, transformations);
 
   return [
     {
@@ -570,6 +762,7 @@ function createSeedRuns(nodes: NoodleDesignerNode[]): NoodleDesignerRun[] {
       orchestrator: "Apache Airflow",
       status: "running",
       trigger: "manual",
+      orchestration_mode: "tasks",
       started_at: new Date(now - 1000 * 60 * 8).toISOString(),
       finished_at: null,
       task_runs: nodes.map((node, index) => ({
@@ -584,7 +777,8 @@ function createSeedRuns(nodes: NoodleDesignerNode[]): NoodleDesignerRun[] {
         createRunLogs("Manual run", "log", "Airflow DAG parsed from the JSON pipeline spec."),
         createRunLogs("Manual run", "info", "Scheduler accepted the run and queued upstream tasks."),
         createRunLogs("Manual run", "warn", "Quality gate is waiting on schema checks before downstream serving tasks can start.", runningNode?.id)
-      ]
+      ],
+      cached_outputs: manualCachedOutputs
     },
     {
       id: createId("run"),
@@ -592,6 +786,7 @@ function createSeedRuns(nodes: NoodleDesignerNode[]): NoodleDesignerRun[] {
       orchestrator: "Apache Airflow",
       status: "success",
       trigger: "schedule",
+      orchestration_mode: "tasks",
       started_at: new Date(now - 1000 * 60 * 90).toISOString(),
       finished_at: new Date(now - 1000 * 60 * 74).toISOString(),
       task_runs: nodes.map((node) => ({
@@ -606,7 +801,8 @@ function createSeedRuns(nodes: NoodleDesignerNode[]): NoodleDesignerRun[] {
         createRunLogs("Scheduled hourly run", "log", "Airflow scheduler triggered the DAG from the cron definition."),
         createRunLogs("Scheduled hourly run", "info", `Source plugin ${sourceNode?.label ?? "source"} finished ingestion and emitted lineage.`),
         createRunLogs("Scheduled hourly run", "info", "Run completed successfully with artifacts and metrics persisted.")
-      ]
+      ],
+      cached_outputs: scheduledCachedOutputs
     }
   ];
 }
@@ -622,11 +818,19 @@ function buildSeedDocument(
   );
   const ingestNode = createDesignerNode("ingest", { x: 320, y: 130 }, "Landing ingest");
   const transformNode = createDesignerNode("transform", { x: 620, y: 130 }, "Curate transforms");
-  const qualityNode = createDesignerNode("quality", { x: 920, y: 130 }, "Quality gate");
-  const serveNode = createDesignerNode("serve", { x: 1220, y: 130 }, "Serve outputs");
+  const cacheNode = createDesignerNode("cache", { x: 920, y: 130 }, "Cache transform output");
+  const qualityNode = createDesignerNode("quality", { x: 1220, y: 130 }, "Quality gate");
+  const serveNode = createDesignerNode("serve", { x: 1520, y: 130 }, "Serve outputs");
   const connectionRefs = sources.map((source) => createConnectionRefFromSource(source));
   const transformations = [createTransformationForNode(transformNode, 1)];
-  const nodes = [...sourceNodes, ingestNode, transformNode, qualityNode, serveNode];
+  const nodes = [...sourceNodes, ingestNode, transformNode, cacheNode, qualityNode, serveNode];
+  const edges = [
+    ...sourceNodes.map((node) => ({ id: createId("edge"), source: node.id, target: ingestNode.id })),
+    { id: createId("edge"), source: ingestNode.id, target: transformNode.id },
+    { id: createId("edge"), source: transformNode.id, target: cacheNode.id },
+    { id: createId("edge"), source: cacheNode.id, target: qualityNode.id },
+    { id: createId("edge"), source: qualityNode.id, target: serveNode.id }
+  ];
 
   return {
     id: createId("pipeline"),
@@ -634,12 +838,7 @@ function buildSeedDocument(
     status: "draft",
     version: 1,
     nodes,
-    edges: [
-      ...sourceNodes.map((node) => ({ id: createId("edge"), source: node.id, target: ingestNode.id })),
-      { id: createId("edge"), source: ingestNode.id, target: transformNode.id },
-      { id: createId("edge"), source: transformNode.id, target: qualityNode.id },
-      { id: createId("edge"), source: qualityNode.id, target: serveNode.id }
-    ],
+    edges,
     connection_refs: connectionRefs,
     metadata_assets: [
       {
@@ -663,7 +862,7 @@ function buildSeedDocument(
     transformations,
     orchestrator_plan: createOrchestratorPlan(intentName, DEFAULT_SCHEDULE.trigger, workflowTemplate, nodes, plannedOrchestratorPlan),
     schedule: DEFAULT_SCHEDULE,
-    runs: createSeedRuns(nodes),
+    runs: createSeedRuns(nodes, edges, transformations),
     saved_at: new Date().toISOString()
   };
 }
@@ -698,7 +897,10 @@ function normalizeDocument(
       document.orchestrator_plan ?? plannedOrchestratorPlan ?? seed.orchestrator_plan
     ),
     schedule: document.schedule ?? seed.schedule,
-    runs: document.runs ?? seed.runs
+    runs: (document.runs ?? seed.runs).map((run) => ({
+      ...run,
+      cached_outputs: run.cached_outputs ?? []
+    }))
   };
 }
 
@@ -708,6 +910,7 @@ function validateDocument(document: NoodlePipelineDesignerDocument): NoodleDesig
   const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
   const incoming = new Map<string, number>();
   const outgoing = new Map<string, number>();
+  const upstreamByNode = new Map<string, string[]>();
   const adjacency = new Map<string, string[]>();
   const indegree = new Map<string, number>();
 
@@ -735,6 +938,7 @@ function validateDocument(document: NoodlePipelineDesignerDocument): NoodleDesig
     }
 
     adjacency.get(edge.source)?.push(edge.target);
+    upstreamByNode.set(edge.target, [...(upstreamByNode.get(edge.target) ?? []), edge.source]);
     incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1);
     outgoing.set(edge.source, (outgoing.get(edge.source) ?? 0) + 1);
     indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
@@ -752,6 +956,25 @@ function validateDocument(document: NoodlePipelineDesignerDocument): NoodleDesig
     }
     if (!hasIncoming && !hasOutgoing) {
       validations.push({ id: `isolated-${node.id}`, level: "warning", message: `${node.label} is disconnected from the rest of the DAG.` });
+    }
+    if (node.kind === "cache") {
+      if (!hasOutgoing) {
+        validations.push({
+          id: `cache-downstream-${node.id}`,
+          level: "warning",
+          message: `${node.label} buffers output but is not wired to any downstream consumer.`
+        });
+      }
+      const upstreamNodes = (upstreamByNode.get(node.id) ?? [])
+        .map((nodeId) => nodeById.get(nodeId))
+        .filter((entry): entry is NoodleDesignerNode => Boolean(entry));
+      if (upstreamNodes.length && !upstreamNodes.some((entry) => CACHE_OBSERVABLE_UPSTREAM_KINDS.has(entry.kind))) {
+        validations.push({
+          id: `cache-upstream-${node.id}`,
+          level: "warning",
+          message: `${node.label} should sit after a transform, quality, feature, or serve node to observe transformed output.`
+        });
+      }
     }
   }
 
@@ -951,8 +1174,13 @@ const DesignerNodeCard = ({ data }: NodeProps<DesignerNodeData>) => {
           {data.label}
         </Typography>
         <Typography variant="body2" sx={{ mt: 0.75, color: "#60779c" }}>
-          {titleize(data.kind)}
+          {data.kind === "cache" ? "Cache Node" : titleize(data.kind)}
         </Typography>
+        {data.kind === "cache" ? (
+          <Typography variant="caption" sx={{ display: "block", mt: 0.4, color: "#7a4500", fontWeight: 700 }}>
+            30 MB bounded preview
+          </Typography>
+        ) : null}
       </Box>
       {NODE_CONNECTOR_POSITIONS.map((top, index) => (
         <Handle
@@ -1002,8 +1230,6 @@ function NoodlePipelineDesignerInner({
   const [rawSpecText, setRawSpecText] = useState("");
   const [rawSpecDirty, setRawSpecDirty] = useState(false);
   const [rawSpecError, setRawSpecError] = useState<string | null>(null);
-  const [cacheLogText, setCacheLogText] = useState("");
-  const [cacheLogRunLabel, setCacheLogRunLabel] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [canvasExpanded, setCanvasExpanded] = useState(false);
   const [canvasCollapsed, setCanvasCollapsed] = useState(false);
@@ -1124,6 +1350,28 @@ function NoodlePipelineDesignerInner({
     [document.transformations, selectedNode]
   );
   const selectedRun = useMemo(() => document.runs.find((run) => run.id === selectedRunId) ?? null, [document.runs, selectedRunId]);
+  const selectedRunCachedOutputs = useMemo(
+    () =>
+      selectedRun
+        ? selectedNode?.kind === "cache"
+          ? selectedRun.cached_outputs.filter((item) => item.node_id === selectedNode.id)
+          : selectedRun.cached_outputs
+        : [],
+    [selectedNode, selectedRun]
+  );
+  const latestCachedOutputForSelectedNode = useMemo(() => {
+    if (!selectedNode || selectedNode.kind !== "cache") {
+      return null;
+    }
+
+    for (const run of document.runs) {
+      const matchedOutput = run.cached_outputs.find((item) => item.node_id === selectedNode.id);
+      if (matchedOutput) {
+        return { runLabel: run.label, output: matchedOutput };
+      }
+    }
+    return null;
+  }, [document.runs, selectedNode]);
 
   const flowNodes = useMemo<FlowNode<DesignerNodeData>[]>(
     () =>
@@ -1577,6 +1825,7 @@ function NoodlePipelineDesignerInner({
     try {
       const response = await createNoodlePipelineRun(document.id, {
         trigger: "manual",
+        orchestration_mode: document.schedule.orchestration_mode,
         document
       });
       const persisted = normalizeDocument(response.pipeline, intentName, sources, workflowTemplate, plannedOrchestratorPlan);
@@ -1602,6 +1851,7 @@ function NoodlePipelineDesignerInner({
         orchestrator: "Apache Airflow",
         status: hasBlockingErrors ? "failed" : "running",
         trigger: "manual",
+        orchestration_mode: document.schedule.orchestration_mode,
         started_at: now,
         finished_at: hasBlockingErrors ? now : null,
         task_runs: document.nodes.map((node, index) => ({
@@ -1618,7 +1868,8 @@ function NoodlePipelineDesignerInner({
           hasBlockingErrors
             ? createRunLogs("Manual Airflow run", "warn", `Run blocked by validation issues: ${validationErrors.map((item) => item.message).join(" | ")}`)
             : createRunLogs("Manual Airflow run", "warn", "Downstream tasks are waiting for upstream dependencies and repository contracts to complete.")
-        ]
+        ],
+        cached_outputs: buildCachedOutputs(document.nodes, document.edges, document.transformations)
       };
 
       updateDocument((current) => ({
@@ -1648,53 +1899,26 @@ function NoodlePipelineDesignerInner({
     () => selectedRun?.logs.filter((entry) => (logFilter === "all" ? true : entry.level === logFilter)) ?? [],
     [logFilter, selectedRun]
   );
-  const latestRunForCache = selectedRun ?? document.runs[0] ?? null;
 
-  const captureCacheLog = useCallback(() => {
-    if (!latestRunForCache) {
+  const copyCachedOutput = useCallback(async (output: NoodleDesignerCachedOutput | null, runLabel?: string | null) => {
+    if (!output?.preview_text.trim()) {
       setNotice({
         id: createId("notice"),
         severity: "info",
-        message: "No run available yet. Trigger a test run first."
+        message: "No cached output is available to copy yet."
       });
       return;
     }
 
-    const serialized = latestRunForCache.logs.length
-      ? latestRunForCache.logs
-          .map(
-            (entry) =>
-              `[${entry.level.toUpperCase()}] ${new Date(entry.timestamp).toLocaleString()} ${entry.message}${entry.node_id ? ` (${entry.node_id})` : ""}`
-          )
-          .join("\n")
-      : `No log entries found for ${latestRunForCache.label}.`;
-
-    setCacheLogText(serialized);
-    setCacheLogRunLabel(latestRunForCache.label);
-    setNotice({
-      id: createId("notice"),
-      severity: "success",
-      message: `Captured output from ${latestRunForCache.label}.`
-    });
-  }, [latestRunForCache]);
-
-  const copyCacheLog = useCallback(async () => {
-    if (!cacheLogText.trim()) {
-      setNotice({
-        id: createId("notice"),
-        severity: "info",
-        message: "Nothing to copy. Capture run output first."
-      });
-      return;
-    }
-
-    const copied = await copyTextToClipboard(cacheLogText);
+    const copied = await copyTextToClipboard(output.preview_text);
     setNotice({
       id: createId("notice"),
       severity: copied ? "success" : "warning",
-      message: copied ? "Cache log copied." : "Clipboard copy failed in this environment."
+      message: copied
+        ? `Cached preview${runLabel ? ` from ${runLabel}` : ""} copied.`
+        : "Clipboard copy failed in this environment."
     });
-  }, [cacheLogText]);
+  }, []);
 
   const latestPublished = savedDocuments.find((entry) => entry.status === "published" && entry.name === document.name) ?? null;
   const publishReadinessLabel = validationErrors.length
@@ -1967,7 +2191,24 @@ function NoodlePipelineDesignerInner({
                   {selectedNode ? (
                     <Stack spacing={1}>
                       <TextField label="Node Label" size="small" value={selectedNode.label} onChange={(event) => updateSelectedNode((node) => ({ ...node, label: event.target.value }))} />
-                      <TextField select label="Node Kind" size="small" value={selectedNode.kind} onChange={(event) => updateSelectedNode((node) => ({ ...node, kind: event.target.value as NoodleDesignerNodeKind }))}>
+                      <TextField
+                        select
+                        label="Node Kind"
+                        size="small"
+                        value={selectedNode.kind}
+                        onChange={(event) => {
+                          const nextKind = event.target.value as NoodleDesignerNodeKind;
+                          updateSelectedNode((node) => (
+                            node.kind === nextKind
+                              ? node
+                              : {
+                                  ...node,
+                                  kind: nextKind,
+                                  params: defaultParamsForKind(nextKind)
+                                }
+                          ));
+                        }}
+                      >
                         {NODE_LIBRARY.map((entry) => (
                           <MenuItem key={entry.kind} value={entry.kind}>{entry.kind}</MenuItem>
                         ))}
@@ -2015,6 +2256,53 @@ function NoodlePipelineDesignerInner({
                               </Button>
                             ) : null}
                           </Stack>
+                        </>
+                      ) : null}
+                      {selectedNode.kind === "cache" ? (
+                        <>
+                          <Alert severity={latestCachedOutputForSelectedNode ? "success" : "info"}>
+                            {latestCachedOutputForSelectedNode
+                              ? `${latestCachedOutputForSelectedNode.runLabel} buffered ${formatBytes(latestCachedOutputForSelectedNode.output.captured_bytes)} from ${latestCachedOutputForSelectedNode.output.source_node_label ?? latestCachedOutputForSelectedNode.output.source_node_id}.`
+                              : "Wire this cache node after a transform to buffer up to 30 MB of transformed output for inspection."}
+                          </Alert>
+                          {latestCachedOutputForSelectedNode ? (
+                            <Box sx={{ p: 1.2, borderRadius: 2.5, border: "1px solid var(--line)", bgcolor: "#fffaf2" }}>
+                              <Stack spacing={1}>
+                                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                  <Chip size="small" label={`Captured ${formatBytes(latestCachedOutputForSelectedNode.output.captured_bytes)}`} />
+                                  <Chip size="small" label={`Preview ${formatBytes(latestCachedOutputForSelectedNode.output.preview_bytes)}`} />
+                                  <Chip size="small" label={`${latestCachedOutputForSelectedNode.output.approx_records.toLocaleString()} rows est.`} />
+                                </Stack>
+                                <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                                  {latestCachedOutputForSelectedNode.output.summary}
+                                </Typography>
+                                <TextField
+                                  label="Latest Cached Preview"
+                                  multiline
+                                  minRows={6}
+                                  maxRows={12}
+                                  value={latestCachedOutputForSelectedNode.output.preview_text}
+                                  InputProps={{ readOnly: true }}
+                                />
+                                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                  <Button size="small" onClick={() => setActiveTab("runs")}>
+                                    Open Test Run Tab
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    onClick={() =>
+                                      void copyCachedOutput(
+                                        latestCachedOutputForSelectedNode.output,
+                                        latestCachedOutputForSelectedNode.runLabel
+                                      )
+                                    }
+                                  >
+                                    Copy Preview
+                                  </Button>
+                                </Stack>
+                              </Stack>
+                            </Box>
+                          ) : null}
                         </>
                       ) : null}
                       <Typography variant="body2" sx={{ fontWeight: 700 }}>Params</Typography>
@@ -2126,6 +2414,74 @@ function NoodlePipelineDesignerInner({
                           </Stack>
                         </Box>
                       ))}
+                    </Stack>
+                  </CardContent>
+                </Card>
+
+                <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
+                  <CardContent sx={{ p: 2.2 }}>
+                    <Stack spacing={1.25}>
+                      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Cached Outputs</Typography>
+                          <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                            Cache nodes buffer transformed payloads with a 30 MB ceiling and expose a bounded preview for inspection.
+                          </Typography>
+                        </Box>
+                        {selectedNode?.kind === "cache" ? (
+                          <Chip label={`Filtered to ${selectedNode.label}`} sx={{ alignSelf: "flex-start" }} />
+                        ) : null}
+                      </Stack>
+                      {selectedRun ? (
+                        selectedRunCachedOutputs.length ? (
+                          selectedRunCachedOutputs.map((output) => (
+                            <Box key={output.id} sx={{ p: 1.3, borderRadius: 2.5, border: "1px solid var(--line)", bgcolor: "#fffaf2" }}>
+                              <Stack spacing={1}>
+                                <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
+                                  <Box>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{output.node_label}</Typography>
+                                    <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                                      From {output.source_node_label ?? output.source_node_id} · {output.format.toUpperCase()}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                    <Chip size="small" label={`Buffered ${formatBytes(output.captured_bytes)}`} />
+                                    <Chip size="small" label={`Preview ${formatBytes(output.preview_bytes)}`} />
+                                    <Chip size="small" label={`${output.approx_records.toLocaleString()} rows est.`} />
+                                  </Stack>
+                                </Stack>
+                                <Typography variant="caption" sx={{ color: "var(--muted)" }}>{output.summary}</Typography>
+                                <TextField
+                                  label={`${output.node_label} Preview`}
+                                  multiline
+                                  minRows={6}
+                                  maxRows={14}
+                                  value={output.preview_text}
+                                  InputProps={{ readOnly: true }}
+                                />
+                                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                  <Button size="small" onClick={() => void copyCachedOutput(output, selectedRun.label)}>
+                                    Copy Preview
+                                  </Button>
+                                  {output.truncated ? (
+                                    <Typography variant="caption" sx={{ color: "var(--muted)", alignSelf: "center" }}>
+                                      Preview is truncated to {formatBytes(output.preview_bytes)} for the UI.
+                                    </Typography>
+                                  ) : null}
+                                </Stack>
+                              </Stack>
+                            </Box>
+                          ))
+                        ) : (
+                          <Alert severity="info">
+                            {selectedNode?.kind === "cache"
+                              ? "This cache node has not buffered output in the selected run yet."
+                              : "No cache node outputs were produced for the selected run."}
+                          </Alert>
+                        )
+                      ) : (
+                        <Alert severity="info">Select a run to inspect cached outputs.</Alert>
+                      )}
                     </Stack>
                   </CardContent>
                 </Card>
@@ -2313,43 +2669,9 @@ function NoodlePipelineDesignerInner({
                     ))}
 
                     <Divider sx={{ mt: 0.5 }} />
-                    <Stack spacing={1}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Typography variant="body2" sx={{ fontWeight: 700 }}>Cache Log Component</Typography>
-                        <Stack direction="row" spacing={0.6}>
-                          <Button size="small" onClick={captureCacheLog}>
-                            Catch Output
-                          </Button>
-                          <IconButton size="small" onClick={() => void copyCacheLog()} aria-label="Copy cache log" sx={panelIconButtonSx}>
-                            <ContentCopyRoundedIcon fontSize="small" />
-                          </IconButton>
-                        </Stack>
-                      </Stack>
-                      <Typography variant="caption" sx={{ color: "var(--muted)" }}>
-                        {cacheLogRunLabel
-                          ? `Captured from ${cacheLogRunLabel}.`
-                          : "Capture output from the selected/latest test run."}
-                      </Typography>
-                      <TextField
-                        label="Cached Test Run Output"
-                        multiline
-                        minRows={6}
-                        value={cacheLogText}
-                        InputProps={{ readOnly: true }}
-                        placeholder="Run a test and click Catch Output to cache execution logs here."
-                      />
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Button size="small" onClick={() => setActiveTab("runs")}>
-                          Open Test Run Tab
-                        </Button>
-                        <Button size="small" color="error" onClick={() => {
-                          setCacheLogText("");
-                          setCacheLogRunLabel(null);
-                        }}>
-                          Clear Cache
-                        </Button>
-                      </Stack>
-                    </Stack>
+                    <Alert severity="info">
+                      Use the <strong>Cache</strong> node in the library to buffer transformed output in-line with the DAG. Each cache node keeps a bounded preview while representing up to 30 MB of buffered data per run.
+                    </Alert>
                   </Stack>
                     </>
                   ) : null}
