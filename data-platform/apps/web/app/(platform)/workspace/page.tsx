@@ -1,8 +1,21 @@
+"use client";
+
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 
 import { EditorTabs } from "@/components/editor-tabs";
+import { getPipelineRuns, getPipelines } from "@/lib/api";
 
 export default function WorkspacePage() {
+  const pipelinesQuery = useQuery({ queryKey: ["pipelines"], queryFn: getPipelines });
+  const primaryPipeline = pipelinesQuery.data?.[0];
+  const runsQuery = useQuery({
+    queryKey: ["pipeline-runs", primaryPipeline?.id],
+    queryFn: () => getPipelineRuns(primaryPipeline?.id ?? ""),
+    enabled: Boolean(primaryPipeline?.id)
+  });
+  const latestRun = runsQuery.data?.[0];
+
   return (
     <div className="space-y-6">
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -13,16 +26,21 @@ export default function WorkspacePage() {
             Browse repos, version pipeline artifacts, design DAGs visually, validate before publish, and trigger runs through a clean control plane.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
-            <Link href="/pipelines/pl_daily_sales" className="rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100">
+            <Link
+              href={primaryPipeline ? `/pipelines/${primaryPipeline.id}` : "#"}
+              className="rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
+            >
               Open Pipeline Designer
             </Link>
             <Link
-              href="/runs/run_pl_daily_sales_1"
+              href={latestRun ? `/runs/${latestRun.id}` : "#"}
               className="rounded-full border border-white/30 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
             >
               View Latest Run
             </Link>
           </div>
+          {pipelinesQuery.error instanceof Error ? <p className="mt-4 text-sm text-rose-200">{pipelinesQuery.error.message}</p> : null}
+          {runsQuery.error instanceof Error ? <p className="mt-2 text-sm text-rose-200">{runsQuery.error.message}</p> : null}
         </div>
         <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Generated Plan</p>

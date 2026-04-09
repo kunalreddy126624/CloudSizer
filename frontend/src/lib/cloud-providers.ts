@@ -12,7 +12,9 @@ export const providerLabels: Record<CloudProvider, string> = {
   digitalocean: "DigitalOcean",
   akamai: "Akamai Cloud",
   ovhcloud: "OVHcloud",
-  cloudflare: "Cloudflare"
+  cloudflare: "Cloudflare",
+  salesforce: "Salesforce",
+  snowflake: "Snowflake"
 };
 
 export const providerOptions = optionSets.providers.map((provider) => ({

@@ -10,9 +10,9 @@ from app.noodle.schemas import (
     NoodlePipelineIntent,
     NoodlePipelinePlanningRequest,
     NoodlePipelinePlanResponse,
-    NoodlePlatformBlueprint,
     NoodlePipelineRunCreateRequest,
     NoodlePipelineRunResponse,
+    NoodlePlatformBlueprint,
     NoodleReferenceSpec,
 )
 from app.noodle.service import get_noodle_service
@@ -37,8 +37,15 @@ def noodle_reference_specs() -> list[NoodleReferenceSpec]:
 
 
 @router.post("/pipelines/plan", response_model=NoodlePipelinePlanResponse)
-def noodle_plan_pipeline(request: NoodlePipelinePlanningRequest) -> NoodlePipelinePlanResponse:
-    return get_noodle_service().plan_pipeline(request)
+def noodle_plan_pipeline(
+    request: NoodlePipelinePlanningRequest | NoodlePipelineIntent,
+) -> NoodlePipelinePlanResponse:
+    planning_request = (
+        request
+        if isinstance(request, NoodlePipelinePlanningRequest)
+        else NoodlePipelinePlanningRequest(intent=request)
+    )
+    return get_noodle_service().plan_pipeline(planning_request)
 
 
 @router.get("/pipelines", response_model=list[NoodlePipelineDocument])
@@ -68,6 +75,8 @@ def noodle_create_pipeline_run(
         return get_noodle_pipeline_control_plane().create_run(pipeline_id, request)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Pipeline not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 router.include_router(microservices_router)

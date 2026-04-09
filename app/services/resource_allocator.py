@@ -100,6 +100,8 @@ PROVIDER_TERRAFORM_SOURCES: dict[CloudProvider, str] = {
     CloudProvider.AKAMAI: "linode/linode",
     CloudProvider.OVHCLOUD: "ovh/ovh",
     CloudProvider.CLOUDFLARE: "cloudflare/cloudflare",
+    CloudProvider.SALESFORCE: "salesforce/salesforce",
+    CloudProvider.SNOWFLAKE: "Snowflake-Labs/snowflake",
 }
 
 
@@ -187,23 +189,34 @@ def allocate_cloud_resources(request: ResourceAllocatorRequest) -> ResourceAlloc
         )
 
     services = _resolve_approved_services(request.approved_estimation)
+    service_providers = _resolve_service_providers(services, provider)
+    primary_provider = _resolve_primary_provider(services, provider)
     infra_plan = _build_infrastructure_plan(request, services)
 
     account_strategy = _decide_account_strategy(
-        provider=provider,
+        provider=primary_provider,
         organization_context=request.organization_context,
         deployment_request=request.deployment_request,
     )
 
-    if provider not in request.organization_context.allowed_clouds:
+    disallowed_providers = sorted(
+        [
+            cloud.value
+            for cloud in service_providers
+            if cloud not in request.organization_context.allowed_clouds
+        ]
+    )
+    if disallowed_providers:
         errors.append(
-            f"{provider.value} is not in the organization allowed cloud list."
+            "The following service providers are not in the organization allowed cloud list: "
+            + ", ".join(disallowed_providers)
+            + "."
         )
 
     if account_strategy.action == AccountStrategyAction.CREATE_NEW:
         account_result = _create_cloud_account(
             CreateCloudAccountToolInput(
-                target_cloud=provider,
+                target_cloud=primary_provider,
                 account_name=request.deployment_request.account_name or f"{request.deployment_request.project}-{request.deployment_request.env.value}",
                 account_purpose=request.deployment_request.account_purpose or request.architecture_type,
                 parent_org_unit=request.deployment_request.parent_org_unit
@@ -243,7 +256,7 @@ def allocate_cloud_resources(request: ResourceAllocatorRequest) -> ResourceAlloc
 
     terraform_result = _generate_terraform(
         GenerateTerraformToolInput(
-            provider=provider,
+            provider=primary_provider,
             architecture_type=request.architecture_type,
             infra_plan=infra_plan,
         )
@@ -263,7 +276,7 @@ def allocate_cloud_resources(request: ResourceAllocatorRequest) -> ResourceAlloc
 
     cost_result = _estimate_cost(
         EstimateCostToolInput(
-            provider=provider,
+            provider=primary_provider,
             services=infra_plan.services,
             budget_constraints=request.budget_constraints,
         ),
@@ -358,7 +371,7 @@ def allocate_cloud_resources(request: ResourceAllocatorRequest) -> ResourceAlloc
     apply_result = _apply_terraform(
         ApplyTerraformToolInput(
             terraform=terraform_bundle,
-            provider=provider,
+            provider=primary_provider,
             approval_to_apply=True,
             artifact_root=request.organization_context.terraform_artifact_root,
         ),
@@ -397,7 +410,7 @@ def allocate_cloud_resources(request: ResourceAllocatorRequest) -> ResourceAlloc
     return ResourceAllocatorResponse(
         status=AllocatorStatus.SUCCESS,
         summary=(
-            f"Approved {provider.value} allocation prepared for {request.deployment_request.project} "
+            f"Approved {primary_provider.value} allocation prepared for {request.deployment_request.project} "
             f"and handed off for provisioning."
         ),
         account_strategy=account_strategy,
@@ -429,6 +442,29 @@ def _resolve_approved_services(approved_estimation: ApprovedEstimationInput) -> 
         approved_estimation.recommended_provider,
     )
     return recommendation.services
+
+
+def _resolve_service_providers(
+    services: list[ServiceEstimate],
+    fallback_provider: CloudProvider,
+) -> set[CloudProvider]:
+    providers = {service.provider for service in services if service.provider is not None}
+    if not providers:
+        providers.add(fallback_provider)
+    return providers
+
+
+def _resolve_primary_provider(
+    services: list[ServiceEstimate],
+    fallback_provider: CloudProvider,
+) -> CloudProvider:
+    for service in services:
+        if service.provider is not None and _is_compute_service(service):
+            return service.provider
+    for service in services:
+        if service.provider is not None:
+            return service.provider
+    return fallback_provider
 
 
 def _decide_account_strategy(
@@ -495,14 +531,18 @@ def _build_infrastructure_plan(
     }
     planned_services = [
         AllocatorPlannedService(
+            provider=service.provider or request.approved_estimation.recommended_provider,
             service_code=service.service_code,
             service_name=service.name,
             purpose=service.purpose,
-            category=_infer_service_category(request.approved_estimation.recommended_provider, service),
+            category=_infer_service_category(
+                service.provider or request.approved_estimation.recommended_provider,
+                service,
+            ),
             estimated_monthly_cost_usd=service.estimated_monthly_cost_usd,
             managed=_is_managed_service(service),
             public=request.deployment_request.public_ingress_required
-            and _is_public_service_candidate(request.approved_estimation.recommended_provider, service),
+            and _is_public_service_candidate(service),
         )
         for service in services
     ]
@@ -561,6 +601,25 @@ def _validate_policy(request: ValidatePolicyToolInput) -> ValidatePolicyToolOutp
         violations.append(
             f"Cloud {request.account_strategy.target_cloud.value} is not allowed by organization policy."
         )
+    service_providers = sorted(
+        {
+            service.provider
+            for service in request.infra_plan.services
+            if service.provider is not None
+        },
+        key=lambda item: item.value,
+    )
+    disallowed_service_providers = [
+        provider.value
+        for provider in service_providers
+        if provider not in request.organization_context.allowed_clouds
+    ]
+    if disallowed_service_providers:
+        violations.append(
+            "Service providers blocked by organization policy: "
+            + ", ".join(disallowed_service_providers)
+            + "."
+        )
 
     if request.account_strategy.action == AccountStrategyAction.CREATE_NEW:
         if not request.organization_context.account_vending_enabled:
@@ -600,8 +659,24 @@ def _validate_policy(request: ValidatePolicyToolInput) -> ValidatePolicyToolOutp
 
 
 def _generate_terraform(request: GenerateTerraformToolInput) -> GenerateTerraformToolOutput:
-    provider_source = PROVIDER_TERRAFORM_SOURCES.get(request.provider, "hashicorp/null")
-    provider_name = request.provider.value
+    provider_names = _collect_terraform_providers(request.provider, request.infra_plan.services)
+    provider_requirements = "\n".join(
+        (
+            f"    {provider.value} = {{\n"
+            f"      source  = \"{PROVIDER_TERRAFORM_SOURCES.get(provider, 'hashicorp/null')}\"\n"
+            f"      version = \">= 1.0.0\"\n"
+            f"    }}"
+        )
+        for provider in provider_names
+    )
+    provider_blocks = "\n\n".join(
+        (
+            f"provider \"{provider.value}\" {{\n"
+            "  region = var.region\n"
+            "}"
+        )
+        for provider in provider_names
+    )
     modules = [_slugify(service.service_name) for service in request.infra_plan.services]
     tag_lines = "\n".join(
         f'    {json.dumps(key)} = {json.dumps(value)}'
@@ -612,7 +687,7 @@ def _generate_terraform(request: GenerateTerraformToolInput) -> GenerateTerrafor
         for service in request.infra_plan.services
     )
     service_blocks = "\n\n".join(
-        _render_service_block(index, provider_name, service)
+        _render_service_block(index, service)
         for index, service in enumerate(request.infra_plan.services, start=1)
     )
 
@@ -620,12 +695,11 @@ def _generate_terraform(request: GenerateTerraformToolInput) -> GenerateTerrafor
   required_version = ">= 1.5.0"
 
   required_providers {{
-    {provider_name} = {{
-      source  = "{provider_source}"
-      version = ">= 1.0.0"
-    }}
+{provider_requirements}
   }}
 }}
+
+{provider_blocks}
 
 locals {{
   project_tags = {{
@@ -721,8 +795,9 @@ def _apply_terraform(
     )
 
 
-def _render_service_block(index: int, provider_name: str, service: AllocatorPlannedService) -> str:
+def _render_service_block(index: int, service: AllocatorPlannedService) -> str:
     service_slug = _slugify(service.service_name) or f"service_{index}"
+    provider_name = service.provider.value if service.provider is not None else "unspecified"
     return f"""resource "terraform_data" "{service_slug}" {{
   input = {{
     provider                    = "{provider_name}"
@@ -739,8 +814,8 @@ def _render_service_block(index: int, provider_name: str, service: AllocatorPlan
 """
 
 
-def _infer_service_category(provider: CloudProvider, service: ServiceEstimate) -> str:
-    if service.service_code:
+def _infer_service_category(provider: CloudProvider | None, service: ServiceEstimate) -> str:
+    if provider and service.service_code:
         try:
             return get_catalog_service(provider, service.service_code).category.value
         except KeyError:
@@ -768,10 +843,37 @@ def _is_managed_service(service: ServiceEstimate) -> bool:
     return not any(signal in label for signal in unmanaged_signals)
 
 
-def _is_public_service_candidate(provider: CloudProvider, service: ServiceEstimate) -> bool:
-    del provider
+def _is_public_service_candidate(service: ServiceEstimate) -> bool:
     label = f"{service.name} {service.purpose}".lower()
     return any(keyword in label for keyword in ("cdn", "load balancer", "gateway", "front door"))
+
+
+def _is_compute_service(service: ServiceEstimate) -> bool:
+    label = f"{service.name} {service.purpose}".lower()
+    return any(
+        keyword in label
+        for keyword in (
+            "compute",
+            "container",
+            "kubernetes",
+            "runtime",
+            "app service",
+            "workers",
+            "engine",
+            "instance",
+            "vm",
+        )
+    )
+
+
+def _collect_terraform_providers(
+    fallback_provider: CloudProvider,
+    services: list[AllocatorPlannedService],
+) -> list[CloudProvider]:
+    providers = {service.provider for service in services if service.provider is not None}
+    if not providers:
+        providers.add(fallback_provider)
+    return sorted(providers, key=lambda item: item.value)
 
 
 def _slugify(value: str) -> str:

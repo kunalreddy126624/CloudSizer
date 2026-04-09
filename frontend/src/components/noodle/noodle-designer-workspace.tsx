@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Alert, Box, Button, Chip, Container, Stack, Typography } from "@mui/material";
 
 import { NoodlePipelineDesigner } from "@/components/noodle/noodle-pipeline-designer";
-import { loadPendingNoodleDesignerSession } from "@/lib/scenario-store";
+import { loadPendingNoodleDesignerSession, storePendingNoodleSchedulerSession } from "@/lib/scenario-store";
 import type {
   NoodleArchitectureOverview,
   NoodleArchitecturePrinciple,
@@ -62,6 +63,7 @@ function buildEmptyIntent(): NoodlePipelineIntent {
 }
 
 export function NoodleDesignerWorkspace() {
+  const router = useRouter();
   const [intent, setIntent] = useState<NoodlePipelineIntent>(buildEmptyIntent);
   const [workflowTemplate, setWorkflowTemplate] = useState<string | null>(null);
   const [seededFromWorkspace, setSeededFromWorkspace] = useState(false);
@@ -89,6 +91,17 @@ export function NoodleDesignerWorkspace() {
     setSeededFromWorkspace(true);
   }, []);
 
+  function openSoupSchedulerPage() {
+    storePendingNoodleSchedulerSession({
+      source: "designer",
+      intent_name: intent.name,
+      orchestrator_plan: plannedOrchestratorPlan,
+      document: seedDocument,
+      opened_at: new Date().toISOString()
+    });
+    router.push("/noodle/scheduler");
+  }
+
   return (
     <Box
       sx={{
@@ -113,6 +126,9 @@ export function NoodleDesignerWorkspace() {
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
               <Button component={Link} href="/noodle" variant="outlined" sx={noodleSecondaryButtonSx}>
                 Back To Noodle
+              </Button>
+              <Button onClick={openSoupSchedulerPage} variant="outlined" sx={noodleSecondaryButtonSx}>
+                Soup Scheduler
               </Button>
               <Button component={Link} href="/workspace" variant="outlined" sx={noodleSecondaryButtonSx}>
                 Back To Workspace

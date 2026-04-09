@@ -2,9 +2,14 @@ import type { PipelineRecord, PipelineRun, Repo, RunLog, TreeNode, ValidationIss
 
 import { DataPlatformClient } from "@data-platform/sdk";
 
-import { mockPipeline, mockRepo, mockRuns, mockTree } from "@/lib/mock-data";
-
 const client = new DataPlatformClient(process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000");
+
+function formatApiError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
+}
 
 function normalizeRepo(input: any): Repo {
   return {
@@ -61,8 +66,8 @@ function normalizeRun(input: any): PipelineRun {
 export async function getRepos() {
   try {
     return (await client.listRepos()).map(normalizeRepo);
-  } catch {
-    return [mockRepo];
+  } catch (error) {
+    throw new Error(formatApiError(error, "Could not load repositories from the control plane."));
   }
 }
 
@@ -70,76 +75,73 @@ export async function getRepoTree(repoId: string) {
   try {
     const response = await client.getRepoTree(repoId);
     return normalizeTree(response.tree);
-  } catch {
-    return mockTree;
+  } catch (error) {
+    throw new Error(formatApiError(error, "Could not load the repository tree from the control plane."));
   }
 }
 
 export async function getPipelines() {
   try {
     return (await client.listPipelines()).map(normalizePipeline);
-  } catch {
-    return [mockPipeline];
+  } catch (error) {
+    throw new Error(formatApiError(error, "Could not load pipelines from the control plane."));
   }
 }
 
 export async function getPipeline(id: string) {
   try {
     return normalizePipeline(await client.getPipeline(id));
-  } catch {
-    return mockPipeline;
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not load pipeline ${id} from the control plane.`));
   }
 }
 
 export async function savePipeline(pipeline: PipelineRecord) {
   try {
-    const saved = pipeline.id === mockPipeline.id ? await client.updatePipeline(pipeline.id, pipeline) : await client.createPipeline(pipeline);
+    const saved = await client.updatePipeline(pipeline.id, pipeline);
     return normalizePipeline(saved);
-  } catch {
-    return {
-      ...pipeline,
-      updatedAt: new Date().toISOString()
-    };
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not save pipeline ${pipeline.id}.`));
   }
 }
 
 export async function validatePipeline(id: string) {
   try {
     return await client.validatePipeline(id);
-  } catch {
-    return [] as ValidationIssue[];
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not validate pipeline ${id}.`));
   }
 }
 
 export async function publishPipeline(id: string) {
   try {
     return normalizePipeline(await client.publishPipeline(id));
-  } catch {
-    return { ...mockPipeline, id, publishState: "published" as const, updatedAt: new Date().toISOString() };
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not publish pipeline ${id}.`));
   }
 }
 
 export async function runPipeline(id: string) {
   try {
     return normalizeRun(await client.runPipeline(id));
-  } catch {
-    return mockRuns[0];
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not create a run for pipeline ${id}.`));
   }
 }
 
 export async function getPipelineRuns(id: string) {
   try {
     return (await client.listPipelineRuns(id)).map(normalizeRun);
-  } catch {
-    return mockRuns;
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not load runs for pipeline ${id}.`));
   }
 }
 
 export async function getRun(id: string) {
   try {
     return normalizeRun(await client.getRun(id));
-  } catch {
-    return mockRuns.find((run) => run.id === id) ?? mockRuns[0];
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not load run ${id}.`));
   }
 }
 
@@ -153,32 +155,7 @@ export async function getRunLogs(id: string): Promise<RunLog[]> {
       message: log.message,
       timestamp: log.timestamp
     }));
-  } catch {
-    return [
-      {
-        id: `log_${id}_boot`,
-        runId: id,
-        taskRunId: null,
-        level: "info",
-        message: "Pipeline run initialized.",
-        timestamp: new Date().toISOString()
-      },
-      {
-        id: `log_${id}_task`,
-        runId: id,
-        taskRunId: null,
-        level: "log",
-        message: "source_postgres_1 extracted rows.",
-        timestamp: new Date().toISOString()
-      },
-      {
-        id: `log_${id}_warn`,
-        runId: id,
-        taskRunId: null,
-        level: "warn",
-        message: "Mock runner in use. Connect Airflow or Prefect later.",
-        timestamp: new Date().toISOString()
-      }
-    ];
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not load logs for run ${id}.`));
   }
 }

@@ -14,6 +14,7 @@ import {
   Container,
   Divider,
   Grid,
+  MenuItem,
   Stack,
   TextField,
   Typography
@@ -44,13 +45,18 @@ const providerOptions: CloudProvider[] = [
   "digitalocean",
   "akamai",
   "ovhcloud",
-  "cloudflare"
+  "cloudflare",
+  "salesforce",
+  "snowflake"
 ];
 const quickPrompts = [
   "We need ERP for 800 users in India, PostgreSQL, 2 TB storage, backups, public web access, and disaster recovery in a second region.",
   "We need a CRM platform for 500 sales and support users in UAE with managed database, file attachments, and high availability.",
   "We need an application platform for 200 concurrent users, 300 GB storage, 5 million monthly API requests, and low-cost scaling."
 ];
+
+type RecommendationSortOrder = "cost_low_to_high" | "cost_high_to_low";
+const defaultSaveNamePrefix = "Agent estimate for ";
 
 const initialAssistantMessage: AdvisorChatMessage = {
   role: "assistant",
@@ -121,6 +127,9 @@ export function AdvisorWorkspace() {
   const [estimate, setEstimate] = useState<EstimationAdvisorResponse | null>(null);
   const [inferredRequest, setInferredRequest] = useState<RecommendationRequest | null>(null);
   const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
+  const [recommendationSortOrder, setRecommendationSortOrder] =
+    useState<RecommendationSortOrder>("cost_low_to_high");
+  const [selectedRecommendationProvider, setSelectedRecommendationProvider] = useState<CloudProvider | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveName, setSaveName] = useState("");
@@ -138,14 +147,61 @@ export function AdvisorWorkspace() {
     }
 
     const workload = estimate.detected_workload?.replaceAll("_", " ") ?? "workload";
-    const provider = estimate.recommended_provider?.toUpperCase() ?? "multi-cloud";
-    setSaveName(`Agent estimate for ${workload} on ${provider}`);
-  }, [estimate]);
+    const provider =
+      selectedRecommendationProvider?.toUpperCase() ??
+      recommendation?.recommendations[0]?.provider?.toUpperCase() ??
+      estimate.recommended_provider?.toUpperCase() ??
+      "multi-cloud";
+    const nextDefaultName = `${defaultSaveNamePrefix}${workload} on ${provider}`;
+    setSaveName((current) =>
+      !current || current.startsWith(defaultSaveNamePrefix) ? nextDefaultName : current
+    );
+  }, [estimate, recommendation, selectedRecommendationProvider]);
+
+  useEffect(() => {
+    if (!recommendation?.recommendations.length) {
+      setSelectedRecommendationProvider(null);
+      return;
+    }
+
+    setSelectedRecommendationProvider((current) => {
+      if (current && recommendation.recommendations.some((item) => item.provider === current)) {
+        return current;
+      }
+
+      return recommendation.recommendations[0]?.provider ?? null;
+    });
+  }, [recommendation]);
+
+  const sortedRecommendations = useMemo(() => {
+    if (!recommendation?.recommendations.length) {
+      return [];
+    }
+
+    const items = [...recommendation.recommendations];
+    items.sort((left, right) =>
+      recommendationSortOrder === "cost_low_to_high"
+        ? left.estimated_monthly_cost_usd - right.estimated_monthly_cost_usd
+        : right.estimated_monthly_cost_usd - left.estimated_monthly_cost_usd
+    );
+    return items;
+  }, [recommendation, recommendationSortOrder]);
 
   const topPlan = estimate?.provider_plans[0] ?? null;
-  const topRecommendation = recommendation?.recommendations[0] ?? null;
+  const recommendedRecommendationProvider = recommendation?.recommendations[0]?.provider ?? null;
+  const selectedRecommendation = useMemo(
+    () =>
+      recommendation?.recommendations.find((item) => item.provider === selectedRecommendationProvider) ??
+      recommendation?.recommendations[0] ??
+      null,
+    [recommendation, selectedRecommendationProvider]
+  );
+  const bestRecommendationCost =
+    recommendation?.recommendations.length
+      ? Math.min(...recommendation.recommendations.map((item) => item.estimated_monthly_cost_usd))
+      : null;
   const monthlyTotal =
-    topRecommendation?.estimated_monthly_cost_usd ?? topPlan?.estimated_monthly_cost_usd ?? null;
+    bestRecommendationCost ?? topPlan?.estimated_monthly_cost_usd ?? null;
   const annualTotal = monthlyTotal != null ? monthlyTotal * 12 : null;
   const userMessages = useMemo(
     () => messages.filter((message) => message.role === "user"),
@@ -156,9 +212,9 @@ export function AdvisorWorkspace() {
       return null;
     }
 
-    const lowest = recommendation.recommendations[0].estimated_monthly_cost_usd;
-    const highest =
-      recommendation.recommendations[recommendation.recommendations.length - 1].estimated_monthly_cost_usd;
+    const costs = recommendation.recommendations.map((item) => item.estimated_monthly_cost_usd);
+    const lowest = Math.min(...costs);
+    const highest = Math.max(...costs);
     return (highest - lowest) * 12;
   }, [recommendation]);
   const readinessScore = useMemo(() => {
@@ -243,6 +299,7 @@ export function AdvisorWorkspace() {
     setEstimate(null);
     setInferredRequest(null);
     setRecommendation(null);
+    setSelectedRecommendationProvider(null);
     setDraftMessage("");
     setError(null);
     setSaveMessage(null);
@@ -253,6 +310,7 @@ export function AdvisorWorkspace() {
     if (inferredRequest) {
       const workload = formatWorkloadLabel(inferredRequest.workload_type);
       const providerLabel =
+        selectedRecommendation?.provider?.toUpperCase() ??
         recommendation?.recommendations[0]?.provider?.toUpperCase() ??
         estimate?.recommended_provider?.toUpperCase() ??
         "MULTI-CLOUD";
@@ -287,23 +345,26 @@ export function AdvisorWorkspace() {
         name: saveName.trim(),
         estimate_type: recommendation ? "workload_recommendation" : "advisor_plan",
         provider:
+          selectedRecommendation?.provider ??
           recommendation?.recommendations[0]?.provider ??
           estimate.recommended_provider ??
           estimate.provider_plans[0]?.provider ??
           null,
         estimated_monthly_cost_usd:
+          selectedRecommendation?.estimated_monthly_cost_usd ??
           recommendation?.recommendations[0]?.estimated_monthly_cost_usd ??
           estimate.provider_plans[0]?.estimated_monthly_cost_usd ??
           null,
-        summary: recommendation?.recommendations[0]
-          ? `Agent-produced end-to-end estimate for ${formatWorkloadLabel(recommendation.workload_type)} workload.`
+        summary: selectedRecommendation && recommendation
+          ? `Agent-produced end-to-end estimate for ${formatWorkloadLabel(recommendation.workload_type)} workload on ${selectedRecommendation.provider.toUpperCase()}.`
           : estimate.summary,
         payload: {
           conversation_summary: conversationSummary,
           messages,
           inferred_request: inferredRequest,
           recommendation,
-          estimate
+          estimate,
+          selected_recommendation_provider: selectedRecommendation?.provider ?? null
         }
       });
       setSaveMessage(`Saved estimate #${record.id}.`);
@@ -687,19 +748,44 @@ export function AdvisorWorkspace() {
                   <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "rgba(255,255,255,0.9)" }}>
                     <CardContent>
                       <Stack spacing={2.4}>
-                        <Typography variant="h5">End-to-End Recommendation Output</Typography>
-                        <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                          These are the full recommendations generated from the inferred workload request.
-                        </Typography>
-                        {recommendation.recommendations.map((item) => (
+                        <Stack
+                          direction={{ xs: "column", md: "row" }}
+                          justifyContent="space-between"
+                          alignItems={{ xs: "flex-start", md: "center" }}
+                          spacing={1.5}
+                        >
+                          <Stack spacing={0.5}>
+                            <Typography variant="h5">End-to-End Recommendation Output</Typography>
+                            <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                              These are the full recommendations generated from the inferred workload request.
+                            </Typography>
+                          </Stack>
+                          <TextField
+                            select
+                            size="small"
+                            label="Cost filter"
+                            value={recommendationSortOrder}
+                            onChange={(event) =>
+                              setRecommendationSortOrder(event.target.value as RecommendationSortOrder)
+                            }
+                            sx={{ minWidth: 220 }}
+                          >
+                            <MenuItem value="cost_low_to_high">Lowest to Highest</MenuItem>
+                            <MenuItem value="cost_high_to_low">Highest to Lowest</MenuItem>
+                          </TextField>
+                        </Stack>
+                        {sortedRecommendations.map((item) => (
                           <Card
                             key={item.provider}
                             sx={{
                               borderRadius: 4,
-                              border: "1px solid var(--line)",
+                              border:
+                                item.provider === selectedRecommendationProvider
+                                  ? "1px solid var(--line-strong)"
+                                  : "1px solid var(--line)",
                               boxShadow: "none",
                               bgcolor:
-                                item.provider === recommendation.recommendations[0]?.provider
+                                item.provider === selectedRecommendationProvider
                                   ? "rgba(49, 111, 214, 0.08)"
                                   : "var(--panel-strong)"
                             }}
@@ -719,6 +805,18 @@ export function AdvisorWorkspace() {
                                     <Typography variant="h6">{item.profile}</Typography>
                                   </Stack>
                                   <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                                    {item.provider === recommendedRecommendationProvider ? (
+                                      <Chip
+                                        label="Recommended"
+                                        sx={{ bgcolor: "rgba(12, 107, 88, 0.12)", color: "var(--success)" }}
+                                      />
+                                    ) : null}
+                                    {item.provider === selectedRecommendationProvider ? (
+                                      <Chip
+                                        label="Selected"
+                                        sx={{ bgcolor: "var(--accent-soft)", color: "var(--accent)" }}
+                                      />
+                                    ) : null}
                                     <Chip
                                       label={`Score ${item.score}`}
                                       sx={{ bgcolor: "var(--accent-soft)", color: "var(--accent)" }}
@@ -746,16 +844,38 @@ export function AdvisorWorkspace() {
                                 <Typography variant="caption" sx={{ color: "var(--muted)", lineHeight: 1.5 }}>
                                   {item.services.map((service) => `${service.name} (${formatCurrency(service.estimated_monthly_cost_usd)})`).join(" | ")}
                                 </Typography>
-                                {inferredRequest ? (
+                                <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2}>
                                   <Button
-                                    component={Link}
-                                    href={buildRecommendationDetailHref(inferredRequest, item.provider)}
-                                    variant="outlined"
-                                    sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
+                                    variant={item.provider === selectedRecommendationProvider ? "contained" : "outlined"}
+                                    onClick={() => setSelectedRecommendationProvider(item.provider)}
+                                    sx={
+                                      item.provider === selectedRecommendationProvider
+                                        ? {
+                                            alignSelf: "flex-start",
+                                            bgcolor: "var(--accent)",
+                                            color: "#ffffff",
+                                            "&:hover": { bgcolor: "#265db8" }
+                                          }
+                                        : {
+                                            alignSelf: "flex-start",
+                                            borderColor: "var(--line)",
+                                            color: "var(--text)"
+                                          }
+                                    }
                                   >
-                                    View Full Detail
+                                    {item.provider === selectedRecommendationProvider ? "Selected Estimate" : "Select Estimate"}
                                   </Button>
-                                ) : null}
+                                  {inferredRequest ? (
+                                    <Button
+                                      component={Link}
+                                      href={buildRecommendationDetailHref(inferredRequest, item.provider)}
+                                      variant="outlined"
+                                      sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
+                                    >
+                                      View Full Detail
+                                    </Button>
+                                  ) : null}
+                                </Stack>
                               </Stack>
                             </CardContent>
                           </Card>

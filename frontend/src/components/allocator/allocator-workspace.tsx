@@ -42,14 +42,22 @@ import type {
   PendingApprovalRecord,
   ResourceAllocatorContractResponse,
   ResourceAllocatorRequest,
+  SelectiveServicePreference,
   WorkloadType
 } from "@/lib/types";
 
-const providerOptions: CloudProvider[] = ["aws", "azure", "gcp", "oracle", "alibaba", "ibm", "tencent", "digitalocean", "akamai", "ovhcloud", "cloudflare"];
+const providerOptions: CloudProvider[] = ["aws", "azure", "gcp", "oracle", "alibaba", "ibm", "tencent", "digitalocean", "akamai", "ovhcloud", "cloudflare", "salesforce", "snowflake"];
 const workloadOptions: WorkloadType[] = ["application", "web_api", "ecommerce", "erp", "crm", "analytics", "ai_ml", "saas", "dev_test", "vdi"];
 const availabilityOptions: AvailabilityTier[] = ["standard", "high", "mission_critical"];
 const budgetOptions: BudgetPreference[] = ["lowest_cost", "balanced", "enterprise"];
 const environmentOptions: DeploymentEnvironment[] = ["dev", "test", "staging", "prod"];
+const selectiveServiceFamilies: Array<{ key: string; label: string }> = [
+  { key: "compute", label: "Compute tier" },
+  { key: "database", label: "Database tier" },
+  { key: "storage", label: "Storage tier" },
+  { key: "edge", label: "Edge/network tier" },
+  { key: "web_application_firewall", label: "Security edge tier" }
+];
 
 function titleize(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
@@ -93,6 +101,8 @@ function buildInitialRequest(): ResourceAllocatorRequest {
         requires_managed_database: true,
         availability_tier: "high",
         budget_preference: "balanced",
+        enable_decoupled_compute: false,
+        selective_services: [],
         preferred_providers: ["aws", "azure", "gcp"]
       },
       recommended_provider: "aws",
@@ -157,6 +167,46 @@ export function AllocatorWorkspace() {
   const [toolMessages, setToolMessages] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function getSelectiveProvider(serviceFamily: string): CloudProvider | "" {
+    const match = (request.approved_estimation.baseline_request.selective_services ?? []).find(
+      (selection) => selection.service_family === serviceFamily
+    );
+    return match?.provider ?? "";
+  }
+
+  function updateSelectiveProvider(serviceFamily: string, provider: CloudProvider | "") {
+    setRequest((current) => {
+      const baseline = current.approved_estimation.baseline_request;
+      const existing = baseline.selective_services ?? [];
+      const nextSelective = existing.filter((selection) => selection.service_family !== serviceFamily);
+      if (provider) {
+        nextSelective.push({
+          service_family: serviceFamily,
+          provider,
+          required: true
+        } satisfies SelectiveServicePreference);
+      }
+
+      const nextPreferredProviders = provider
+        ? baseline.preferred_providers.includes(provider)
+          ? baseline.preferred_providers
+          : [...baseline.preferred_providers, provider]
+        : baseline.preferred_providers;
+
+      return {
+        ...current,
+        approved_estimation: {
+          ...current.approved_estimation,
+          baseline_request: {
+            ...baseline,
+            preferred_providers: nextPreferredProviders,
+            selective_services: nextSelective
+          }
+        }
+      };
+    });
+  }
 
   useEffect(() => {
     void refresh();
@@ -310,10 +360,10 @@ export function AllocatorWorkspace() {
             <Stack spacing={1}>
               <Chip label="Allocator Control Plane" sx={{ width: "fit-content", bgcolor: "#fff1df", color: "#9a4d00", fontWeight: 800 }} />
               <Typography variant="h2" sx={{ fontSize: { xs: "2.2rem", md: "3rem" }, lineHeight: 1.02 }}>
-                Submit, approve, and stage infrastructure across all 11 clouds.
+                Submit, approve, and stage infrastructure across all 13 clouds.
               </Typography>
               <Typography variant="body1" sx={{ color: "var(--muted)", maxWidth: 900 }}>
-                The allocator now persists runs, generates provider-aware Terraform, creates cloud account scopes, and exposes approval plus audit APIs for AWS, Azure, GCP, Oracle, Alibaba, IBM, Tencent, DigitalOcean, Akamai, OVHcloud, and Cloudflare.
+                The allocator now persists runs, generates provider-aware Terraform, creates cloud account scopes, and exposes approval plus audit APIs for AWS, Azure, GCP, Oracle, Alibaba, IBM, Tencent, DigitalOcean, Akamai, OVHcloud, Cloudflare, Salesforce, and Snowflake.
               </Typography>
             </Stack>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
@@ -370,6 +420,45 @@ export function AllocatorWorkspace() {
                       <TextField select label="Budget profile" value={request.approved_estimation.baseline_request.budget_preference} onChange={(event) => setRequest((current) => ({ ...current, approved_estimation: { ...current.approved_estimation, baseline_request: { ...current.approved_estimation.baseline_request, budget_preference: event.target.value as BudgetPreference } } }))}>
                         {budgetOptions.map((option) => <MenuItem key={option} value={option}>{titleize(option)}</MenuItem>)}
                       </TextField>
+                      <TextField
+                        select
+                        label="Decoupled compute"
+                        value={request.approved_estimation.baseline_request.enable_decoupled_compute ? "enabled" : "disabled"}
+                        onChange={(event) => setRequest((current) => ({
+                          ...current,
+                          approved_estimation: {
+                            ...current.approved_estimation,
+                            baseline_request: {
+                              ...current.approved_estimation.baseline_request,
+                              enable_decoupled_compute: event.target.value === "enabled"
+                            }
+                          }
+                        }))}
+                      >
+                        <MenuItem value="disabled">Disabled</MenuItem>
+                        <MenuItem value="enabled">Enabled</MenuItem>
+                      </TextField>
+                      {request.approved_estimation.baseline_request.enable_decoupled_compute ? (
+                        <Stack spacing={1}>
+                          <Typography variant="subtitle2">Selective service clouds</Typography>
+                          {selectiveServiceFamilies.map((family) => (
+                            <TextField
+                              key={family.key}
+                              select
+                              label={family.label}
+                              value={getSelectiveProvider(family.key)}
+                              onChange={(event) => updateSelectiveProvider(family.key, (event.target.value as CloudProvider | "") || "")}
+                            >
+                              <MenuItem value="">Use target cloud</MenuItem>
+                              {providerOptions.map((option) => (
+                                <MenuItem key={`${family.key}-${option}`} value={option}>
+                                  {titleize(option)}
+                                </MenuItem>
+                              ))}
+                            </TextField>
+                          ))}
+                        </Stack>
+                      ) : null}
                       <TextField select label="Environment" value={request.deployment_request.env} onChange={(event) => setRequest((current) => ({ ...current, deployment_request: { ...current.deployment_request, env: event.target.value as DeploymentEnvironment } }))}>
                         {environmentOptions.map((option) => <MenuItem key={option} value={option}>{titleize(option)}</MenuItem>)}
                       </TextField>

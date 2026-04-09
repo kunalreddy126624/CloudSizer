@@ -38,6 +38,7 @@ def calculate_service_pricing(
             )
 
         service_estimate = ServiceEstimate(
+            provider=request.provider,
             service_code=service.service_code,
             name=service.name,
             purpose=service.summary,

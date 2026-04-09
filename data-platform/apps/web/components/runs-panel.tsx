@@ -20,6 +20,9 @@ export function RunsPanel({ pipelineId }: { pipelineId: string }) {
         </div>
       </div>
       <div className="mt-4 space-y-3">
+        {runsQuery.isLoading ? <p className="text-sm text-slate-500">Loading runs...</p> : null}
+        {runsQuery.error instanceof Error ? <p className="text-sm text-rose-600">{runsQuery.error.message}</p> : null}
+        {runsQuery.data?.length === 0 ? <p className="text-sm text-slate-500">No runs have been recorded for this pipeline yet.</p> : null}
         {runsQuery.data?.map((run) => (
           <Link
             key={run.id}

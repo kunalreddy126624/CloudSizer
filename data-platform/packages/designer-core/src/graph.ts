@@ -41,3 +41,47 @@ export function duplicateEdges(edges: PipelineEdgeDefinition[]) {
   }
   return duplicates;
 }
+
+export function sortNodesForWorkflowSteps(spec: PipelineSpec) {
+  const adjacency = buildAdjacency(spec);
+  const indegree = new Map(spec.nodes.map((node) => [node.id, 0]));
+
+  for (const edge of spec.edges) {
+    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
+  }
+
+  const queue = spec.nodes
+    .filter((node) => (indegree.get(node.id) ?? 0) === 0)
+    .sort((left, right) => left.position.x - right.position.x || left.position.y - right.position.y);
+  const ordered: typeof spec.nodes = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      break;
+    }
+    ordered.push(current);
+    for (const neighborId of adjacency.get(current.id) ?? []) {
+      indegree.set(neighborId, (indegree.get(neighborId) ?? 0) - 1);
+      if ((indegree.get(neighborId) ?? 0) === 0) {
+        const neighbor = spec.nodes.find((node) => node.id === neighborId);
+        if (neighbor) {
+          queue.push(neighbor);
+          queue.sort((left, right) => left.position.x - right.position.x || left.position.y - right.position.y);
+        }
+      }
+    }
+  }
+
+  if (ordered.length !== spec.nodes.length) {
+    const orderedIds = new Set(ordered.map((node) => node.id));
+    return [
+      ...ordered,
+      ...spec.nodes
+        .filter((node) => !orderedIds.has(node.id))
+        .sort((left, right) => left.position.x - right.position.x || left.position.y - right.position.y)
+    ];
+  }
+
+  return ordered;
+}

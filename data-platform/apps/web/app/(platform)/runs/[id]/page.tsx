@@ -3,7 +3,6 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { getRun, getRunLogs } from "@/lib/api";
-import { mockRuns } from "@/lib/mock-data";
 
 export default function RunPage({ params }: { params: { id: string } }) {
   const runQuery = useQuery({
@@ -15,7 +14,19 @@ export default function RunPage({ params }: { params: { id: string } }) {
     queryFn: () => getRunLogs(params.id)
   });
 
-  const run = runQuery.data ?? mockRuns[0];
+  if (runQuery.isLoading) {
+    return <p className="text-sm text-slate-500">Loading run...</p>;
+  }
+
+  if (runQuery.error instanceof Error) {
+    return <p className="text-sm text-rose-600">{runQuery.error.message}</p>;
+  }
+
+  if (!runQuery.data) {
+    return <p className="text-sm text-slate-500">Run not found.</p>;
+  }
+
+  const run = runQuery.data;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -40,6 +51,9 @@ export default function RunPage({ params }: { params: { id: string } }) {
       <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Execution Logs</p>
         <div className="mt-4 space-y-3 font-mono text-xs">
+          {logsQuery.isLoading ? <p className="font-sans text-sm text-slate-500">Loading logs...</p> : null}
+          {logsQuery.error instanceof Error ? <p className="font-sans text-sm text-rose-600">{logsQuery.error.message}</p> : null}
+          {logsQuery.data?.length === 0 ? <p className="font-sans text-sm text-slate-500">No logs recorded for this run yet.</p> : null}
           {logsQuery.data?.map((log) => (
             <div
               key={log.id}

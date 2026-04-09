@@ -10,7 +10,8 @@ export type PipelineNodeType =
   | "transform.python"
   | "transform.sql"
   | "sink.snowflake"
-  | "sink.bigquery";
+  | "sink.bigquery"
+  | "sink.cache_log";
 
 export interface Timestamped {
   createdAt: string;

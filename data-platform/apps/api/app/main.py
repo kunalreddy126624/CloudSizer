@@ -7,8 +7,10 @@ from app.api.routers import artifact_router, health_router, pipelines_router, re
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine
+from app.seed import seed
 
 Base.metadata.create_all(bind=engine)
+seed()
 
 app = FastAPI(title="Data Platform API", version="0.1.0")
 

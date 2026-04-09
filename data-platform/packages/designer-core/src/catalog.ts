@@ -1,4 +1,4 @@
-import type { NodeCatalogItem } from "@data-platform/types";
+import type { NodeCatalogItem, PipelineNodeType } from "@data-platform/types";
 
 export const nodeCatalog: NodeCatalogItem[] = [
   {
@@ -70,7 +70,21 @@ export const nodeCatalog: NodeCatalogItem[] = [
       { key: "dataset", label: "Dataset", type: "text", required: true },
       { key: "table", label: "Table", type: "text", required: true }
     ]
+  },
+  {
+    type: "sink.cache_log",
+    label: "Cache Log",
+    description: "Capture node output into cache-backed run logs.",
+    category: "sink",
+    defaultConfig: { connectionId: "", cacheKey: "", format: "json" },
+    fields: [
+      { key: "connectionId", label: "Connection", type: "text", required: true },
+      { key: "cacheKey", label: "Cache Key", type: "text", required: true },
+      { key: "format", label: "Format", type: "select", options: ["json", "text"], required: true }
+    ]
   }
 ];
 
-export const nodeCatalogMap = Object.fromEntries(nodeCatalog.map((item) => [item.type, item]));
+export const nodeCatalogMap: Record<PipelineNodeType, NodeCatalogItem> = Object.fromEntries(
+  nodeCatalog.map((item) => [item.type, item])
+) as Record<PipelineNodeType, NodeCatalogItem>;

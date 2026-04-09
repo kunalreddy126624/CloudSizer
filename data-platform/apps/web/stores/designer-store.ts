@@ -2,7 +2,7 @@
 
 import type { PipelineEdgeDefinition, PipelineNodeDefinition, PipelineNodeType, PipelineSpec, ValidationIssue } from "@data-platform/types";
 
-import { nodeCatalogMap, validatePipelineSpec } from "@data-platform/designer-core";
+import { applyPromptToPipeline, nodeCatalogMap, validatePipelineSpec } from "@data-platform/designer-core";
 import { create } from "zustand";
 
 interface DesignerState {
@@ -10,6 +10,7 @@ interface DesignerState {
   selectedNodeId?: string;
   selectedEdgeId?: string;
   issues: ValidationIssue[];
+  promptSummary?: string;
   dirty: boolean;
   loadSpec(spec: PipelineSpec): void;
   addNode(type: PipelineNodeType): void;
@@ -20,6 +21,7 @@ interface DesignerState {
   selectNode(nodeId?: string): void;
   selectEdge(edgeId?: string): void;
   deleteSelection(): void;
+  applyPrompt(prompt: string, mode?: "replace" | "append"): string;
   validate(): ValidationIssue[];
   markClean(): void;
 }
@@ -45,39 +47,42 @@ function makeNode(type: PipelineNodeType, index: number): PipelineNodeDefinition
   };
 }
 
-export const useDesignerStore = create<DesignerState>((set, get) => ({
-  spec: {
-    pipelineId: "draft_pipeline",
-    name: "Untitled Pipeline",
-    description: "",
-    version: 1,
-    schedule: { mode: "manual", cron: null, timezone: "UTC" },
-    defaults: {
-      retry: { retries: 1, backoffSeconds: 60 },
-      timeout: { executionSeconds: 900 },
-      resources: { cpu: "500m", memory: "1Gi", pool: "default" }
-    },
-    nodes: [],
-    edges: [],
-    metadata: { owner: "demo@acme.io", labels: {}, repoPath: "workspaces/acme/repos/analytics-platform/pipelines" }
+const defaultSpec: PipelineSpec = {
+  pipelineId: "draft_pipeline",
+  name: "Untitled Pipeline",
+  description: "",
+  version: 1,
+  schedule: { mode: "manual", cron: null, timezone: "UTC" },
+  defaults: {
+    retry: { retries: 1, backoffSeconds: 60 },
+    timeout: { executionSeconds: 900 },
+    resources: { cpu: "500m", memory: "1Gi", pool: "default" }
   },
+  nodes: [],
+  edges: [],
+  metadata: { owner: "demo@acme.io", labels: {}, repoPath: "workspaces/acme/repos/analytics-platform/pipelines" }
+};
+
+export const useDesignerStore = create<DesignerState>((set, get) => ({
+  spec: defaultSpec,
   issues: [],
+  promptSummary: undefined,
   dirty: false,
   loadSpec(spec) {
-    set({ spec: cloneSpec(spec), selectedNodeId: undefined, selectedEdgeId: undefined, issues: [], dirty: false });
+    set({ spec: cloneSpec(spec), selectedNodeId: undefined, selectedEdgeId: undefined, issues: [], promptSummary: undefined, dirty: false });
   },
   addNode(type) {
     set((state) => {
       const next = cloneSpec(state.spec);
       next.nodes.push(makeNode(type, next.nodes.length + 1));
-      return { spec: next, dirty: true };
+      return { spec: next, promptSummary: undefined, dirty: true };
     });
   },
   updateNode(nodeId, partial) {
     set((state) => {
       const next = cloneSpec(state.spec);
       next.nodes = next.nodes.map((node) => (node.id === nodeId ? { ...node, ...partial } : node));
-      return { spec: next, dirty: true };
+      return { spec: next, promptSummary: undefined, dirty: true };
     });
   },
   updateNodeConfig(nodeId, key, value) {
@@ -94,7 +99,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
             }
           : node
       );
-      return { spec: next, dirty: true };
+      return { spec: next, promptSummary: undefined, dirty: true };
     });
   },
   connectNodes(source, target) {
@@ -102,14 +107,14 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       const next = cloneSpec(state.spec);
       const edge: PipelineEdgeDefinition = { id: `edge_${source}_${target}`, source, target };
       next.edges.push(edge);
-      return { spec: next, selectedEdgeId: edge.id, dirty: true };
+      return { spec: next, selectedEdgeId: edge.id, promptSummary: undefined, dirty: true };
     });
   },
   updateNodePosition(nodeId, position) {
     set((state) => {
       const next = cloneSpec(state.spec);
       next.nodes = next.nodes.map((node) => (node.id === nodeId ? { ...node, position } : node));
-      return { spec: next, dirty: true };
+      return { spec: next, promptSummary: undefined, dirty: true };
     });
   },
   selectNode(nodeId) {
@@ -128,8 +133,21 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       if (state.selectedEdgeId) {
         next.edges = next.edges.filter((edge) => edge.id !== state.selectedEdgeId);
       }
-      return { spec: next, selectedNodeId: undefined, selectedEdgeId: undefined, dirty: true };
+      return { spec: next, selectedNodeId: undefined, selectedEdgeId: undefined, promptSummary: undefined, dirty: true };
     });
+  },
+  applyPrompt(prompt, mode = "replace") {
+    const baseSpec = get().spec.nodes.length === 0 ? { ...cloneSpec(defaultSpec), ...cloneSpec(get().spec) } : get().spec;
+    const result = applyPromptToPipeline(baseSpec, prompt, mode);
+    set({
+      spec: result.spec,
+      selectedNodeId: result.spec.nodes[0]?.id,
+      selectedEdgeId: undefined,
+      issues: [],
+      promptSummary: result.summary,
+      dirty: true
+    });
+    return result.summary;
   },
   validate() {
     const issues = validatePipelineSpec(get().spec);

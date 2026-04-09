@@ -11,6 +11,8 @@ export const DEFAULT_REQUEST: RecommendationRequest = {
   requires_managed_database: true,
   availability_tier: "high",
   budget_preference: "balanced",
+  enable_decoupled_compute: false,
+  selective_services: [],
   preferred_providers: [
     "aws",
     "azure",
@@ -22,7 +24,9 @@ export const DEFAULT_REQUEST: RecommendationRequest = {
     "digitalocean",
     "akamai",
     "ovhcloud",
-    "cloudflare"
+    "cloudflare",
+    "salesforce",
+    "snowflake"
   ]
 };
 
@@ -60,6 +64,8 @@ export const optionSets = {
     "digitalocean",
     "akamai",
     "ovhcloud",
-    "cloudflare"
+    "cloudflare",
+    "salesforce",
+    "snowflake"
   ] as const
 };

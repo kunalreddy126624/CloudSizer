@@ -177,7 +177,9 @@ export const architectureProviderOptions: ArchitectureCloudProvider[] = [
   "digitalocean",
   "akamai",
   "ovhcloud",
-  "cloudflare"
+  "cloudflare",
+  "salesforce",
+  "snowflake"
 ];
 
 export const providerLabels: Record<ArchitectureCloudProvider, string> = {
@@ -191,7 +193,9 @@ export const providerLabels: Record<ArchitectureCloudProvider, string> = {
   digitalocean: "DigitalOcean",
   akamai: "Akamai Cloud",
   ovhcloud: "OVHcloud",
-  cloudflare: "Cloudflare"
+  cloudflare: "Cloudflare",
+  salesforce: "Salesforce",
+  snowflake: "Snowflake"
 };
 
 export const providerColors: Record<DiagramProvider, { fill: string; stroke: string; text: string }> = {
@@ -206,7 +210,9 @@ export const providerColors: Record<DiagramProvider, { fill: string; stroke: str
   digitalocean: { fill: "#e6f7ff", stroke: "#0080ff", text: "#0052a3" },
   akamai: { fill: "#eef3ff", stroke: "#6c7cff", text: "#3743af" },
   ovhcloud: { fill: "#eef0ff", stroke: "#4e63d9", text: "#26378f" },
-  cloudflare: { fill: "#fff2e8", stroke: "#f48120", text: "#984c0f" }
+  cloudflare: { fill: "#fff2e8", stroke: "#f48120", text: "#984c0f" },
+  salesforce: { fill: "#eaf6ff", stroke: "#1f8feb", text: "#125183" },
+  snowflake: { fill: "#ecfbff", stroke: "#17b7e8", text: "#0f5f75" }
 };
 
 export const DEFAULT_ARCHITECT_PROVIDERS: ArchitectureCloudProvider[] = ["aws", "azure"];
@@ -234,7 +240,9 @@ const providerAliases: Record<ArchitectureCloudProvider, string[]> = {
   digitalocean: ["digitalocean", "digital ocean"],
   akamai: ["akamai", "linode"],
   ovhcloud: ["ovh", "ovhcloud"],
-  cloudflare: ["cloudflare"]
+  cloudflare: ["cloudflare"],
+  salesforce: ["salesforce"],
+  snowflake: ["snowflake"]
 };
 
 const providerServices: Record<
@@ -251,7 +259,9 @@ const providerServices: Record<
   digitalocean: { compute: "DigitalOcean Kubernetes", database: "Managed PostgreSQL", storage: "Spaces Object Storage", networking: "DigitalOcean Load Balancer", analytics: "Managed Kafka", ai_ml: "DigitalOcean GenAI Platform", security: "Cloud Firewalls", saas: "Snowflake + Salesforce", identity: "DigitalOcean IAM", integration: "Functions and Queues", observability: "DigitalOcean Monitoring" },
   akamai: { compute: "Akamai Kubernetes Engine", database: "Managed Databases", storage: "Akamai Object Storage", networking: "Akamai Application Load Balancer", analytics: "DataStream", ai_ml: "Akamai AI Inference", security: "App and API Protector", saas: "Snowflake + Salesforce", identity: "Akamai IAM", integration: "Event Center", observability: "Akamai Cloud Monitor" },
   ovhcloud: { compute: "OVHcloud Managed Kubernetes", database: "OVHcloud Managed Databases", storage: "OVHcloud Object Storage", networking: "OVHcloud Load Balancer", analytics: "OVHcloud Data Platform", ai_ml: "OVHcloud AI Endpoints", security: "OVHcloud Network Firewall", saas: "Snowflake + Salesforce", identity: "OVHcloud IAM", integration: "OVHcloud Event Streams", observability: "OVHcloud Metrics" },
-  cloudflare: { compute: "Cloudflare Workers", database: "Cloudflare D1", storage: "Cloudflare R2", networking: "Cloudflare Load Balancer", analytics: "Cloudflare Analytics Engine", ai_ml: "Workers AI", security: "Cloudflare WAF", saas: "Snowflake + Salesforce", identity: "Cloudflare Access", integration: "Cloudflare Queues", observability: "Cloudflare Analytics" }
+  cloudflare: { compute: "Cloudflare Workers", database: "Cloudflare D1", storage: "Cloudflare R2", networking: "Cloudflare Load Balancer", analytics: "Cloudflare Analytics Engine", ai_ml: "Workers AI", security: "Cloudflare WAF", saas: "Snowflake + Salesforce", identity: "Cloudflare Access", integration: "Cloudflare Queues", observability: "Cloudflare Analytics" },
+  salesforce: { compute: "Salesforce Platform", database: "Salesforce Data Cloud", storage: "Salesforce Files", networking: "Salesforce Edge Network", analytics: "CRM Analytics", ai_ml: "Einstein AI", security: "Salesforce Shield", saas: "Sales Cloud + Service Cloud", identity: "Salesforce Identity", integration: "MuleSoft", observability: "Event Monitoring" },
+  snowflake: { compute: "Snowpark Container Services", database: "Snowflake Hybrid Tables", storage: "Snowflake Stages", networking: "Snowflake Private Connectivity", analytics: "Snowflake Warehouses", ai_ml: "Snowflake Cortex AI", security: "Tri-Secret Secure", saas: "Snowflake + Salesforce Data Cloud", identity: "Snowflake SSO", integration: "Snowpipe + External Functions", observability: "Snowflake Observability" }
 };
 
 function pattern(
@@ -391,9 +401,51 @@ export function getProviderService(
   return providerServices[provider][category];
 }
 
+function resolveProviderServiceCategory(
+  category: DiagramCategory
+): ServiceCategory | "identity" | "integration" | "observability" | null {
+  if (category === "users") {
+    return null;
+  }
+  return category as ServiceCategory | "identity" | "integration" | "observability";
+}
+
+function applyProviderServiceNaming(plan: PatternDiagramData): PatternDiagramData {
+  return {
+    ...plan,
+    nodes: plan.nodes.map((node) => {
+      if (node.provider === "shared") {
+        return node;
+      }
+      const serviceCategory = resolveProviderServiceCategory(node.category);
+      if (!serviceCategory) {
+        return node;
+      }
+      const serviceTitle = getProviderService(node.provider as ArchitectureCloudProvider, serviceCategory);
+      if (!serviceTitle || node.title === serviceTitle) {
+        return node;
+      }
+      const roleTitle = node.title.trim();
+      return {
+        ...node,
+        title: serviceTitle,
+        subtitle: roleTitle ? `${roleTitle}: ${node.subtitle}` : node.subtitle
+      };
+    })
+  };
+}
+
 export function buildPromptFromRequest(request: RecommendationRequest, name: string) {
   const providers = request.preferred_providers.map((provider) => providerLabels[provider]).join(", ");
-  return `${name}: Design a ${formatWorkload(request.workload_type)} architecture in ${request.region} for ${request.user_count} users, ${request.concurrent_users} concurrent sessions, ${request.storage_gb} GB storage, ${request.monthly_requests_million} million monthly requests, ${request.requires_managed_database ? "managed database" : "application-managed data tier"}, ${request.requires_disaster_recovery ? "cross-region disaster recovery" : "single region resilience"}, targeting ${providers}.`;
+  const selectiveServices = (request.selective_services ?? [])
+    .map((selection) => `${selection.service_family} on ${providerLabels[selection.provider]}`)
+    .join("; ");
+  const decoupledLine = request.enable_decoupled_compute
+    ? selectiveServices
+      ? `Decoupled compute is enabled with selective services: ${selectiveServices}.`
+      : "Decoupled compute is enabled; use best-fit providers per service tier."
+    : "Use a unified provider architecture by default.";
+  return `${name}: Design a ${formatWorkload(request.workload_type)} architecture in ${request.region} for ${request.user_count} users, ${request.concurrent_users} concurrent sessions, ${request.storage_gb} GB storage, ${request.monthly_requests_million} million monthly requests, ${request.requires_managed_database ? "managed database" : "application-managed data tier"}, ${request.requires_disaster_recovery ? "cross-region disaster recovery" : "single region resilience"}, targeting ${providers}. ${decoupledLine}`;
 }
 
 export function buildNode(
@@ -1019,7 +1071,7 @@ export function buildArchitecturePlan(
   const scenario = architectureScenarioMap[scenarioId];
   const features = inferFeatures(prompt, request, providers.length);
   const base = applyDiagramStyleLayout(
-    applyScenarioToDiagram(buildPatternDiagram(patternId, providers, features), scenarioId),
+    applyProviderServiceNaming(applyScenarioToDiagram(buildPatternDiagram(patternId, providers, features), scenarioId)),
     providers,
     diagramStyle,
     patternId

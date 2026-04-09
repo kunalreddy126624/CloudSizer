@@ -14,6 +14,7 @@ from app.models import (
     EstimationAdvisorResponse,
     RecommendationRequest,
     RecommendationResponse,
+    SelectiveServicePreference,
     ServicePricingLineItemRequest,
     ServicePricingRequest,
     WorkloadType,
@@ -96,6 +97,32 @@ REGION_HINTS: list[tuple[str, str]] = [
     ("usa", "us-east-1"),
     ("virginia", "us-east-1"),
     ("california", "us-west-1"),
+]
+
+PROVIDER_ALIASES: dict[str, CloudProvider] = {
+    "aws": CloudProvider.AWS,
+    "amazon": CloudProvider.AWS,
+    "azure": CloudProvider.AZURE,
+    "gcp": CloudProvider.GCP,
+    "google cloud": CloudProvider.GCP,
+    "oracle": CloudProvider.ORACLE,
+    "alibaba": CloudProvider.ALIBABA,
+    "ibm": CloudProvider.IBM,
+    "tencent": CloudProvider.TENCENT,
+    "digitalocean": CloudProvider.DIGITALOCEAN,
+    "akamai": CloudProvider.AKAMAI,
+    "ovhcloud": CloudProvider.OVHCLOUD,
+    "cloudflare": CloudProvider.CLOUDFLARE,
+    "salesforce": CloudProvider.SALESFORCE,
+    "snowflake": CloudProvider.SNOWFLAKE,
+}
+
+SELECTIVE_SERVICE_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
+    ("containers_managed", ("compute", "container", "app tier", "application tier")),
+    ("relational_database", ("database", "postgres", "mysql", "sql")),
+    ("object_storage", ("storage", "object storage", "backups", "files")),
+    ("content_delivery", ("cdn", "edge", "network", "delivery")),
+    ("web_application_firewall", ("waf", "firewall")),
 ]
 
 
@@ -435,6 +462,21 @@ def infer_recommendation_request(
         keyword in lowered
         for keyword in ("self managed database", "self-hosted database", "manage database ourselves")
     )
+    selective_services = _infer_selective_services(lowered, providers)
+    enable_decoupled_compute = bool(
+        selective_services
+        or any(
+            keyword in lowered
+            for keyword in (
+                "decoupled compute",
+                "decoupled architecture",
+                "split compute",
+                "best of breed",
+                "multi cloud services",
+                "cross cloud services",
+            )
+        )
+    )
 
     region = _extract_region(requirement) or "ap-south-1"
 
@@ -449,8 +491,45 @@ def infer_recommendation_request(
         requires_managed_database=requires_managed_database,
         availability_tier=availability_tier,
         budget_preference=budget_preference,
+        enable_decoupled_compute=enable_decoupled_compute,
+        selective_services=selective_services,
         preferred_providers=providers,
     )
+
+
+def _infer_selective_services(
+    lowered_requirement: str,
+    providers: list[CloudProvider],
+) -> list[SelectiveServicePreference]:
+    provider_filter = set(providers)
+    selections: dict[str, SelectiveServicePreference] = {}
+    provider_tokens = sorted(PROVIDER_ALIASES.keys(), key=len, reverse=True)
+
+    for family, keywords in SELECTIVE_SERVICE_PATTERNS:
+        for keyword in keywords:
+            for token in provider_tokens:
+                provider = PROVIDER_ALIASES[token]
+                if provider not in provider_filter:
+                    continue
+
+                pairings = (
+                    f"{keyword} on {token}",
+                    f"{keyword} in {token}",
+                    f"{keyword} at {token}",
+                    f"{token} for {keyword}",
+                    f"{token} {keyword}",
+                )
+                if any(phrase in lowered_requirement for phrase in pairings):
+                    selections[family] = SelectiveServicePreference(
+                        service_family=family,
+                        provider=provider,
+                        required=True,
+                    )
+                    break
+            if family in selections:
+                break
+
+    return list(selections.values())
 
 
 def _extract_number_before_keywords(text: str, keywords: tuple[str, ...]) -> int | None:

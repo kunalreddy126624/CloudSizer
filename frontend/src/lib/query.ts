@@ -4,6 +4,7 @@ export function buildRecommendationDetailHref(
   request: RecommendationRequest,
   provider: CloudProvider
 ) {
+  const selectiveServicesPayload = JSON.stringify(request.selective_services ?? []);
   const params = new URLSearchParams({
     workload_type: request.workload_type,
     region: request.region,
@@ -15,6 +16,8 @@ export function buildRecommendationDetailHref(
     requires_managed_database: String(request.requires_managed_database),
     availability_tier: request.availability_tier,
     budget_preference: request.budget_preference,
+    enable_decoupled_compute: String(Boolean(request.enable_decoupled_compute)),
+    selective_services: selectiveServicesPayload,
     preferred_providers: request.preferred_providers.join(",")
   });
 
@@ -24,6 +27,25 @@ export function buildRecommendationDetailHref(
 export function parseRecommendationRequest(
   searchParams: URLSearchParams
 ): RecommendationRequest {
+  const selectiveServicesRaw = searchParams.get("selective_services");
+  let selectiveServices: RecommendationRequest["selective_services"] = [];
+  if (selectiveServicesRaw) {
+    try {
+      const parsed = JSON.parse(selectiveServicesRaw);
+      if (Array.isArray(parsed)) {
+        selectiveServices = parsed.filter((item): item is NonNullable<RecommendationRequest["selective_services"]>[number] => {
+          if (!item || typeof item !== "object") {
+            return false;
+          }
+          const record = item as Record<string, unknown>;
+          return typeof record.service_family === "string" && typeof record.provider === "string";
+        });
+      }
+    } catch {
+      selectiveServices = [];
+    }
+  }
+
   return {
     workload_type: (searchParams.get("workload_type") ?? "erp") as RecommendationRequest["workload_type"],
     region: searchParams.get("region") ?? "ap-south-1",
@@ -35,6 +57,8 @@ export function parseRecommendationRequest(
     requires_managed_database: searchParams.get("requires_managed_database") !== "false",
     availability_tier: (searchParams.get("availability_tier") ?? "high") as RecommendationRequest["availability_tier"],
     budget_preference: (searchParams.get("budget_preference") ?? "balanced") as RecommendationRequest["budget_preference"],
+    enable_decoupled_compute: searchParams.get("enable_decoupled_compute") === "true",
+    selective_services: selectiveServices,
     preferred_providers: (
       searchParams.get("preferred_providers")?.split(",").filter(Boolean) ?? [
         "aws",
@@ -47,7 +71,9 @@ export function parseRecommendationRequest(
         "digitalocean",
         "akamai",
         "ovhcloud",
-        "cloudflare"
+        "cloudflare",
+        "salesforce",
+        "snowflake"
       ]
     ) as RecommendationRequest["preferred_providers"]
   };

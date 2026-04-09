@@ -74,6 +74,16 @@ PROVIDER_SUMMARIES: dict[CloudProvider, ProviderSummary] = {
         strengths=["Edge-native services", "Security and network acceleration"],
         default_regions=["global", "apac", "europe"],
     ),
+    CloudProvider.SALESFORCE: ProviderSummary(
+        provider=CloudProvider.SALESFORCE,
+        strengths=["Enterprise CRM leadership", "Deep SaaS ecosystem integrations"],
+        default_regions=["na85", "eu44", "ap16"],
+    ),
+    CloudProvider.SNOWFLAKE: ProviderSummary(
+        provider=CloudProvider.SNOWFLAKE,
+        strengths=["Cloud data platform", "Strong analytics and governance tooling"],
+        default_regions=["aws_us_east_1", "azure_west_europe", "gcp_asia_south1"],
+    ),
 }
 
 PROVIDER_LABELS: dict[CloudProvider, str] = {
@@ -88,6 +98,8 @@ PROVIDER_LABELS: dict[CloudProvider, str] = {
     CloudProvider.AKAMAI: "Akamai Cloud",
     CloudProvider.OVHCLOUD: "OVHcloud",
     CloudProvider.CLOUDFLARE: "Cloudflare",
+    CloudProvider.SALESFORCE: "Salesforce",
+    CloudProvider.SNOWFLAKE: "Snowflake",
 }
 
 GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
@@ -255,6 +267,14 @@ GENERATED_PROVIDER_SERVICE_NAMES: dict[CloudProvider, dict[str, str]] = {
         "snowflake_warehouse": "Snowflake-Compatible Data Cloud",
         "salesforce_crm": "Salesforce Sales Cloud",
     },
+    CloudProvider.SALESFORCE: {
+        "snowflake_warehouse": "Snowflake Data Cloud",
+        "salesforce_crm": "Salesforce Sales Cloud",
+    },
+    CloudProvider.SNOWFLAKE: {
+        "snowflake_warehouse": "Snowflake Data Warehouse",
+        "salesforce_crm": "Salesforce CRM Data Share",
+    },
 }
 
 GENERATED_PROVIDER_COST_MULTIPLIERS: dict[CloudProvider, float] = {
@@ -266,6 +286,8 @@ GENERATED_PROVIDER_COST_MULTIPLIERS: dict[CloudProvider, float] = {
     CloudProvider.AKAMAI: 0.97,
     CloudProvider.OVHCLOUD: 0.89,
     CloudProvider.CLOUDFLARE: 0.84,
+    CloudProvider.SALESFORCE: 1.08,
+    CloudProvider.SNOWFLAKE: 1.04,
 }
 
 
