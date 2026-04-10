@@ -699,7 +699,7 @@ export interface AuditLogListResponse {
 }
 
 export type NoodleDeploymentScope = "hybrid" | "multi_cloud" | "edge" | "hybrid_multi_cloud";
-export type NoodleSourceKind = "api" | "database" | "stream" | "file" | "iot" | "saas";
+export type NoodleSourceKind = "api" | "database" | "stream" | "file" | "iot" | "saas" | "github";
 export type NoodleSourceEnvironment = "on_prem" | "aws" | "azure" | "gcp" | "edge" | "saas";
 export type NoodleChangePattern = "append" | "cdc" | "event" | "snapshot";
 export type NoodleProcessingMode = "batch" | "stream" | "micro_batch" | "hybrid";
@@ -962,6 +962,13 @@ export interface NoodleDesignerEdge {
 
 export type NoodleDesignerDocumentStatus = "draft" | "published";
 export type NoodleDesignerValidationLevel = "error" | "warning";
+export type NoodleDesignerDeploymentProvider = "github" | "gitlab" | "bitbucket" | "custom";
+export type NoodleDesignerDeploymentTarget =
+  | "local_docker"
+  | "kubernetes"
+  | "airflow_worker"
+  | "worker_runtime"
+  | "custom";
 
 export interface NoodleDesignerValidation {
   id: string;
@@ -980,6 +987,7 @@ export interface NoodlePipelineDesignerDocument {
   metadata_assets: NoodleDesignerMetadataAsset[];
   schemas: NoodleDesignerSchema[];
   transformations: NoodleDesignerTransformation[];
+  deployment: NoodleDesignerDeployment;
   orchestrator_plan: NoodleOrchestratorPlan;
   schedule: NoodleDesignerSchedule;
   runs: NoodleDesignerRun[];
@@ -992,6 +1000,26 @@ export interface NoodleDesignerConnectionRef {
   plugin: string;
   environment: string;
   auth_ref: string;
+  params: NoodleDesignerParam[];
+  notes: string;
+}
+
+export interface NoodleDesignerCodeRepository {
+  provider: NoodleDesignerDeploymentProvider;
+  connection_id?: string | null;
+  repository: string;
+  branch: string;
+  backend_path: string;
+  workflow_ref: string;
+}
+
+export interface NoodleDesignerDeployment {
+  enabled: boolean;
+  deploy_target: NoodleDesignerDeploymentTarget;
+  repository: NoodleDesignerCodeRepository;
+  build_command: string;
+  deploy_command: string;
+  artifact_name: string;
   notes: string;
 }
 

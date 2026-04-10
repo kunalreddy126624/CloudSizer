@@ -75,5 +75,36 @@ REFERENCE_SPECS: list[NoodleReferenceSpec] = [
             ],
         ),
     ),
+    NoodleReferenceSpec(
+        id="github-engineering-intelligence",
+        name="GitHub Engineering Intelligence",
+        summary="Collects GitHub repository events, pull requests, and deployment metadata into an engineering analytics pipeline.",
+        tags=["github", "engineering", "analytics"],
+        sample_intent=NoodlePipelineIntent(
+            name="github-engineering-intelligence",
+            business_goal="Create an engineering intelligence pipeline that tracks repository activity, pull request flow, and deployment lead time.",
+            deployment_scope="multi_cloud",
+            latency_slo="minutes",
+            requires_ml_features=False,
+            requires_realtime_serving=False,
+            contains_sensitive_data=False,
+            target_consumers=["bi", "engineering_ops", "delivery_insights_api"],
+            sources=[
+                {
+                    "name": "github_events",
+                    "kind": "github",
+                    "environment": "saas",
+                    "format_hint": "github webhooks and graphql objects",
+                    "change_pattern": "event",
+                },
+                {
+                    "name": "ci_deployments",
+                    "kind": "api",
+                    "environment": "aws",
+                    "format_hint": "json deployment events",
+                    "change_pattern": "append",
+                },
+            ],
+        ),
+    ),
 ]
-

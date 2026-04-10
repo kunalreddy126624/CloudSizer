@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 DeploymentScope = Literal["hybrid", "multi_cloud", "edge", "hybrid_multi_cloud"]
-SourceKind = Literal["api", "database", "stream", "file", "iot", "saas"]
+SourceKind = Literal["api", "database", "stream", "file", "iot", "saas", "github"]
 ProcessingMode = Literal["batch", "stream", "micro_batch", "hybrid"]
 TargetZone = Literal["bronze", "silver", "gold", "feature_store", "serving"]
 
@@ -408,6 +408,8 @@ DesignerTransformationMode = Literal["python", "sql", "dbt", "spark_sql", "custo
 DesignerRunStatus = Literal["queued", "running", "success", "failed", "cancelled"]
 DesignerTaskRunState = Literal["pending", "queued", "running", "success", "failed", "retrying", "skipped", "cancelled"]
 DesignerLogLevel = Literal["log", "info", "warn"]
+DesignerDeploymentProvider = Literal["github", "gitlab", "bitbucket", "custom"]
+DesignerDeploymentTarget = Literal["local_docker", "kubernetes", "airflow_worker", "worker_runtime", "custom"]
 
 
 class NoodleDesignerParam(BaseModel):
@@ -440,7 +442,27 @@ class NoodleDesignerConnectionRef(BaseModel):
     plugin: str
     environment: str
     auth_ref: str
+    params: list[NoodleDesignerParam] = Field(default_factory=list)
     notes: str
+
+
+class NoodleDesignerCodeRepository(BaseModel):
+    provider: DesignerDeploymentProvider = "github"
+    connection_id: str | None = None
+    repository: str = ""
+    branch: str = "main"
+    backend_path: str = "app"
+    workflow_ref: str = ".github/workflows/deploy.yml"
+
+
+class NoodleDesignerDeployment(BaseModel):
+    enabled: bool = False
+    deploy_target: DesignerDeploymentTarget = "local_docker"
+    repository: NoodleDesignerCodeRepository = Field(default_factory=NoodleDesignerCodeRepository)
+    build_command: str = "docker build -t noodle-pipeline-backend ."
+    deploy_command: str = "docker compose up -d --build"
+    artifact_name: str = "noodle-pipeline-backend"
+    notes: str = ""
 
 
 class NoodleDesignerMetadataAsset(BaseModel):
@@ -548,6 +570,7 @@ class NoodlePipelineDocument(BaseModel):
     metadata_assets: list[NoodleDesignerMetadataAsset] = Field(default_factory=list)
     schemas: list[NoodleDesignerSchema] = Field(default_factory=list)
     transformations: list[NoodleDesignerTransformation] = Field(default_factory=list)
+    deployment: NoodleDesignerDeployment = Field(default_factory=NoodleDesignerDeployment)
     orchestrator_plan: NoodleOrchestratorPlan | None = None
     schedule: NoodleDesignerSchedule
     runs: list[NoodleDesignerRun] = Field(default_factory=list)

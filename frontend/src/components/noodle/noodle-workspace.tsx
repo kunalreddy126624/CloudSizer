@@ -38,9 +38,14 @@ import {
 import { copyTextToClipboard } from "@/lib/clipboard";
 import type {
   NoodleArchitectureOverview,
+  NoodleChangePattern,
+  NoodleDesignerDeployment,
   NoodleLatencySlo,
   NoodleOrchestratorPlan,
   NoodleOrchestratorTaskPlan,
+  NoodleSourceEnvironment,
+  NoodleSourceKind,
+  NoodleSourceSystem,
   NoodlePipelineIntent,
   NoodleSavedArchitectureContext,
   NoodlePipelinePlanResponse,
@@ -50,6 +55,9 @@ import type {
 
 const deploymentScopes: NoodlePipelineIntent["deployment_scope"][] = ["hybrid", "multi_cloud", "edge", "hybrid_multi_cloud"];
 const latencyOptions: NoodleLatencySlo[] = ["seconds", "minutes", "hours", "daily"];
+const sourceKindOptions: NoodleSourceKind[] = ["api", "database", "stream", "file", "iot", "saas", "github"];
+const sourceEnvironmentOptions: NoodleSourceEnvironment[] = ["on_prem", "aws", "azure", "gcp", "edge", "saas"];
+const changePatternOptions: NoodleChangePattern[] = ["append", "cdc", "event", "snapshot"];
 const noodleButtonSx = {
   borderRadius: 999,
   px: 2.1,
@@ -88,6 +96,52 @@ function parseItems(value: string) {
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildSourceDraft(kind: NoodleSourceKind = "api"): NoodleSourceSystem {
+  if (kind === "github") {
+    return {
+      name: "github_events",
+      kind: "github",
+      environment: "saas",
+      format_hint: "github webhooks and graphql objects",
+      change_pattern: "event"
+    };
+  }
+
+  return {
+    name: `source_${Math.random().toString(36).slice(2, 6)}`,
+    kind,
+    environment: kind === "saas" ? "saas" : kind === "iot" ? "edge" : "aws",
+    format_hint: kind === "database" ? "postgres tables" : kind === "stream" ? "json events" : "json payloads",
+    change_pattern: kind === "database" ? "cdc" : kind === "stream" || kind === "iot" ? "event" : "append"
+  };
+}
+
+function normalizeSourceByKind(source: NoodleSourceSystem, kind: NoodleSourceKind): NoodleSourceSystem {
+  if (kind === "github") {
+    return {
+      ...source,
+      kind,
+      environment: "saas",
+      format_hint: "github webhooks and graphql objects",
+      change_pattern: "event"
+    };
+  }
+
+  if (kind === "saas") {
+    return {
+      ...source,
+      kind,
+      environment: source.environment === "saas" ? source.environment : "saas"
+    };
+  }
+
+  return {
+    ...source,
+    kind,
+    environment: source.environment === "saas" ? "aws" : source.environment
+  };
 }
 
 function buildEmptyIntent(): NoodlePipelineIntent {
@@ -145,6 +199,25 @@ function buildArchitectureContext(architecture: SavedArchitectureDraft | null): 
   };
 }
 
+function buildGitHubDeploymentSeed(intentName: string): NoodleDesignerDeployment {
+  return {
+    enabled: false,
+    deploy_target: "local_docker",
+    repository: {
+      provider: "github",
+      connection_id: null,
+      repository: `your-org/${intentName}`,
+      branch: "main",
+      backend_path: "app",
+      workflow_ref: ".github/workflows/deploy.yml"
+    },
+    build_command: "docker build -t noodle-pipeline-backend .",
+    deploy_command: "docker compose up -d --build",
+    artifact_name: `${intentName.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-backend`,
+    notes: "Use GitHub as the repository for backend pipeline code and deployment automation."
+  };
+}
+
 export function NoodleWorkspace() {
   const router = useRouter();
   const [overview, setOverview] = useState<NoodleArchitectureOverview | null>(null);
@@ -157,6 +230,9 @@ export function NoodleWorkspace() {
   const [consumersText, setConsumersText] = useState(intent.target_consumers.join(", "));
   const [plan, setPlan] = useState<NoodlePipelinePlanResponse | null>(null);
   const [orchestratorPlan, setOrchestratorPlan] = useState<NoodleOrchestratorPlan | null>(null);
+  const [deploymentSeed, setDeploymentSeed] = useState<NoodleDesignerDeployment>(() =>
+    buildGitHubDeploymentSeed(buildEmptyIntent().name)
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copyNotice, setCopyNotice] = useState<{ severity: "success" | "warning"; message: string } | null>(null);
@@ -198,6 +274,7 @@ export function NoodleWorkspace() {
       return;
     }
     setIntent(spec.sample_intent);
+    setDeploymentSeed(buildGitHubDeploymentSeed(spec.sample_intent.name));
     setConsumersText(spec.sample_intent.target_consumers.join(", "));
     setPlan(null);
     setOrchestratorPlan(null);
@@ -233,6 +310,7 @@ export function NoodleWorkspace() {
       design_principles: designPrinciples,
       saved_architecture: selectedArchitecture,
       agent_momo_brief: plan?.agent_momo_brief ?? null,
+      deployment_seed: deploymentSeed,
       orchestrator_plan: orchestratorPlan,
       opened_at: new Date().toISOString()
     });
@@ -353,6 +431,286 @@ export function NoodleWorkspace() {
                         onChange={(event) => setConsumersText(event.target.value)}
                         helperText="Comma-separated consumers like bi, ops_api, anomaly_model."
                       />
+                      <Divider />
+                      <Stack spacing={1.5}>
+                        <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
+                          <Box>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Backend Repository</Typography>
+                            <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                              Seed the designer with a GitHub-backed deployment contract for the pipeline backend code.
+                            </Typography>
+                          </Box>
+                          <Chip
+                            label={deploymentSeed.enabled ? "GitHub deploy enabled" : "GitHub deploy optional"}
+                            color={deploymentSeed.enabled ? "primary" : "default"}
+                            variant={deploymentSeed.enabled ? "filled" : "outlined"}
+                          />
+                        </Stack>
+                        <Grid container spacing={2}>
+                          <Grid item xs={12} md={7}>
+                            <TextField
+                              fullWidth
+                              label="GitHub Repository"
+                              value={deploymentSeed.repository.repository}
+                              onChange={(event) =>
+                                setDeploymentSeed((current) => ({
+                                  ...current,
+                                  repository: {
+                                    ...current.repository,
+                                    repository: event.target.value
+                                  }
+                                }))
+                              }
+                              helperText="Use owner/repo."
+                            />
+                          </Grid>
+                          <Grid item xs={12} md={5}>
+                            <TextField
+                              fullWidth
+                              label="Branch"
+                              value={deploymentSeed.repository.branch}
+                              onChange={(event) =>
+                                setDeploymentSeed((current) => ({
+                                  ...current,
+                                  repository: {
+                                    ...current.repository,
+                                    branch: event.target.value
+                                  }
+                                }))
+                              }
+                            />
+                          </Grid>
+                          <Grid item xs={12} md={6}>
+                            <TextField
+                              fullWidth
+                              label="Backend Path"
+                              value={deploymentSeed.repository.backend_path}
+                              onChange={(event) =>
+                                setDeploymentSeed((current) => ({
+                                  ...current,
+                                  repository: {
+                                    ...current.repository,
+                                    backend_path: event.target.value
+                                  }
+                                }))
+                              }
+                            />
+                          </Grid>
+                          <Grid item xs={12} md={6}>
+                            <TextField
+                              fullWidth
+                              select
+                              label="Deploy Target"
+                              value={deploymentSeed.deploy_target}
+                              onChange={(event) =>
+                                setDeploymentSeed((current) => ({
+                                  ...current,
+                                  deploy_target: event.target.value as NoodleDesignerDeployment["deploy_target"]
+                                }))
+                              }
+                            >
+                              <MenuItem value="local_docker">local_docker</MenuItem>
+                              <MenuItem value="kubernetes">kubernetes</MenuItem>
+                              <MenuItem value="airflow_worker">airflow_worker</MenuItem>
+                              <MenuItem value="worker_runtime">worker_runtime</MenuItem>
+                              <MenuItem value="custom">custom</MenuItem>
+                            </TextField>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <TextField
+                              fullWidth
+                              label="Workflow Ref"
+                              value={deploymentSeed.repository.workflow_ref}
+                              onChange={(event) =>
+                                setDeploymentSeed((current) => ({
+                                  ...current,
+                                  repository: {
+                                    ...current.repository,
+                                    workflow_ref: event.target.value
+                                  }
+                                }))
+                              }
+                            />
+                          </Grid>
+                        </Grid>
+                      </Stack>
+                      <Divider />
+                      <Stack spacing={1.5}>
+                        <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
+                          <Box>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Source Systems</Typography>
+                            <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                              Model every upstream system explicitly. GitHub is available here as a first-class source kind and will seed the designer with a GitHub connection.
+                            </Typography>
+                          </Box>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="outlined"
+                              sx={noodleSecondaryButtonSx}
+                              onClick={() =>
+                                setIntent((current) => ({
+                                  ...current,
+                                  sources: [...current.sources, buildSourceDraft("github")]
+                                }))
+                              }
+                            >
+                              Add GitHub Source
+                            </Button>
+                            <Button
+                              variant="outlined"
+                              sx={noodleSecondaryButtonSx}
+                              onClick={() =>
+                                setIntent((current) => ({
+                                  ...current,
+                                  sources: [...current.sources, buildSourceDraft()]
+                                }))
+                              }
+                            >
+                              Add Source
+                            </Button>
+                          </Stack>
+                        </Stack>
+                        {intent.sources.map((source, index) => (
+                          <Box key={`${source.name}-${index}`} sx={{ p: 2, borderRadius: 3, border: "1px solid var(--line)", bgcolor: "#f8fbff" }}>
+                            <Stack spacing={1.5}>
+                              <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
+                                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                  Source {index + 1}
+                                </Typography>
+                                {intent.sources.length > 1 ? (
+                                  <Button
+                                    color="error"
+                                    onClick={() =>
+                                      setIntent((current) => ({
+                                        ...current,
+                                        sources: current.sources.filter((_, sourceIndex) => sourceIndex !== index)
+                                      }))
+                                    }
+                                  >
+                                    Remove
+                                  </Button>
+                                ) : null}
+                              </Stack>
+                              <Grid container spacing={2}>
+                                <Grid item xs={12} md={6}>
+                                  <TextField
+                                    fullWidth
+                                    label="Source Name"
+                                    value={source.name}
+                                    onChange={(event) =>
+                                      setIntent((current) => ({
+                                        ...current,
+                                        sources: current.sources.map((item, sourceIndex) =>
+                                          sourceIndex === index ? { ...item, name: event.target.value } : item
+                                        )
+                                      }))
+                                    }
+                                  />
+                                </Grid>
+                                <Grid item xs={12} md={6}>
+                                  <TextField
+                                    select
+                                    fullWidth
+                                    label="Source Kind"
+                                    value={source.kind}
+                                    onChange={(event) =>
+                                      setIntent((current) => ({
+                                        ...current,
+                                        sources: current.sources.map((item, sourceIndex) =>
+                                          sourceIndex === index
+                                            ? normalizeSourceByKind(item, event.target.value as NoodleSourceKind)
+                                            : item
+                                        )
+                                      }))
+                                    }
+                                    helperText={
+                                      source.kind === "github"
+                                        ? "GitHub sources are modeled as SaaS event and metadata feeds."
+                                        : "Choose the connector family the planner should map to."
+                                    }
+                                  >
+                                    {sourceKindOptions.map((option) => (
+                                      <MenuItem key={option} value={option}>
+                                        {titleize(option)}
+                                      </MenuItem>
+                                    ))}
+                                  </TextField>
+                                </Grid>
+                                <Grid item xs={12} md={6}>
+                                  <TextField
+                                    select
+                                    fullWidth
+                                    label="Environment"
+                                    value={source.environment}
+                                    onChange={(event) =>
+                                      setIntent((current) => ({
+                                        ...current,
+                                        sources: current.sources.map((item, sourceIndex) =>
+                                          sourceIndex === index
+                                            ? { ...item, environment: event.target.value as NoodleSourceEnvironment }
+                                            : item
+                                        )
+                                      }))
+                                    }
+                                    disabled={source.kind === "github"}
+                                  >
+                                    {sourceEnvironmentOptions.map((option) => (
+                                      <MenuItem key={option} value={option}>
+                                        {titleize(option)}
+                                      </MenuItem>
+                                    ))}
+                                  </TextField>
+                                </Grid>
+                                <Grid item xs={12} md={6}>
+                                  <TextField
+                                    select
+                                    fullWidth
+                                    label="Change Pattern"
+                                    value={source.change_pattern}
+                                    onChange={(event) =>
+                                      setIntent((current) => ({
+                                        ...current,
+                                        sources: current.sources.map((item, sourceIndex) =>
+                                          sourceIndex === index
+                                            ? { ...item, change_pattern: event.target.value as NoodleChangePattern }
+                                            : item
+                                        )
+                                      }))
+                                    }
+                                    disabled={source.kind === "github"}
+                                  >
+                                    {changePatternOptions.map((option) => (
+                                      <MenuItem key={option} value={option}>
+                                        {titleize(option)}
+                                      </MenuItem>
+                                    ))}
+                                  </TextField>
+                                </Grid>
+                                <Grid item xs={12}>
+                                  <TextField
+                                    fullWidth
+                                    label="Format Hint"
+                                    value={source.format_hint}
+                                    onChange={(event) =>
+                                      setIntent((current) => ({
+                                        ...current,
+                                        sources: current.sources.map((item, sourceIndex) =>
+                                          sourceIndex === index ? { ...item, format_hint: event.target.value } : item
+                                        )
+                                      }))
+                                    }
+                                    helperText={
+                                      source.kind === "github"
+                                        ? "Use this to describe the GitHub API shape you want to ingest, for example webhooks, commits, pull requests, or issues."
+                                        : "Use a short source descriptor like protobuf telemetry, postgres tables, or json events."
+                                    }
+                                  />
+                                </Grid>
+                              </Grid>
+                            </Stack>
+                          </Box>
+                        ))}
+                      </Stack>
                       <TextField
                         select
                         label="Saved architecture"

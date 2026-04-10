@@ -6,6 +6,7 @@ from functools import lru_cache
 from uuid import uuid4
 
 from app.noodle.repository import NoodlePipelineRepository
+from app.noodle.runtime import NoodlePipelineRuntimeService
 from app.noodle.schemas import (
     NoodleDesignerCachedOutput,
     DesignerOrchestrationMode,
@@ -250,8 +251,13 @@ def _select_run_units(
 
 
 class NoodlePipelineControlPlaneService:
-    def __init__(self, repository: NoodlePipelineRepository | None = None) -> None:
+    def __init__(
+        self,
+        repository: NoodlePipelineRepository | None = None,
+        runtime: NoodlePipelineRuntimeService | None = None,
+    ) -> None:
         self.repository = repository or NoodlePipelineRepository()
+        self.runtime = runtime or NoodlePipelineRuntimeService()
 
     def list_pipelines(self) -> list[NoodlePipelineDocument]:
         return self.repository.list_pipelines()
@@ -304,6 +310,7 @@ class NoodlePipelineControlPlaneService:
             if request.test_node_id
             else f"{_titleize(request.trigger)} Soup Scheduler {orchestration_mode} run"
         )
+        run_id = f"run-{uuid4().hex[:10]}"
         run_status = "failed" if blocking_issue else "cancelled" if conditional_block else "running"
         transformation_logs = _build_transformation_logs(existing.transformations, request.test_node_id)
         cached_outputs = _build_cached_outputs(existing, request.test_node_id)
@@ -318,15 +325,34 @@ class NoodlePipelineControlPlaneService:
             )
             for item in cached_outputs
         ]
+        runtime_result = (
+            self.runtime.execute(existing, run_id, run_started_at, _run_log, request.test_node_id)
+            if not blocking_issue and not conditional_block
+            else None
+        )
+        if runtime_result and runtime_result.executed:
+            run_status = runtime_result.run_status or "success"
+            cached_outputs = runtime_result.cached_outputs
+            cached_output_logs = runtime_result.logs
+            task_runs = [
+                task.model_copy(
+                    update={
+                        "state": runtime_result.task_states.get(task.node_id, "success"),
+                        "started_at": task.started_at or run_started_at,
+                        "finished_at": run_started_at,
+                    }
+                )
+                for task in task_runs
+            ]
         run = NoodleDesignerRun(
-            id=f"run-{uuid4().hex[:10]}",
+            id=run_id,
             label=run_label,
             orchestrator="Soup Scheduler / Apache Airflow",
             status=run_status,
             trigger=request.trigger,
             orchestration_mode=orchestration_mode,
             started_at=run_started_at,
-            finished_at=run_started_at if run_status in {"failed", "cancelled"} else None,
+            finished_at=run_started_at if run_status in {"failed", "cancelled", "success"} else None,
             task_runs=task_runs,
             logs=(
                 [
@@ -339,6 +365,21 @@ class NoodlePipelineControlPlaneService:
                 ]
                 + transformation_logs
                 + cached_output_logs
+                + (
+                    [
+                        _run_log(
+                            "info",
+                            (
+                                f"Deployment contract points to {existing.deployment.repository.provider} repo "
+                                f"'{existing.deployment.repository.repository or existing.deployment.repository.connection_id or 'unconfigured'}' "
+                                f"branch '{existing.deployment.repository.branch}' for "
+                                f"{existing.deployment.deploy_target}."
+                            ),
+                        )
+                    ]
+                    if existing.deployment.enabled
+                    else []
+                )
                 + [
                     _run_log(
                         "warn",
@@ -346,6 +387,8 @@ class NoodlePipelineControlPlaneService:
                         if blocking_issue
                     else "Run paused because the IF condition did not pass."
                     if conditional_block
+                    else "Run completed and dumped output artifacts from configured source connections."
+                    if runtime_result and runtime_result.executed
                     else "Downstream tasks are waiting for upstream success before scheduling.",
                     )
                 ]

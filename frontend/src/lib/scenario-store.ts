@@ -1,6 +1,7 @@
 import type {
   NoodleArchitectureOverview,
   NoodleArchitecturePrinciple,
+  NoodleDesignerDeployment,
   NoodleSchedulerPlan,
   NoodlePipelineDesignerDocument,
   NoodleOrchestratorPlan,
@@ -67,6 +68,7 @@ export interface PendingNoodleDesignerSession {
   design_principles?: NoodleArchitecturePrinciple[];
   saved_architecture?: SavedArchitectureDraft | null;
   agent_momo_brief?: string | null;
+  deployment_seed?: NoodleDesignerDeployment | null;
   pipeline_document?: NoodlePipelineDesignerDocument | null;
   orchestrator_plan?: NoodleOrchestratorPlan | null;
   opened_at: string;

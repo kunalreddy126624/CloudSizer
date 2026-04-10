@@ -64,6 +64,7 @@ import type {
   NoodleArchitecturePrinciple,
   NoodleDesignerCachedOutput,
   NoodleDesignerConnectionRef,
+  NoodleDesignerDeployment,
   NoodleDesignerDocumentStatus,
   NoodleDesignerEdge,
   NoodleDesignerLogLevel,
@@ -80,6 +81,7 @@ import type {
   NoodleDesignerTransformationMode,
   NoodleDesignerValidation,
   NoodlePipelineDesignerDocument,
+  NoodleSourceKind,
   NoodleSourceSystem
 } from "@/lib/types";
 
@@ -92,6 +94,7 @@ interface NoodlePipelineDesignerProps {
   designPrinciples?: NoodleArchitecturePrinciple[];
   savedArchitecture?: SavedArchitectureDraft | null;
   agentMomoBrief?: string | null;
+  deploymentSeed?: NoodleDesignerDeployment | null;
   seedDocument?: NoodlePipelineDesignerDocument | null;
   plannedOrchestratorPlan?: NoodleOrchestratorPlan | null;
 }
@@ -113,6 +116,13 @@ interface DesignerNotice {
   id: string;
   severity: "success" | "info" | "warning" | "error";
   message: string;
+}
+
+interface MomoTransformationSuggestion {
+  transformation: NoodleDesignerTransformation;
+  targetNodeId: string;
+  targetNodeLabel: string;
+  replacesExisting: boolean;
 }
 
 const NODE_LIBRARY: Array<{ kind: NoodleDesignerNodeKind; label: string; description: string }> = [
@@ -153,7 +163,47 @@ const CANVAS_HEIGHT = 720;
 const RUN_TABS = ["builder", "runs"] as const;
 const LOG_LEVELS: Array<NoodleDesignerLogLevel | "all"> = ["all", "log", "info", "warn"];
 const PANEL_FOCUS = ["repository", "canvas", "momo"] as const;
-const REPOSITORY_SECTIONS = ["palette", "connections", "metadata", "schemas", "transformations", "spec"] as const;
+const REPOSITORY_SECTIONS = ["palette", "connections", "deployment", "metadata", "schemas", "transformations", "spec"] as const;
+const CONNECTION_PLUGIN_OPTIONS = [
+  "api-plugin",
+  "database-plugin",
+  "postgres-plugin",
+  "postgresql-plugin",
+  "mysql-plugin",
+  "mariadb-plugin",
+  "sqlserver-plugin",
+  "azure-sql-plugin",
+  "oracle-plugin",
+  "snowflake-plugin",
+  "s3-plugin",
+  "azure-blob-plugin",
+  "gcs-plugin",
+  "stream-plugin",
+  "file-plugin",
+  "iot-plugin",
+  "saas-plugin",
+  "github-plugin",
+  "custom-plugin"
+] as const;
+type ConnectionTemplate = {
+  environment: string;
+  authRef: string;
+  notes: string;
+  params: NoodleDesignerParam[];
+};
+const DEPLOYMENT_TARGET_OPTIONS: NoodleDesignerDeployment["deploy_target"][] = [
+  "local_docker",
+  "kubernetes",
+  "airflow_worker",
+  "worker_runtime",
+  "custom"
+];
+const DEPLOYMENT_PROVIDER_OPTIONS: NoodleDesignerDeployment["repository"]["provider"][] = [
+  "github",
+  "gitlab",
+  "bitbucket",
+  "custom"
+];
 const noodleButtonBaseSx = {
   borderRadius: 999,
   px: 2,
@@ -293,6 +343,245 @@ function defaultParamsForKind(kind: NoodleDesignerNodeKind): NoodleDesignerParam
   }
 }
 
+function cloneConnectionParams(params: NoodleDesignerParam[]) {
+  return params.map((param) => ({ ...param }));
+}
+
+function buildConnectionTemplate(
+  environment: string,
+  authRef: string,
+  notes: string,
+  params: Array<[key: string, value: string]>
+): ConnectionTemplate {
+  return {
+    environment,
+    authRef,
+    notes,
+    params: params.map(([key, value]) => ({ key, value }))
+  };
+}
+
+const CONNECTION_PLUGIN_TEMPLATES: Record<string, ConnectionTemplate> = {
+  "database-plugin": buildConnectionTemplate(
+    "on_prem",
+    "",
+    "Generic relational source. Set db_kind to postgres, mysql, sqlserver, azure_sql, oracle, or snowflake.",
+    [
+      ["db_kind", "postgresql"],
+      ["host", "localhost"],
+      ["port", "5432"],
+      ["database", "app"],
+      ["username", "app_user"],
+      ["password", "secret"]
+    ]
+  ),
+  "postgres-plugin": buildConnectionTemplate(
+    "on_prem",
+    "postgresql://user:password@localhost:5432/app",
+    "PostgreSQL source connection. Use either the DSN in auth_ref or the structured params below.",
+    [
+      ["host", "localhost"],
+      ["port", "5432"],
+      ["database", "app"],
+      ["username", "postgres"],
+      ["password", "secret"],
+      ["sslmode", "prefer"]
+    ]
+  ),
+  "postgresql-plugin": buildConnectionTemplate(
+    "on_prem",
+    "postgresql://user:password@localhost:5432/app",
+    "PostgreSQL source connection. Use either the DSN in auth_ref or the structured params below.",
+    [
+      ["host", "localhost"],
+      ["port", "5432"],
+      ["database", "app"],
+      ["username", "postgres"],
+      ["password", "secret"],
+      ["sslmode", "prefer"]
+    ]
+  ),
+  "mysql-plugin": buildConnectionTemplate(
+    "on_prem",
+    "mysql://user:password@localhost:3306/app",
+    "MySQL source connection using URI or structured params.",
+    [
+      ["host", "localhost"],
+      ["port", "3306"],
+      ["database", "app"],
+      ["username", "mysql"],
+      ["password", "secret"],
+      ["charset", "utf8mb4"]
+    ]
+  ),
+  "mariadb-plugin": buildConnectionTemplate(
+    "on_prem",
+    "mariadb://user:password@localhost:3306/app",
+    "MariaDB source connection using URI or structured params.",
+    [
+      ["host", "localhost"],
+      ["port", "3306"],
+      ["database", "app"],
+      ["username", "mariadb"],
+      ["password", "secret"],
+      ["charset", "utf8mb4"]
+    ]
+  ),
+  "sqlserver-plugin": buildConnectionTemplate(
+    "on_prem",
+    "",
+    "SQL Server source connection. Use an ODBC connection string in auth_ref or the fields below.",
+    [
+      ["host", "localhost"],
+      ["port", "1433"],
+      ["database", "app"],
+      ["username", "sa"],
+      ["password", "secret"],
+      ["driver", "ODBC Driver 18 for SQL Server"],
+      ["encrypt", "false"],
+      ["trust_server_certificate", "true"]
+    ]
+  ),
+  "azure-sql-plugin": buildConnectionTemplate(
+    "azure",
+    "",
+    "Azure SQL source connection. Use an ODBC connection string in auth_ref or the fields below.",
+    [
+      ["host", "demo-server.database.windows.net"],
+      ["port", "1433"],
+      ["database", "app"],
+      ["username", "demo_user"],
+      ["password", "secret"],
+      ["driver", "ODBC Driver 18 for SQL Server"],
+      ["encrypt", "true"],
+      ["trust_server_certificate", "false"]
+    ]
+  ),
+  "oracle-plugin": buildConnectionTemplate(
+    "on_prem",
+    "",
+    "Oracle source connection. Use a DSN in auth_ref or set host, port, service_name, and credentials.",
+    [
+      ["host", "localhost"],
+      ["port", "1521"],
+      ["service_name", "FREEPDB1"],
+      ["username", "system"],
+      ["password", "secret"]
+    ]
+  ),
+  "snowflake-plugin": buildConnectionTemplate(
+    "cloud",
+    "",
+    "Snowflake connection. The same connection ref can be used for source reads or sink writes.",
+    [
+      ["account", "demo-account"],
+      ["user", "demo-user"],
+      ["password", "secret"],
+      ["warehouse", "DEMO_WH"],
+      ["database", "RAW"],
+      ["schema", "PUBLIC"],
+      ["role", "SYSADMIN"]
+    ]
+  ),
+  "s3-plugin": buildConnectionTemplate(
+    "aws",
+    "",
+    "S3 source connection. Store AWS credentials here or rely on the local environment.",
+    [
+      ["region_name", "us-east-1"],
+      ["aws_access_key_id", ""],
+      ["aws_secret_access_key", ""],
+      ["aws_session_token", ""]
+    ]
+  ),
+  "azure-blob-plugin": buildConnectionTemplate(
+    "azure",
+    "UseDevelopmentStorage=true",
+    "Azure Blob source connection. Put the connection string in auth_ref or set structured client settings.",
+    [
+      ["account_url", ""],
+      ["credential", ""]
+    ]
+  ),
+  "gcs-plugin": buildConnectionTemplate(
+    "gcp",
+    "file://path/to/service-account.json",
+    "GCS source connection. Use a service-account JSON file path in auth_ref or structured client settings.",
+    [
+      ["project", ""]
+    ]
+  ),
+  "github-plugin": buildConnectionTemplate(
+    "saas",
+    "github-token-or-file://path/to/github-export.jsonl",
+    "GitHub App token, personal access token, or local export path for repositories, issues, pull requests, and webhook events.",
+    [
+      ["owner", ""],
+      ["repository", ""],
+      ["branch", "main"]
+    ]
+  ),
+  "custom-plugin": buildConnectionTemplate(
+    "cloud",
+    "secret-ref",
+    "Plugin-backed connection reference.",
+    [
+      ["key", "value"]
+    ]
+  )
+};
+
+function connectionTemplateForPlugin(plugin: string): ConnectionTemplate | null {
+  return CONNECTION_PLUGIN_TEMPLATES[plugin] ?? null;
+}
+
+function authRefHelperTextForPlugin(plugin: string) {
+  const template = connectionTemplateForPlugin(plugin);
+  if (template) {
+    return template.notes;
+  }
+  return "Use a secret reference, token handle, DSN, or local file path.";
+}
+
+function connectionParameterHelpText(plugin: string) {
+  switch (plugin) {
+    case "database-plugin":
+      return "Set db_kind plus the host, port, database, username, and password needed for the chosen relational source.";
+    case "snowflake-plugin":
+      return "Snowflake typically needs account, user, password, warehouse, database, schema, and optionally role.";
+    case "sqlserver-plugin":
+    case "azure-sql-plugin":
+      return "SQL Server family connections usually need host, port, database, username, password, driver, and TLS settings.";
+    case "oracle-plugin":
+      return "Oracle typically needs host, port, service_name or sid, plus username and password.";
+    default:
+      return "These key/value pairs travel with the pipeline spec and are merged into the runtime adapter config.";
+  }
+}
+
+function applyConnectionTemplate(
+  connection: NoodleDesignerConnectionRef,
+  plugin: string,
+  mode: "fill" | "replace" = "fill"
+): NoodleDesignerConnectionRef {
+  const template = connectionTemplateForPlugin(plugin);
+  if (!template) {
+    return { ...connection, plugin };
+  }
+  const shouldReplace = mode === "replace";
+  return {
+    ...connection,
+    plugin,
+    environment: shouldReplace || !connection.environment ? template.environment : connection.environment,
+    auth_ref: shouldReplace || !connection.auth_ref ? template.authRef : connection.auth_ref,
+    notes: shouldReplace || !connection.notes ? template.notes : connection.notes,
+    params:
+      shouldReplace || !connection.params.length
+        ? cloneConnectionParams(template.params)
+        : connection.params
+  };
+}
+
 function createDesignerNode(
   kind: NoodleDesignerNodeKind,
   position: { x: number; y: number },
@@ -307,37 +596,155 @@ function createDesignerNode(
   };
 }
 
-function createConnectionRefFromSource(source: NoodleSourceSystem): NoodleDesignerConnectionRef {
+function buildConnectionRef(
+  kind: NoodleSourceKind | "custom",
+  sourceName?: string
+): NoodleDesignerConnectionRef {
+  const normalizedName = sourceName?.trim() || kind;
+  const plugin =
+    kind === "github"
+      ? "github-plugin"
+      : kind === "database"
+        ? "database-plugin"
+        : kind === "custom"
+          ? "custom-plugin"
+          : `${kind}-plugin`;
+  const template = connectionTemplateForPlugin(plugin);
   return {
     id: createId("connection"),
-    name: `${source.name}-connection`,
-    plugin: `${source.kind}-plugin`,
-    environment: source.environment,
-    auth_ref: `${source.name}-secret`,
-    notes: `${titleize(source.kind)} plugin for ${source.name}.`
+    name: kind === "custom" ? "new-connection" : `${normalizedName}-connection`,
+    plugin,
+    environment: template?.environment ?? (kind === "saas" ? "saas" : kind === "iot" ? "edge" : "on_prem"),
+    auth_ref: template?.authRef ?? `${normalizedName}-secret`,
+    params: cloneConnectionParams(template?.params ?? []),
+    notes: template?.notes ?? `${titleize(kind)} plugin for ${normalizedName}.`
   };
 }
 
+function createConnectionRefFromSource(source: NoodleSourceSystem): NoodleDesignerConnectionRef {
+  return buildConnectionRef(source.kind, source.name);
+}
+
+function createDefaultDeployment(intentName: string, connectionRefs: NoodleDesignerConnectionRef[]): NoodleDesignerDeployment {
+  const githubConnection = connectionRefs.find((item) => item.plugin === "github-plugin") ?? null;
+  return {
+    enabled: Boolean(githubConnection),
+    deploy_target: "local_docker",
+    repository: {
+      provider: "github",
+      connection_id: githubConnection?.id ?? null,
+      repository: githubConnection ? `your-org/${intentName}` : "",
+      branch: "main",
+      backend_path: "app",
+      workflow_ref: ".github/workflows/deploy.yml"
+    },
+    build_command: "docker build -t noodle-pipeline-backend .",
+    deploy_command: "docker compose up -d --build",
+    artifact_name: `${intentName.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-backend`,
+    notes: "Store backend deployment settings here when this pipeline is backed by a Git repository."
+  };
+}
+
+function mergeDeploymentSeed(
+  base: NoodleDesignerDeployment,
+  deploymentSeed?: NoodleDesignerDeployment | null
+): NoodleDesignerDeployment {
+  if (!deploymentSeed) {
+    return base;
+  }
+
+  return {
+    ...base,
+    ...deploymentSeed,
+    repository: {
+      ...base.repository,
+      ...deploymentSeed.repository
+    }
+  };
+}
+
+function createSchemaFieldsForSource(source: NoodleSourceSystem): NoodleDesignerSchema["fields"] {
+  return [
+    {
+      id: createId("field"),
+      name: "repository",
+      type: "string",
+      nullable: false,
+      description: "GitHub repository full name."
+    },
+    {
+      id: createId("field"),
+      name: "event_type",
+      type: "string",
+      nullable: false,
+      description: "Webhook event type or GitHub object family."
+    },
+    {
+      id: createId("field"),
+      name: "actor_login",
+      type: "string",
+      nullable: true,
+      description: "GitHub user or app that produced the event."
+    },
+    {
+      id: createId("field"),
+      name: "commit_sha",
+      type: "string",
+      nullable: true,
+      description: "Commit SHA when the event relates to code changes."
+    },
+    {
+      id: createId("field"),
+      name: "payload",
+      type: source.format_hint || "github json",
+      nullable: false,
+      description: "Raw GitHub event or API payload."
+    }
+  ];
+}
+
 function createSchemaFromSource(source: NoodleSourceSystem, connectionId?: string): NoodleDesignerSchema {
+  const fields =
+    source.kind === "github"
+      ? createSchemaFieldsForSource(source)
+      : [
+          {
+            id: createId("field"),
+            name: "event_time",
+            type: "timestamp",
+            nullable: false,
+            description: "Primary ingestion event timestamp."
+          },
+          {
+            id: createId("field"),
+            name: "payload",
+            type: source.format_hint || "json",
+            nullable: false,
+            description: "Raw source payload."
+          }
+        ];
   return {
     id: createId("schema"),
     name: `${source.name}_schema`,
     source_connection_id: connectionId ?? null,
-    fields: [
-      {
-        id: createId("field"),
-        name: "event_time",
-        type: "timestamp",
-        nullable: false,
-        description: "Primary ingestion event timestamp."
-      },
-      {
-        id: createId("field"),
-        name: "payload",
-        type: source.format_hint || "json",
-        nullable: false,
-        description: "Raw source payload."
-      }
+    fields
+  };
+}
+
+function createSourceDesignerNode(
+  source: NoodleSourceSystem,
+  position: { x: number; y: number },
+  connectionId: string
+): NoodleDesignerNode {
+  const node = createDesignerNode("source", position, source.name.replaceAll("_", " "));
+  return {
+    ...node,
+    params: [
+      { key: "plugin", value: `${source.kind}-plugin` },
+      { key: "connection_ref", value: connectionId },
+      { key: "format", value: source.kind === "github" ? "jsonl" : "jsonl" },
+      { key: "change_pattern", value: source.change_pattern },
+      { key: "source_kind", value: source.kind }
     ]
   };
 }
@@ -811,17 +1218,19 @@ function buildSeedDocument(
   intentName: string,
   sources: NoodleSourceSystem[],
   workflowTemplate?: string | null,
+  deploymentSeed?: NoodleDesignerDeployment | null,
   plannedOrchestratorPlan?: NoodleOrchestratorPlan | null
 ): NoodlePipelineDesignerDocument {
+  const connectionRefs = sources.map((source) => createConnectionRefFromSource(source));
+  const deployment = mergeDeploymentSeed(createDefaultDeployment(intentName, connectionRefs), deploymentSeed);
   const sourceNodes = sources.map((source, index) =>
-    createDesignerNode("source", { x: 40, y: 70 + index * 130 }, source.name.replaceAll("_", " "))
+    createSourceDesignerNode(source, { x: 40, y: 70 + index * 130 }, connectionRefs[index]?.id ?? "source-connection")
   );
   const ingestNode = createDesignerNode("ingest", { x: 320, y: 130 }, "Landing ingest");
   const transformNode = createDesignerNode("transform", { x: 620, y: 130 }, "Curate transforms");
   const cacheNode = createDesignerNode("cache", { x: 920, y: 130 }, "Cache transform output");
   const qualityNode = createDesignerNode("quality", { x: 1220, y: 130 }, "Quality gate");
   const serveNode = createDesignerNode("serve", { x: 1520, y: 130 }, "Serve outputs");
-  const connectionRefs = sources.map((source) => createConnectionRefFromSource(source));
   const transformations = [createTransformationForNode(transformNode, 1)];
   const nodes = [...sourceNodes, ingestNode, transformNode, cacheNode, qualityNode, serveNode];
   const edges = [
@@ -860,6 +1269,7 @@ function buildSeedDocument(
     ],
     schemas: sources.map((source, index) => createSchemaFromSource(source, connectionRefs[index]?.id)),
     transformations,
+    deployment,
     orchestrator_plan: createOrchestratorPlan(intentName, DEFAULT_SCHEDULE.trigger, workflowTemplate, nodes, plannedOrchestratorPlan),
     schedule: DEFAULT_SCHEDULE,
     runs: createSeedRuns(nodes, edges, transformations),
@@ -872,9 +1282,10 @@ function normalizeDocument(
   intentName: string,
   sources: NoodleSourceSystem[],
   workflowTemplate?: string | null,
+  deploymentSeed?: NoodleDesignerDeployment | null,
   plannedOrchestratorPlan?: NoodleOrchestratorPlan | null
 ): NoodlePipelineDesignerDocument {
-  const seed = buildSeedDocument(intentName, sources, workflowTemplate, plannedOrchestratorPlan);
+  const seed = buildSeedDocument(intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan);
   if (!document) {
     return seed;
   }
@@ -882,13 +1293,17 @@ function normalizeDocument(
   return {
     ...seed,
     ...document,
-    connection_refs: document.connection_refs ?? seed.connection_refs,
+    connection_refs: (document.connection_refs ?? seed.connection_refs).map((connection) => ({
+      ...connection,
+      params: connection.params ?? []
+    })),
     metadata_assets: document.metadata_assets ?? seed.metadata_assets,
     schemas: document.schemas ?? seed.schemas,
     transformations: synchronizeTransformations(
       document.nodes ?? seed.nodes,
       document.transformations ?? seed.transformations
     ),
+    deployment: document.deployment ?? seed.deployment,
     orchestrator_plan: createOrchestratorPlan(
       document.name ?? seed.name,
       document.schedule?.trigger ?? seed.schedule.trigger,
@@ -1014,6 +1429,29 @@ function validateDocument(document: NoodlePipelineDesignerDocument): NoodleDesig
   if (!document.orchestrator_plan.tasks.length) {
     validations.push({ id: "task-plan", level: "warning", message: "No orchestrator task plan is defined yet." });
   }
+  if (document.deployment.enabled) {
+    if (!document.deployment.repository.repository.trim() && !document.deployment.repository.connection_id?.trim()) {
+      validations.push({
+        id: "deployment-repository",
+        level: "error",
+        message: "Deployment is enabled, but no Git repository or Git connection is configured."
+      });
+    }
+    if (!document.deployment.build_command.trim()) {
+      validations.push({
+        id: "deployment-build",
+        level: "warning",
+        message: "Deployment is enabled, but the backend build command is empty."
+      });
+    }
+    if (!document.deployment.deploy_command.trim()) {
+      validations.push({
+        id: "deployment-deploy",
+        level: "warning",
+        message: "Deployment is enabled, but the deploy command is empty."
+      });
+    }
+  }
   if (document.schedule.trigger === "schedule" && !document.schedule.cron.trim()) {
     validations.push({ id: "schedule", level: "error", message: "Scheduled pipelines require a cron expression." });
   }
@@ -1079,9 +1517,311 @@ function buildMomoWelcome(
   return `${overviewText} ${principlesText} ${architectureText}${agentMomoBrief ? ` ${agentMomoBrief}` : ""}`;
 }
 
+function inferTransformationMode(
+  prompt: string,
+  existingTransformation?: NoodleDesignerTransformation | null
+): NoodleDesignerTransformationMode {
+  const lowerPrompt = prompt.toLowerCase();
+  if (lowerPrompt.includes("dbt")) {
+    return "dbt";
+  }
+  if (lowerPrompt.includes("spark")) {
+    return "spark_sql";
+  }
+  if (lowerPrompt.includes("sql")) {
+    return "sql";
+  }
+  return existingTransformation?.mode ?? "python";
+}
+
+function buildSuggestedTransformationCode(
+  label: string,
+  mode: NoodleDesignerTransformationMode,
+  prompt: string
+): string {
+  const lowerPrompt = prompt.toLowerCase();
+  if (mode === "sql" || mode === "spark_sql") {
+    if (lowerPrompt.includes("dedup")) {
+      return [
+        `-- ${label}`,
+        "WITH ranked_source AS (",
+        "  SELECT",
+        "    *,",
+        "    ROW_NUMBER() OVER (PARTITION BY business_key ORDER BY event_time DESC) AS row_rank",
+        "  FROM source_table",
+        ")",
+        "SELECT *",
+        "FROM ranked_source",
+        "WHERE row_rank = 1;"
+      ].join("\n");
+    }
+    if (lowerPrompt.includes("filter") || lowerPrompt.includes("active")) {
+      return [
+        `-- ${label}`,
+        "SELECT",
+        "  *",
+        "FROM source_table",
+        "WHERE event_time >= CURRENT_DATE - INTERVAL '1 day'",
+        "  AND COALESCE(status, 'unknown') <> 'deleted';"
+      ].join("\n");
+    }
+    return [
+      `-- ${label}`,
+      "SELECT",
+      "  business_key,",
+      "  event_time,",
+      "  UPPER(TRIM(source_name)) AS source_name,",
+      "  payload",
+      "FROM source_table",
+      "WHERE event_time IS NOT NULL;"
+    ].join("\n");
+  }
+
+  if (mode === "dbt") {
+    return [
+      `-- ${label}`,
+      "{{ config(materialized='incremental', unique_key='business_key') }}",
+      "",
+      "with staged as (",
+      "  select *",
+      "  from {{ ref('source_table') }}",
+      "  where event_time is not null",
+      ")",
+      "",
+      "select",
+      "  business_key,",
+      "  event_time,",
+      "  upper(trim(source_name)) as source_name,",
+      "  payload",
+      "from staged"
+    ].join("\n");
+  }
+
+  if (lowerPrompt.includes("dedup")) {
+    return [
+      `# ${label}`,
+      "def transform(records: list[dict]) -> list[dict]:",
+      "    deduped: dict[str, dict] = {}",
+      "    for record in records:",
+      "        business_key = str(record.get('business_key') or '').strip()",
+      "        if not business_key:",
+      "            continue",
+      "        current = deduped.get(business_key)",
+      "        if current is None or str(record.get('event_time', '')) > str(current.get('event_time', '')):",
+      "            deduped[business_key] = {**record, 'source_name': str(record.get('source_name', '')).strip().upper()}",
+      "    return list(deduped.values())"
+    ].join("\n");
+  }
+
+  if (lowerPrompt.includes("filter") || lowerPrompt.includes("active")) {
+    return [
+      `# ${label}`,
+      "def transform(records: list[dict]) -> list[dict]:",
+      "    output: list[dict] = []",
+      "    for record in records:",
+      "        if not record.get('event_time'):",
+      "            continue",
+      "        status = str(record.get('status', '')).lower()",
+      "        if status == 'deleted':",
+      "            continue",
+      "        output.append({**record, 'source_name': str(record.get('source_name', '')).strip().upper()})",
+      "    return output"
+    ].join("\n");
+  }
+
+  return [
+    `# ${label}`,
+    "def transform(records: list[dict]) -> list[dict]:",
+    "    output: list[dict] = []",
+    "    for record in records:",
+    "        if not record.get('event_time'):",
+    "            continue",
+    "        output.append({",
+    "            **record,",
+    "            'source_name': str(record.get('source_name', '')).strip().upper(),",
+    "            'normalized_at': 'runtime'",
+    "        })",
+    "    return output"
+  ].join("\n");
+}
+
+function buildSuggestedTransformationRecord(
+  node: NoodleDesignerNode,
+  prompt: string,
+  existingTransformation?: NoodleDesignerTransformation | null
+): NoodleDesignerTransformation {
+  const mode = inferTransformationMode(prompt, existingTransformation);
+  return {
+    id: existingTransformation?.id ?? createId("transformation"),
+    node_id: node.id,
+    name: existingTransformation?.name ?? `${node.label} transformation`,
+    plugin: existingTransformation?.plugin ?? "transform-plugin",
+    mode,
+    description:
+      existingTransformation?.description ??
+      `Generated by Agent Momo for ${node.label} from the current pipeline context.`,
+    code: buildSuggestedTransformationCode(node.label, mode, prompt),
+    config_json: JSON.stringify(
+      {
+        entrypoint: mode === "python" ? "transform" : "main",
+        output_zone: "silver",
+        expectations: ["event_time", "business_key"],
+        observability: {
+          lineage: true,
+          metrics: ["rows_in", "rows_out", "latency_ms"]
+        }
+      },
+      null,
+      2
+    ),
+    tags: existingTransformation?.tags?.length ? existingTransformation.tags : ["transform", "momo-generated"]
+  };
+}
+
+function shouldMaterializeTransformation(prompt: string): boolean {
+  const lowerPrompt = prompt.toLowerCase();
+  return (
+    lowerPrompt.includes("create") ||
+    lowerPrompt.includes("generate") ||
+    lowerPrompt.includes("add") ||
+    lowerPrompt.includes("write")
+  ) && (
+    lowerPrompt.includes("transform") ||
+    lowerPrompt.includes("transformation")
+  );
+}
+
+function isTransformationPrompt(prompt: string): boolean {
+  const lowerPrompt = prompt.toLowerCase();
+  return (
+    lowerPrompt.includes("transform") ||
+    lowerPrompt.includes("transformation") ||
+    lowerPrompt.includes("mapping") ||
+    lowerPrompt.includes("rule")
+  );
+}
+
+function buildSourceGuidance(
+  document: NoodlePipelineDesignerDocument,
+  architectureSummary: string
+): string {
+  const sourceNodes = document.nodes.filter((node) => node.kind === "source");
+  return `Source modeling: represent each upstream system as a source node plus a plugin-backed connection ref. Current graph has ${sourceNodes.length} source nodes and ${document.connection_refs.length} stored connections. Keep credentials in connection refs and keep source-specific runtime parameters on the source node only. ${architectureSummary}`;
+}
+
+function buildSchemaGuidance(
+  document: NoodlePipelineDesignerDocument,
+  sourceCount: number,
+  architectureSummary: string
+): string {
+  return `Schema guidance: every source plugin should map to a stored schema entry and a downstream quality gate. This design currently stores ${document.schemas.length} schema definitions for ${sourceCount} source nodes. ${architectureSummary}`;
+}
+
+function buildTransformationGuidance(
+  document: NoodlePipelineDesignerDocument,
+  prompt: string,
+  targetNode: NoodleDesignerNode | null,
+  existingTransformation: NoodleDesignerTransformation | null,
+  transformNodeCount: number,
+  linkedTransformationCount: number,
+  transformationIssues: NoodleDesignerValidation[]
+): string {
+  if (!targetNode) {
+    return [
+      `Transformation guidance: add a transform node first. Current graph has ${transformNodeCount} transform nodes and ${linkedTransformationCount} linked transformation records.`,
+      transformationIssues.length
+        ? `Current transformation issues: ${transformationIssues.map((item) => item.message).join(" | ")}.`
+        : "Current transformation validation is clean."
+    ].join(" ");
+  }
+
+  const suggestion = buildSuggestedTransformationRecord(targetNode, prompt, existingTransformation);
+  return [
+    `Transformation guidance: ${linkedTransformationCount}/${transformNodeCount} transform nodes currently have linked transformation records.`,
+    `Suggested transformation for ${targetNode.label} (${suggestion.mode}):`,
+    "Transformation Code:",
+    "```" + suggestion.mode,
+    suggestion.code,
+    "```",
+    "Config JSON:",
+    "```json",
+    suggestion.config_json,
+    "```",
+    transformationIssues.length
+      ? `Current transformation issues to fix: ${transformationIssues.map((item) => item.message).join(" | ")}.`
+      : "Current transformation validation is clean."
+  ].join(" ");
+}
+
+function buildConnectionGuidance(
+  document: NoodlePipelineDesignerDocument,
+  architectureSummary: string
+): string {
+  return `Connection guidance: treat each external system as a plugin-backed connection reference, not a special case in task code. The repository currently stores ${document.connection_refs.length} connection references. ${architectureSummary}`;
+}
+
+function buildMetadataGuidance(
+  document: NoodlePipelineDesignerDocument,
+  architectureSummary: string
+): string {
+  return `Metadata guidance: persist repository metadata and emit lineage as first-class signals. Right now the repository stores ${document.metadata_assets.length} metadata assets, and you should keep quality and serving nodes wired so lineage remains clear. ${architectureSummary}`;
+}
+
+function buildScheduleGuidance(
+  document: NoodlePipelineDesignerDocument,
+  architectureSummary: string
+): string {
+  return `Scheduler guidance: keep scheduling in the control plane, let Apache Airflow orchestrate the DAG, and version the schedule with the pipeline. Current trigger is ${document.schedule.trigger} with concurrency policy ${document.schedule.concurrency_policy}. ${architectureSummary}`;
+}
+
+function buildDependencyGuidance(
+  document: NoodlePipelineDesignerDocument
+): string {
+  return `Dependency guidance: keep source nodes at the graph edge, land them into ingest, and ensure every downstream node declares only the minimal upstream dependency set. Current graph has ${document.nodes.length} nodes and ${document.edges.length} edges. Cache should observe transformed output, quality should sit after transform or cache, and serve should depend on validated outputs.`;
+}
+
+function buildExecutionGuidance(architectureSummary: string): string {
+  return `Execution-plane guidance: keep retries, worker dispatch, and task states out of the UI layer. Apache Airflow should orchestrate the DAG while workers own pending, queued, running, success, failed, retrying, skipped, and cancelled transitions. ${architectureSummary}`;
+}
+
+function buildBlueprintGuidance(
+  overview: NoodleArchitectureOverview | null | undefined,
+  principleSummary: string,
+  architectureSummary: string,
+  document: NoodlePipelineDesignerDocument,
+  sourceCount: number,
+  targetNode: NoodleDesignerNode | null,
+  existingTransformation: NoodleDesignerTransformation | null,
+  transformNodeCount: number,
+  linkedTransformationCount: number,
+  transformationIssues: NoodleDesignerValidation[],
+  prompt: string
+): string {
+  return [
+    `${overview?.objective ?? "The platform blueprint defines the target control-plane and execution-plane architecture for this designer."}`,
+    `Apply ${principleSummary}.`,
+    buildSourceGuidance(document, architectureSummary),
+    buildMetadataGuidance(document, architectureSummary),
+    buildScheduleGuidance(document, architectureSummary),
+    buildDependencyGuidance(document),
+    buildTransformationGuidance(
+      document,
+      prompt,
+      targetNode,
+      existingTransformation,
+      transformNodeCount,
+      linkedTransformationCount,
+      transformationIssues
+    ),
+    buildSchemaGuidance(document, sourceCount, architectureSummary)
+  ].join(" ");
+}
+
 function buildMomoReply(
   prompt: string,
   document: NoodlePipelineDesignerDocument,
+  selectedNode?: NoodleDesignerNode | null,
+  selectedTransformation?: NoodleDesignerTransformation | null,
   overview?: NoodleArchitectureOverview | null,
   principles: NoodleArchitecturePrinciple[] = [],
   validations: NoodleDesignerValidation[] = [],
@@ -1101,12 +1841,71 @@ function buildMomoReply(
       : savedArchitecture
         ? `Use the saved architecture "${savedArchitecture.name}" as the system reference.`
         : "Use the platform blueprint as the system reference.";
+  const targetNode =
+    selectedNode?.kind === "transform"
+      ? selectedNode
+      : document.nodes.find((node) => node.kind === "transform") ?? null;
+  const existingForNode =
+    selectedTransformation?.node_id === targetNode?.id
+      ? selectedTransformation
+      : targetNode
+        ? document.transformations.find((item) => item.node_id === targetNode.id) ?? null
+        : null;
+  const principleSummary = principles.length
+    ? principles.map((principle) => principle.title).join(", ")
+    : "JSON specs, plugins, versioning, and observability";
+  const sourceTopic = lowerPrompt.includes("source") || lowerPrompt.includes("plugin-backed");
+  const metadataTopic = lowerPrompt.includes("metadata") || lowerPrompt.includes("lineage");
+  const scheduleTopic = lowerPrompt.includes("schedule") || lowerPrompt.includes("cron");
+  const dependencyTopic = lowerPrompt.includes("dependenc") || lowerPrompt.includes("dag") || lowerPrompt.includes("task");
+  const schemaTopic = lowerPrompt.includes("schema");
+  const connectionTopic = lowerPrompt.includes("connection");
+  const transformTopic =
+    lowerPrompt.includes("transform") ||
+    lowerPrompt.includes("transformation") ||
+    lowerPrompt.includes("mapping") ||
+    lowerPrompt.includes("rule");
+  const executionTopic = lowerPrompt.includes("retry") || lowerPrompt.includes("worker") || lowerPrompt.includes("execution");
+  const blueprintTopic = lowerPrompt.includes("blueprint") || lowerPrompt.includes("platform blueprint");
+  const multiTopicCount = [
+    sourceTopic,
+    metadataTopic,
+    scheduleTopic,
+    dependencyTopic,
+    schemaTopic,
+    connectionTopic,
+    transformTopic,
+    executionTopic,
+    blueprintTopic
+  ].filter(Boolean).length;
+  const wantsCompositeGuidance =
+    blueprintTopic ||
+    multiTopicCount > 1 ||
+    lowerPrompt.includes("how should i") ||
+    lowerPrompt.includes("how do i model") ||
+    lowerPrompt.includes("what should i do");
+
+  if (wantsCompositeGuidance) {
+    return buildBlueprintGuidance(
+      overview,
+      principleSummary,
+      architectureSummary,
+      document,
+      sourceCount,
+      targetNode,
+      existingForNode,
+      transformNodeCount,
+      linkedTransformationCount,
+      transformationIssues,
+      prompt
+    );
+  }
 
   if (lowerPrompt.includes("schedule")) {
-    return `Scheduler guidance: keep scheduling in the control plane, let Apache Airflow orchestrate the DAG, and version the schedule with the pipeline. Current trigger is ${document.schedule.trigger} with concurrency policy ${document.schedule.concurrency_policy}. ${architectureSummary}`;
+    return buildScheduleGuidance(document, architectureSummary);
   }
   if (lowerPrompt.includes("schema")) {
-    return `Schema guidance: every source plugin should map to a stored schema entry and quality gate. This design currently stores ${document.schemas.length} schema definitions for ${sourceCount} source nodes. ${architectureSummary}`;
+    return buildSchemaGuidance(document, sourceCount, architectureSummary);
   }
   if (
     lowerPrompt.includes("transform") ||
@@ -1114,30 +1913,25 @@ function buildMomoReply(
     lowerPrompt.includes("mapping") ||
     lowerPrompt.includes("rule")
   ) {
-    return [
-      `Transformation rules: 1) One transform node must have one linked transformation record (current: ${linkedTransformationCount}/${transformNodeCount} linked).`,
-      "2) Keep logic in `Transformation Code` and keep runtime parameters in `Config JSON` only.",
-      "3) Use deterministic, idempotent transforms; avoid side effects or external writes in transformation steps.",
-      "4) Validate config JSON and enforce schema compatibility before publish.",
-      "5) Version transformation changes with the pipeline release and preserve tags for lineage/audit.",
-      transformationIssues.length
-        ? `Current transformation issues to fix: ${transformationIssues.map((item) => item.message).join(" | ")}.`
-        : "Current transformation validation is clean."
-    ].join(" ");
+    return buildTransformationGuidance(
+      document,
+      prompt,
+      targetNode,
+      existingForNode,
+      transformNodeCount,
+      linkedTransformationCount,
+      transformationIssues
+    );
   }
   if (lowerPrompt.includes("connection")) {
-    return `Connection guidance: treat each external system as a plugin-backed connection reference, not a special case in task code. The repository currently stores ${document.connection_refs.length} connection references. ${architectureSummary}`;
+    return buildConnectionGuidance(document, architectureSummary);
   }
   if (lowerPrompt.includes("metadata") || lowerPrompt.includes("lineage")) {
-    return `Metadata guidance: persist repository metadata and emit lineage as first-class signals. Right now the repository stores ${document.metadata_assets.length} metadata assets, and you should keep quality and serving nodes wired so lineage remains clear. ${architectureSummary}`;
+    return buildMetadataGuidance(document, architectureSummary);
   }
   if (lowerPrompt.includes("retry") || lowerPrompt.includes("worker") || lowerPrompt.includes("execution")) {
-    return `Execution-plane guidance: keep retries, worker dispatch, and task states out of the UI layer. Apache Airflow should orchestrate the DAG while workers own pending, queued, running, success, failed, retrying, skipped, and cancelled transitions. ${architectureSummary}`;
+    return buildExecutionGuidance(architectureSummary);
   }
-
-  const principleSummary = principles.length
-    ? principles.map((principle) => principle.title).join(", ")
-    : "JSON specs, plugins, versioning, and observability";
 
   return `${overview?.objective ?? "Design against the Noodle architecture overview."} Apply ${principleSummary}. ${architectureSummary}${agentMomoBrief ? ` ${agentMomoBrief}` : ""} Your graph currently has ${document.nodes.length} nodes and ${document.edges.length} edges.${validationErrors.length ? ` Resolve these blocking issues first: ${validationErrors.map((item) => item.message).join(" | ")}` : " The current graph is publishable from a dependency perspective."}`;
 }
@@ -1207,13 +2001,14 @@ function NoodlePipelineDesignerInner({
   designPrinciples = [],
   savedArchitecture,
   agentMomoBrief,
+  deploymentSeed,
   seedDocument,
   plannedOrchestratorPlan
 }: NoodlePipelineDesignerProps) {
   const [document, setDocument] = useState<NoodlePipelineDesignerDocument>(() =>
     seedDocument
-      ? normalizeDocument(seedDocument, intentName, sources, workflowTemplate, plannedOrchestratorPlan)
-      : buildSeedDocument(intentName, sources, workflowTemplate, plannedOrchestratorPlan)
+      ? normalizeDocument(seedDocument, intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan)
+      : buildSeedDocument(intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan)
   );
   const [savedDocuments, setSavedDocuments] = useState<NoodlePipelineDesignerDocument[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -1227,6 +2022,7 @@ function NoodlePipelineDesignerInner({
   const [repositorySection, setRepositorySection] = useState<(typeof REPOSITORY_SECTIONS)[number]>("palette");
   const [logFilter, setLogFilter] = useState<NoodleDesignerLogLevel | "all">("all");
   const [momoPrompt, setMomoPrompt] = useState("");
+  const [momoSuggestion, setMomoSuggestion] = useState<MomoTransformationSuggestion | null>(null);
   const [rawSpecText, setRawSpecText] = useState("");
   const [rawSpecDirty, setRawSpecDirty] = useState(false);
   const [rawSpecError, setRawSpecError] = useState<string | null>(null);
@@ -1254,18 +2050,18 @@ function NoodlePipelineDesignerInner({
   useEffect(() => {
     const draft = loadNoodlePipelineDraft();
     const history = loadSavedNoodlePipelines().map((entry) =>
-      normalizeDocument(entry, intentName, sources, workflowTemplate, plannedOrchestratorPlan)
+      normalizeDocument(entry, intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan)
     );
     setSavedDocuments(history);
     if (seedDocument) {
-      setDocument(normalizeDocument(seedDocument, intentName, sources, workflowTemplate, plannedOrchestratorPlan));
+      setDocument(normalizeDocument(seedDocument, intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan));
     } else if (!preferIntentSeed && draft) {
-      setDocument(normalizeDocument(draft, intentName, sources, workflowTemplate, plannedOrchestratorPlan));
+      setDocument(normalizeDocument(draft, intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan));
     } else {
-      setDocument(buildSeedDocument(intentName, sources, workflowTemplate, plannedOrchestratorPlan));
+      setDocument(buildSeedDocument(intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan));
     }
     setHydrated(true);
-  }, [intentName, plannedOrchestratorPlan, preferIntentSeed, seedDocument, sources, workflowTemplate]);
+  }, [deploymentSeed, intentName, plannedOrchestratorPlan, preferIntentSeed, seedDocument, sources, workflowTemplate]);
 
   useEffect(() => {
     let active = true;
@@ -1273,7 +2069,7 @@ function NoodlePipelineDesignerInner({
     async function hydrateRemote() {
       try {
         const remoteDocuments = (await listNoodlePipelines()).map((entry) =>
-          normalizeDocument(entry, intentName, sources, workflowTemplate, plannedOrchestratorPlan)
+          normalizeDocument(entry, intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan)
         );
         if (!active || !remoteDocuments.length) {
           return;
@@ -1306,7 +2102,7 @@ function NoodlePipelineDesignerInner({
     return () => {
       active = false;
     };
-  }, [document.id, intentName, plannedOrchestratorPlan, preferIntentSeed, seedDocument, sources, workflowTemplate]);
+  }, [deploymentSeed, document.id, intentName, plannedOrchestratorPlan, preferIntentSeed, seedDocument, sources, workflowTemplate]);
 
   useEffect(() => {
     setMomoMessages([
@@ -1421,9 +2217,9 @@ function NoodlePipelineDesignerInner({
 
   const updateDocument = useCallback((updater: (current: NoodlePipelineDesignerDocument) => NoodlePipelineDesignerDocument) => {
     setDocument((current) =>
-      normalizeDocument(updater(current), intentName, sources, workflowTemplate, plannedOrchestratorPlan)
+      normalizeDocument(updater(current), intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan)
     );
-  }, [intentName, plannedOrchestratorPlan, sources, workflowTemplate]);
+  }, [deploymentSeed, intentName, plannedOrchestratorPlan, sources, workflowTemplate]);
 
   const insertNode = useCallback((kind: NoodleDesignerNodeKind, position?: { x: number; y: number }) => {
     updateDocument((current) => {
@@ -1495,6 +2291,7 @@ function NoodlePipelineDesignerInner({
         intentName,
         sources,
         workflowTemplate,
+        deploymentSeed,
         plannedOrchestratorPlan
       );
       const nextDocuments = mergeSavedNoodlePipelines(savedDocuments, persisted);
@@ -1531,7 +2328,7 @@ function NoodlePipelineDesignerInner({
     } finally {
       setRemoteBusy(false);
     }
-  }, [document, intentName, nextVersion, plannedOrchestratorPlan, savedDocuments, sources, workflowTemplate]);
+  }, [deploymentSeed, document, intentName, nextVersion, plannedOrchestratorPlan, savedDocuments, sources, workflowTemplate]);
 
   const updateSelectedNode = useCallback((updater: (node: NoodleDesignerNode) => NoodleDesignerNode) => {
     if (!selectedNodeId) {
@@ -1609,7 +2406,7 @@ function NoodlePipelineDesignerInner({
   const applyRawSpec = useCallback(() => {
     try {
       const parsed = JSON.parse(rawSpecText) as NoodlePipelineDesignerDocument;
-      const normalized = normalizeDocument(parsed, intentName, sources, workflowTemplate, plannedOrchestratorPlan);
+      const normalized = normalizeDocument(parsed, intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan);
       setDocument(normalized);
       setRawSpecText(JSON.stringify(normalized, null, 2));
       setRawSpecDirty(false);
@@ -1618,7 +2415,7 @@ function NoodlePipelineDesignerInner({
     } catch (error) {
       setRawSpecError(error instanceof Error ? error.message : "Invalid JSON pipeline spec.");
     }
-  }, [intentName, plannedOrchestratorPlan, rawSpecText, sources, workflowTemplate]);
+  }, [deploymentSeed, intentName, plannedOrchestratorPlan, rawSpecText, sources, workflowTemplate]);
 
   const resetRawSpec = useCallback(() => {
     setRawSpecText(JSON.stringify(document, null, 2));
@@ -1796,27 +2593,103 @@ function NoodlePipelineDesignerInner({
     return () => window.removeEventListener("keydown", handleKeyboard);
   }, [deleteSelection, renameNode, selectedEdgeId, selectedNodeId]);
 
+  const applyMomoSuggestion = useCallback(() => {
+    if (!momoSuggestion) {
+      return;
+    }
+
+    updateDocument((current) => {
+      const existingIndex = current.transformations.findIndex((item) => item.node_id === momoSuggestion.targetNodeId);
+      if (existingIndex >= 0) {
+        return {
+          ...current,
+          transformations: current.transformations.map((item, index) =>
+            index === existingIndex ? momoSuggestion.transformation : item
+          )
+        };
+      }
+      return {
+        ...current,
+        transformations: [...current.transformations, momoSuggestion.transformation]
+      };
+    });
+    setSelectedNodeId(momoSuggestion.targetNodeId);
+    setSelectedTransformationId(momoSuggestion.transformation.id);
+    setRepositorySection("transformations");
+    setNotice({
+      id: createId("notice"),
+      severity: "success",
+      message: `${momoSuggestion.targetNodeLabel} transformation was applied from Agent Momo's suggestion.`
+    });
+    setMomoSuggestion(null);
+  }, [momoSuggestion, updateDocument]);
+
   const sendMomoMessage = useCallback(() => {
     if (!momoPrompt.trim()) {
       return;
+    }
+    const targetTransformNode =
+      selectedNode?.kind === "transform"
+        ? selectedNode
+        : document.nodes.find((node) => node.kind === "transform") ?? null;
+    const existingTransformationForNode =
+      selectedNodeTransformation?.node_id === targetTransformNode?.id
+        ? selectedNodeTransformation
+        : targetTransformNode
+          ? document.transformations.find((item) => item.node_id === targetTransformNode.id) ?? null
+          : null;
+    const shouldStageTransformationSuggestion =
+      Boolean(targetTransformNode) &&
+      isTransformationPrompt(momoPrompt) &&
+      shouldMaterializeTransformation(momoPrompt);
+    if (shouldStageTransformationSuggestion && targetTransformNode) {
+      const nextTransformation = buildSuggestedTransformationRecord(
+        targetTransformNode,
+        momoPrompt,
+        existingTransformationForNode
+      );
+      setMomoSuggestion({
+        transformation: nextTransformation,
+        targetNodeId: targetTransformNode.id,
+        targetNodeLabel: targetTransformNode.label,
+        replacesExisting: Boolean(existingTransformationForNode)
+      });
+    } else if (!isTransformationPrompt(momoPrompt)) {
+      setMomoSuggestion(null);
     }
     const userMessage: MomoMessage = { id: createId("momo"), role: "user", content: momoPrompt.trim() };
     const reply: MomoMessage = {
       id: createId("momo"),
       role: "assistant",
-      content: buildMomoReply(
-        momoPrompt,
-        document,
-        architectureOverview,
-        designPrinciples,
-        validations,
-        savedArchitecture,
-        agentMomoBrief
-      )
+      content:
+        buildMomoReply(
+          momoPrompt,
+          document,
+          targetTransformNode,
+          existingTransformationForNode,
+          architectureOverview,
+          designPrinciples,
+          validations,
+          savedArchitecture,
+          agentMomoBrief
+        ) +
+        (shouldStageTransformationSuggestion && targetTransformNode
+          ? ` A suggested transformation for ${targetTransformNode.label} is ready below. Review it and click Apply Suggestion to add it to the pipeline.`
+          : "")
     };
     setMomoMessages((current) => [...current, userMessage, reply]);
     setMomoPrompt("");
-  }, [agentMomoBrief, architectureOverview, designPrinciples, document, momoPrompt, savedArchitecture, validations]);
+  }, [
+    agentMomoBrief,
+    architectureOverview,
+    designPrinciples,
+    document,
+    momoPrompt,
+    savedArchitecture,
+    selectedNode,
+    selectedNodeTransformation,
+    validations
+  ]);
 
   const triggerRun = useCallback(async () => {
     const now = new Date().toISOString();
@@ -1828,7 +2701,7 @@ function NoodlePipelineDesignerInner({
         orchestration_mode: document.schedule.orchestration_mode,
         document
       });
-      const persisted = normalizeDocument(response.pipeline, intentName, sources, workflowTemplate, plannedOrchestratorPlan);
+      const persisted = normalizeDocument(response.pipeline, intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan);
       setDocument(persisted);
       setSavedDocuments((current) => {
         const nextDocuments = mergeSavedNoodlePipelines(current, persisted);
@@ -1893,7 +2766,7 @@ function NoodlePipelineDesignerInner({
     } finally {
       setRemoteBusy(false);
     }
-  }, [document, intentName, plannedOrchestratorPlan, sources, updateDocument, validationErrors, workflowTemplate]);
+  }, [deploymentSeed, document, intentName, plannedOrchestratorPlan, sources, updateDocument, validationErrors, workflowTemplate]);
 
   const filteredLogs = useMemo(
     () => selectedRun?.logs.filter((entry) => (logFilter === "all" ? true : entry.level === logFilter)) ?? [],
@@ -1973,7 +2846,7 @@ function NoodlePipelineDesignerInner({
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                 <Button
                   variant="outlined"
-                  onClick={() => setDocument(buildSeedDocument(intentName, sources, workflowTemplate, plannedOrchestratorPlan))}
+                  onClick={() => setDocument(buildSeedDocument(intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan))}
                   sx={noodleButtonSecondarySx}
                   disabled={remoteBusy}
                 >
@@ -2681,25 +3554,40 @@ function NoodlePipelineDesignerInner({
                   <Divider />
 
                   <Stack spacing={1}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Typography variant="body2" sx={{ fontWeight: 700 }}>Connections</Typography>
-                      <Button
-                        size="small"
-                        onClick={() => {
-                          const nextItem: NoodleDesignerConnectionRef = {
-                            id: createId("connection"),
-                            name: "new-connection",
-                            plugin: "custom-plugin",
-                            environment: "cloud",
-                            auth_ref: "secret-ref",
-                            notes: "Plugin-backed connection reference."
-                          };
-                          updateDocument((current) => ({ ...current, connection_refs: [...current.connection_refs, nextItem] }));
-                          setSelectedConnectionId(nextItem.id);
-                        }}
-                      >
-                        Add
-                      </Button>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>Connections</Typography>
+                        <Stack direction="row" spacing={1}>
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            const nextItem = buildConnectionRef("database", "database");
+                            updateDocument((current) => ({ ...current, connection_refs: [...current.connection_refs, nextItem] }));
+                            setSelectedConnectionId(nextItem.id);
+                          }}
+                        >
+                          Add Database
+                        </Button>
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            const nextItem = buildConnectionRef("github", "github");
+                            updateDocument((current) => ({ ...current, connection_refs: [...current.connection_refs, nextItem] }));
+                            setSelectedConnectionId(nextItem.id);
+                          }}
+                        >
+                          Add GitHub
+                        </Button>
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            const nextItem = buildConnectionRef("custom");
+                            updateDocument((current) => ({ ...current, connection_refs: [...current.connection_refs, nextItem] }));
+                            setSelectedConnectionId(nextItem.id);
+                          }}
+                        >
+                          Add
+                        </Button>
+                      </Stack>
                     </Stack>
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                       {document.connection_refs.map((item) => (
@@ -2709,9 +3597,105 @@ function NoodlePipelineDesignerInner({
                     {selectedConnection ? (
                       <Stack spacing={1}>
                         <TextField label="Connection Name" size="small" value={selectedConnection.name} onChange={(event) => updateSelectedConnection((item) => ({ ...item, name: event.target.value }))} />
-                        <TextField label="Plugin" size="small" value={selectedConnection.plugin} onChange={(event) => updateSelectedConnection((item) => ({ ...item, plugin: event.target.value }))} />
+                        <TextField
+                          select
+                          label="Plugin"
+                          size="small"
+                          value={selectedConnection.plugin}
+                          onChange={(event) =>
+                            updateSelectedConnection((item) => applyConnectionTemplate(item, event.target.value, "fill"))
+                          }
+                        >
+                          {CONNECTION_PLUGIN_OPTIONS.map((plugin) => (
+                            <MenuItem key={plugin} value={plugin}>{plugin}</MenuItem>
+                          ))}
+                        </TextField>
                         <TextField label="Environment" size="small" value={selectedConnection.environment} onChange={(event) => updateSelectedConnection((item) => ({ ...item, environment: event.target.value }))} />
-                        <TextField label="Auth Ref" size="small" value={selectedConnection.auth_ref} onChange={(event) => updateSelectedConnection((item) => ({ ...item, auth_ref: event.target.value }))} />
+                        <TextField
+                          label="Auth Ref"
+                          size="small"
+                          value={selectedConnection.auth_ref}
+                          onChange={(event) => updateSelectedConnection((item) => ({ ...item, auth_ref: event.target.value }))}
+                          helperText={authRefHelperTextForPlugin(selectedConnection.plugin)}
+                        />
+                        <Stack spacing={1}>
+                          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1}>
+                            <Box>
+                              <Typography variant="body2" sx={{ fontWeight: 700 }}>Connection Parameters</Typography>
+                              <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                                {connectionParameterHelpText(selectedConnection.plugin)}
+                              </Typography>
+                            </Box>
+                            <Stack direction="row" spacing={1}>
+                              <Button
+                                size="small"
+                                onClick={() =>
+                                  updateSelectedConnection((item) => ({
+                                    ...item,
+                                    params: [...item.params, { key: "", value: "" }]
+                                  }))
+                                }
+                              >
+                                Add Parameter
+                              </Button>
+                              <Button
+                                size="small"
+                                onClick={() =>
+                                  updateSelectedConnection((item) => applyConnectionTemplate(item, item.plugin, "replace"))
+                                }
+                              >
+                                Apply Template
+                              </Button>
+                            </Stack>
+                          </Stack>
+                          {selectedConnection.params.length ? (
+                            selectedConnection.params.map((param, index) => (
+                              <Stack key={`${selectedConnection.id}-param-${index}`} direction={{ xs: "column", md: "row" }} spacing={1}>
+                                <TextField
+                                  label="Key"
+                                  size="small"
+                                  value={param.key}
+                                  onChange={(event) =>
+                                    updateSelectedConnection((item) => ({
+                                      ...item,
+                                      params: item.params.map((entry, entryIndex) =>
+                                        entryIndex === index ? { ...entry, key: event.target.value } : entry
+                                      )
+                                    }))
+                                  }
+                                  sx={{ flex: 1 }}
+                                />
+                                <TextField
+                                  label="Value"
+                                  size="small"
+                                  value={param.value}
+                                  onChange={(event) =>
+                                    updateSelectedConnection((item) => ({
+                                      ...item,
+                                      params: item.params.map((entry, entryIndex) =>
+                                        entryIndex === index ? { ...entry, value: event.target.value } : entry
+                                      )
+                                    }))
+                                  }
+                                  sx={{ flex: 1.3 }}
+                                />
+                                <Button
+                                  color="error"
+                                  onClick={() =>
+                                    updateSelectedConnection((item) => ({
+                                      ...item,
+                                      params: item.params.filter((_, entryIndex) => entryIndex !== index)
+                                    }))
+                                  }
+                                >
+                                  Remove
+                                </Button>
+                              </Stack>
+                            ))
+                          ) : (
+                            <Alert severity="info">No structured parameters yet. Add them here or apply the plugin template.</Alert>
+                          )}
+                        </Stack>
                         <TextField label="Notes" size="small" multiline minRows={2} value={selectedConnection.notes} onChange={(event) => updateSelectedConnection((item) => ({ ...item, notes: event.target.value }))} />
                         <Button
                           color="error"
@@ -2727,6 +3711,239 @@ function NoodlePipelineDesignerInner({
                         </Button>
                       </Stack>
                     ) : null}
+                  </Stack>
+                    </>
+                  ) : null}
+
+                  {repositorySection === "deployment" ? (
+                    <>
+                  <Divider />
+
+                  <Stack spacing={1}>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center">
+                      <Typography variant="body2" sx={{ fontWeight: 700 }}>Deployment</Typography>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Typography variant="caption" sx={{ color: "var(--muted)" }}>Enable</Typography>
+                        <Switch
+                          checked={document.deployment.enabled}
+                          onChange={(event) =>
+                            updateDocument((current) => ({
+                              ...current,
+                              deployment: {
+                                ...current.deployment,
+                                enabled: event.target.checked
+                              }
+                            }))
+                          }
+                        />
+                      </Stack>
+                    </Stack>
+                    <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                      Store the Git repository and backend deploy contract here when this pipeline should be built and deployed from source control.
+                    </Typography>
+                    <TextField
+                      select
+                      label="Repository Provider"
+                      size="small"
+                      value={document.deployment.repository.provider}
+                      onChange={(event) =>
+                        updateDocument((current) => ({
+                          ...current,
+                          deployment: {
+                            ...current.deployment,
+                            repository: {
+                              ...current.deployment.repository,
+                              provider: event.target.value as NoodleDesignerDeployment["repository"]["provider"]
+                            }
+                          }
+                        }))
+                      }
+                    >
+                      {DEPLOYMENT_PROVIDER_OPTIONS.map((provider) => (
+                        <MenuItem key={provider} value={provider}>{provider}</MenuItem>
+                      ))}
+                    </TextField>
+                    <TextField
+                      select
+                      label="Repository Connection"
+                      size="small"
+                      value={document.deployment.repository.connection_id ?? ""}
+                      onChange={(event) =>
+                        updateDocument((current) => ({
+                          ...current,
+                          deployment: {
+                            ...current.deployment,
+                            repository: {
+                              ...current.deployment.repository,
+                              connection_id: event.target.value || null
+                            }
+                          }
+                        }))
+                      }
+                      helperText="Optional. Use a GitHub connection ref if the deploy workflow needs stored auth or repo credentials."
+                    >
+                      <MenuItem value="">No connection</MenuItem>
+                      {document.connection_refs
+                        .filter((item) => item.plugin === "github-plugin" || item.plugin === "custom-plugin")
+                        .map((item) => (
+                          <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>
+                        ))}
+                    </TextField>
+                    <TextField
+                      label="Repository"
+                      size="small"
+                      value={document.deployment.repository.repository}
+                      onChange={(event) =>
+                        updateDocument((current) => ({
+                          ...current,
+                          deployment: {
+                            ...current.deployment,
+                            repository: {
+                              ...current.deployment.repository,
+                              repository: event.target.value
+                            }
+                          }
+                        }))
+                      }
+                      helperText="For GitHub, use owner/repo."
+                    />
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <TextField
+                        label="Branch"
+                        size="small"
+                        value={document.deployment.repository.branch}
+                        onChange={(event) =>
+                          updateDocument((current) => ({
+                            ...current,
+                            deployment: {
+                              ...current.deployment,
+                              repository: {
+                                ...current.deployment.repository,
+                                branch: event.target.value
+                              }
+                            }
+                          }))
+                        }
+                        sx={{ flex: 1 }}
+                      />
+                      <TextField
+                        label="Backend Path"
+                        size="small"
+                        value={document.deployment.repository.backend_path}
+                        onChange={(event) =>
+                          updateDocument((current) => ({
+                            ...current,
+                            deployment: {
+                              ...current.deployment,
+                              repository: {
+                                ...current.deployment.repository,
+                                backend_path: event.target.value
+                              }
+                            }
+                          }))
+                        }
+                        sx={{ flex: 1 }}
+                      />
+                    </Stack>
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <TextField
+                        select
+                        label="Deploy Target"
+                        size="small"
+                        value={document.deployment.deploy_target}
+                        onChange={(event) =>
+                          updateDocument((current) => ({
+                            ...current,
+                            deployment: {
+                              ...current.deployment,
+                              deploy_target: event.target.value as NoodleDesignerDeployment["deploy_target"]
+                            }
+                          }))
+                        }
+                        sx={{ flex: 1 }}
+                      >
+                        {DEPLOYMENT_TARGET_OPTIONS.map((target) => (
+                          <MenuItem key={target} value={target}>{target}</MenuItem>
+                        ))}
+                      </TextField>
+                      <TextField
+                        label="Artifact Name"
+                        size="small"
+                        value={document.deployment.artifact_name}
+                        onChange={(event) =>
+                          updateDocument((current) => ({
+                            ...current,
+                            deployment: {
+                              ...current.deployment,
+                              artifact_name: event.target.value
+                            }
+                          }))
+                        }
+                        sx={{ flex: 1 }}
+                      />
+                    </Stack>
+                    <TextField
+                      label="Workflow Ref"
+                      size="small"
+                      value={document.deployment.repository.workflow_ref}
+                      onChange={(event) =>
+                        updateDocument((current) => ({
+                          ...current,
+                          deployment: {
+                            ...current.deployment,
+                            repository: {
+                              ...current.deployment.repository,
+                              workflow_ref: event.target.value
+                            }
+                          }
+                        }))
+                      }
+                      helperText="For GitHub, this is usually .github/workflows/deploy.yml."
+                    />
+                    <TextField
+                      label="Build Command"
+                      size="small"
+                      value={document.deployment.build_command}
+                      onChange={(event) =>
+                        updateDocument((current) => ({
+                          ...current,
+                          deployment: {
+                            ...current.deployment,
+                            build_command: event.target.value
+                          }
+                        }))
+                      }
+                    />
+                    <TextField
+                      label="Deploy Command"
+                      size="small"
+                      value={document.deployment.deploy_command}
+                      onChange={(event) =>
+                        updateDocument((current) => ({
+                          ...current,
+                          deployment: {
+                            ...current.deployment,
+                            deploy_command: event.target.value
+                          }
+                        }))
+                      }
+                    />
+                    <TextField
+                      label="Notes"
+                      size="small"
+                      multiline
+                      minRows={3}
+                      value={document.deployment.notes}
+                      onChange={(event) =>
+                        updateDocument((current) => ({
+                          ...current,
+                          deployment: {
+                            ...current.deployment,
+                            notes: event.target.value
+                          }
+                        }))
+                      }
+                    />
                   </Stack>
                     </>
                   ) : null}
@@ -3137,6 +4354,52 @@ function NoodlePipelineDesignerInner({
                       <Typography variant="body2" sx={{ mt: 0.6, color: "var(--text)" }}>
                         {agentMomoBrief}
                       </Typography>
+                    </Box>
+                  ) : null}
+                  {momoSuggestion ? (
+                    <Box sx={{ p: 1.4, borderRadius: 2.5, bgcolor: "#fffaf2", border: "1px solid #f3d6a4" }}>
+                      <Stack spacing={1}>
+                        <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
+                          <Box>
+                            <Typography variant="caption" sx={{ color: "#9a6700", fontWeight: 800 }}>
+                              SUGGESTED TRANSFORMATION
+                            </Typography>
+                            <Typography variant="body2" sx={{ mt: 0.5, color: "var(--text)", fontWeight: 700 }}>
+                              {momoSuggestion.targetNodeLabel}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                              {momoSuggestion.replacesExisting ? "Will replace the current linked transformation." : "Will create and link a new transformation record."}
+                            </Typography>
+                          </Box>
+                          <Chip size="small" label={momoSuggestion.transformation.mode} color="warning" variant="outlined" sx={{ alignSelf: "flex-start" }} />
+                        </Stack>
+                        <TextField
+                          label="Suggested Code"
+                          size="small"
+                          multiline
+                          minRows={7}
+                          maxRows={16}
+                          value={momoSuggestion.transformation.code}
+                          InputProps={{ readOnly: true }}
+                        />
+                        <TextField
+                          label="Suggested Config JSON"
+                          size="small"
+                          multiline
+                          minRows={5}
+                          maxRows={12}
+                          value={momoSuggestion.transformation.config_json}
+                          InputProps={{ readOnly: true }}
+                        />
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                          <Button variant="contained" onClick={applyMomoSuggestion} sx={{ bgcolor: "var(--accent)", color: "#fff", "&:hover": { bgcolor: "#265db8" } }}>
+                            Apply Suggestion
+                          </Button>
+                          <Button variant="outlined" onClick={() => setMomoSuggestion(null)} sx={noodleButtonSecondarySx}>
+                            Dismiss
+                          </Button>
+                        </Stack>
+                      </Stack>
                     </Box>
                   ) : null}
                   <Stack spacing={1} sx={{ maxHeight: panelFocus === "momo" ? "calc(100vh - 360px)" : 420, overflowY: "auto" }}>

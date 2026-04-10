@@ -1,2 +1,1 @@
-"""Connector planning utilities for Noodle Orchestrator."""
-
+"""Connector planning and runtime adapter utilities for Noodle Orchestrator."""

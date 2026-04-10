@@ -11,6 +11,7 @@ import { loadPendingNoodleDesignerSession, storePendingNoodleSchedulerSession } 
 import type {
   NoodleArchitectureOverview,
   NoodleArchitecturePrinciple,
+  NoodleDesignerDeployment,
   NoodleOrchestratorPlan,
   NoodlePipelineDesignerDocument,
   NoodlePipelineIntent
@@ -71,6 +72,7 @@ export function NoodleDesignerWorkspace() {
   const [designPrinciples, setDesignPrinciples] = useState<NoodleArchitecturePrinciple[]>([]);
   const [savedArchitecture, setSavedArchitecture] = useState<SavedArchitectureDraft | null>(null);
   const [agentMomoBrief, setAgentMomoBrief] = useState<string | null>(null);
+  const [deploymentSeed, setDeploymentSeed] = useState<NoodleDesignerDeployment | null>(null);
   const [seedDocument, setSeedDocument] = useState<NoodlePipelineDesignerDocument | null>(null);
   const [plannedOrchestratorPlan, setPlannedOrchestratorPlan] = useState<NoodleOrchestratorPlan | null>(null);
 
@@ -86,6 +88,7 @@ export function NoodleDesignerWorkspace() {
     setDesignPrinciples(session.design_principles ?? []);
     setSavedArchitecture(session.saved_architecture ?? null);
     setAgentMomoBrief(session.agent_momo_brief ?? null);
+    setDeploymentSeed(session.deployment_seed ?? null);
     setSeedDocument(session.pipeline_document ?? null);
     setPlannedOrchestratorPlan(session.orchestrator_plan ?? null);
     setSeededFromWorkspace(true);
@@ -155,6 +158,7 @@ export function NoodleDesignerWorkspace() {
             designPrinciples={designPrinciples}
             savedArchitecture={savedArchitecture}
             agentMomoBrief={agentMomoBrief}
+            deploymentSeed={deploymentSeed}
             seedDocument={seedDocument}
             plannedOrchestratorPlan={plannedOrchestratorPlan}
           />
