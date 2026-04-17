@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { Alert, Box, Button, Chip, Container, Stack, Typography } from "@mui/material";
 
 import { NoodlePipelineDesigner } from "@/components/noodle/noodle-pipeline-designer";
-import { loadPendingNoodleDesignerSession, storePendingNoodleSchedulerSession } from "@/lib/scenario-store";
+import { loadNoodlePipelineDraft, loadPendingNoodleDesignerSession, storePendingNoodleSchedulerSession } from "@/lib/scenario-store";
 import type {
   NoodleArchitectureOverview,
   NoodleArchitecturePrinciple,
@@ -95,11 +95,12 @@ export function NoodleDesignerWorkspace() {
   }, []);
 
   function openSoupSchedulerPage() {
+    const currentDraft = typeof window === "undefined" ? null : loadNoodlePipelineDraft();
     storePendingNoodleSchedulerSession({
       source: "designer",
       intent_name: intent.name,
       orchestrator_plan: plannedOrchestratorPlan,
-      document: seedDocument,
+      document: currentDraft ?? seedDocument,
       opened_at: new Date().toISOString()
     });
     router.push("/noodle/scheduler");

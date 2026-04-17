@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -153,7 +154,7 @@ DesignerOrchestrationMode = Literal["tasks", "plan"]
 
 
 class NoodleOrchestratorTaskPlan(BaseModel):
-    id: str
+    id: str = Field(default_factory=lambda: f"task-plan-{uuid4().hex}")
     node_id: str | None = None
     name: str
     stage: str
@@ -165,11 +166,11 @@ class NoodleOrchestratorTaskPlan(BaseModel):
 
 
 class NoodleOrchestratorPlan(BaseModel):
-    id: str
+    id: str = Field(default_factory=lambda: f"orchestrator-plan-{uuid4().hex}")
     name: str
     objective: str
     trigger: DesignerTrigger = "manual"
-    execution_target: str
+    execution_target: str = "apache-airflow"
     tasks: list[NoodleOrchestratorTaskPlan] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
@@ -406,10 +407,15 @@ DesignerDocumentStatus = Literal["draft", "published"]
 DesignerTargetZone = Literal["bronze", "silver", "gold", "feature_store", "serving", "control_plane"]
 DesignerTransformationMode = Literal["python", "sql", "dbt", "spark_sql", "custom"]
 DesignerRunStatus = Literal["queued", "running", "success", "failed", "cancelled"]
-DesignerTaskRunState = Literal["pending", "queued", "running", "success", "failed", "retrying", "skipped", "cancelled"]
+DesignerTaskRunState = Literal["pending", "queued", "running", "success", "failed", "retrying", "skipped", "cancelled", "reused"]
 DesignerLogLevel = Literal["log", "info", "warn"]
 DesignerDeploymentProvider = Literal["github", "gitlab", "bitbucket", "custom"]
 DesignerDeploymentTarget = Literal["local_docker", "kubernetes", "airflow_worker", "worker_runtime", "custom"]
+DesignerRepairScope = Literal["failed", "failed_and_dependents", "selected", "selected_and_dependents"]
+DesignerRepairMode = Literal["exact", "best_effort"]
+DesignerRepairOutcome = Literal["exact", "best_effort", "blocked"]
+DesignerSinkSupportLevel = Literal["exact", "best_effort", "unsafe"]
+DesignerBatchSessionStatus = Literal["staging", "partial", "publishing", "committed", "failed", "blocked"]
 
 
 class NoodleDesignerParam(BaseModel):
@@ -545,6 +551,99 @@ class NoodleDesignerCachedOutput(BaseModel):
     approx_records: int = 0
 
 
+class NoodleDesignerRepairIssue(BaseModel):
+    severity: Literal["info", "warn", "error"] = "info"
+    code: str
+    message: str
+    task_id: str | None = None
+
+
+class NoodleDesignerSinkBinding(BaseModel):
+    task_id: str
+    task_label: str
+    sink_node_id: str
+    sink_node_label: str
+    sink_plugin: str
+    support_level: DesignerSinkSupportLevel = "best_effort"
+    idempotency_strategy: str = "none"
+    transaction_strategy: str = "none"
+    output_asset_id: str = ""
+    output_version: str | None = None
+    idempotency_key: str | None = None
+    notes: str = ""
+
+
+class NoodleDesignerLineageRecord(BaseModel):
+    task_id: str
+    task_label: str
+    input_assets: list[str] = Field(default_factory=list)
+    output_assets: list[str] = Field(default_factory=list)
+    output_version: str | None = None
+
+
+class NoodleDesignerRepairPlan(BaseModel):
+    attempt_id: str
+    base_run_id: str
+    root_run_id: str
+    document_version: int
+    mode: DesignerRepairMode = "best_effort"
+    outcome: DesignerRepairOutcome = "best_effort"
+    scope: DesignerRepairScope
+    rerun_task_ids: list[str] = Field(default_factory=list)
+    reused_task_ids: list[str] = Field(default_factory=list)
+    downstream_task_ids: list[str] = Field(default_factory=list)
+    validation_issues: list[NoodleDesignerRepairIssue] = Field(default_factory=list)
+
+
+class NoodleDesignerBatchResumeToken(BaseModel):
+    source_system: str
+    source_batch_id: str
+    expected_count: int
+    next_offset: int
+    ordering_key: str = "record_seq"
+    schema_fingerprint: str = ""
+    payload_fingerprint_mode: str = "optional"
+    last_committed_at: str | None = None
+
+
+class NoodleDesignerBatchSessionAttempt(BaseModel):
+    id: str
+    run_id: str
+    kind: Literal["run", "resume"] = "run"
+    mode: DesignerRepairMode = "best_effort"
+    status: DesignerBatchSessionStatus = "staging"
+    from_offset: int = 1
+    started_at: str
+    finished_at: str | None = None
+    staged_count: int = 0
+    next_offset: int = 1
+    committed_version: str | None = None
+    reason: str | None = None
+
+
+class NoodleDesignerBatchSession(BaseModel):
+    id: str
+    source_node_id: str
+    source_node_label: str
+    source_system: str
+    source_batch_id: str
+    expected_count: int
+    staged_count: int = 0
+    committed_count: int = 0
+    next_offset: int = 1
+    max_contiguous_committed_offset: int = 0
+    status: DesignerBatchSessionStatus = "staging"
+    resume_token: NoodleDesignerBatchResumeToken
+    exact_supported: bool = False
+    exact_support_summary: str = ""
+    schema_fingerprint: str = ""
+    last_run_id: str | None = None
+    root_run_id: str | None = None
+    committed_version: str | None = None
+    related_run_ids: list[str] = Field(default_factory=list)
+    attempts: list[NoodleDesignerBatchSessionAttempt] = Field(default_factory=list)
+
+
 class NoodleDesignerRun(BaseModel):
     id: str
     label: str
@@ -554,9 +653,24 @@ class NoodleDesignerRun(BaseModel):
     orchestration_mode: DesignerOrchestrationMode = "tasks"
     started_at: str
     finished_at: str | None = None
+    document_version: int | None = None
+    root_run_id: str | None = None
+    repair_of_run_id: str | None = None
+    repair_attempt: int | None = None
+    repair_attempt_id: str | None = None
+    repair_scope: DesignerRepairScope | None = None
+    repair_mode: DesignerRepairMode | None = None
+    repair_outcome: DesignerRepairOutcome | None = None
+    repair_reason: str | None = None
+    repaired_task_ids: list[str] = Field(default_factory=list)
+    reused_task_ids: list[str] = Field(default_factory=list)
+    repair_plan: NoodleDesignerRepairPlan | None = None
+    batch_session_ids: list[str] = Field(default_factory=list)
     task_runs: list[NoodleDesignerRunTask] = Field(default_factory=list)
     logs: list[NoodleDesignerRunLog] = Field(default_factory=list)
     cached_outputs: list[NoodleDesignerCachedOutput] = Field(default_factory=list)
+    sink_bindings: list[NoodleDesignerSinkBinding] = Field(default_factory=list)
+    lineage_records: list[NoodleDesignerLineageRecord] = Field(default_factory=list)
 
 
 class NoodlePipelineDocument(BaseModel):
@@ -573,6 +687,7 @@ class NoodlePipelineDocument(BaseModel):
     deployment: NoodleDesignerDeployment = Field(default_factory=NoodleDesignerDeployment)
     orchestrator_plan: NoodleOrchestratorPlan | None = None
     schedule: NoodleDesignerSchedule
+    batch_sessions: list[NoodleDesignerBatchSession] = Field(default_factory=list)
     runs: list[NoodleDesignerRun] = Field(default_factory=list)
     saved_at: str
 
@@ -585,6 +700,29 @@ class NoodlePipelineRunCreateRequest(BaseModel):
     document: NoodlePipelineDocument | None = None
 
 
+class NoodlePipelineRepairRunRequest(BaseModel):
+    repair_scope: DesignerRepairScope = "failed_and_dependents"
+    repair_mode: DesignerRepairMode = "best_effort"
+    task_ids: list[str] = Field(default_factory=list)
+    reason: str = ""
+    orchestration_mode: DesignerOrchestrationMode | None = None
+    document: NoodlePipelineDocument | None = None
+
+
+class NoodlePipelineBatchResumeRequest(BaseModel):
+    mode: DesignerRepairMode = "best_effort"
+    from_offset: int | None = None
+    reason: str = ""
+    dry_run: bool = False
+    document: NoodlePipelineDocument | None = None
+
+
 class NoodlePipelineRunResponse(BaseModel):
     pipeline: NoodlePipelineDocument
+    run: NoodleDesignerRun
+
+
+class NoodlePipelineBatchResumeResponse(BaseModel):
+    pipeline: NoodlePipelineDocument
+    batch_session: NoodleDesignerBatchSession
     run: NoodleDesignerRun

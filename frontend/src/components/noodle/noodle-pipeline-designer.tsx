@@ -22,11 +22,18 @@ import {
   Stack,
   Switch,
   Tab,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   Tabs,
   TextField,
   Tooltip,
   Typography
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import ReactFlow, {
   Background,
   ConnectionMode,
@@ -53,8 +60,10 @@ import {
   type SavedArchitectureDraft
 } from "@/lib/scenario-store";
 import {
+  createNoodlePipelineRepairRun,
   createNoodlePipelineRun,
   listNoodlePipelines,
+  resumeNoodlePipelineBatchSession,
   saveNoodlePipeline
 } from "@/lib/api";
 import { providerColors } from "@/lib/architect-diagram";
@@ -63,6 +72,7 @@ import type {
   NoodleArchitectureOverview,
   NoodleArchitecturePrinciple,
   NoodleDesignerCachedOutput,
+  NoodleDesignerBatchSession,
   NoodleDesignerConnectionRef,
   NoodleDesignerDeployment,
   NoodleDesignerDocumentStatus,
@@ -74,6 +84,8 @@ import type {
   NoodleOrchestratorPlan,
   NoodleOrchestratorTaskPlan,
   NoodleDesignerParam,
+  NoodleDesignerRepairMode,
+  NoodleDesignerRepairScope,
   NoodleDesignerRun,
   NoodleDesignerSchedule,
   NoodleDesignerSchema,
@@ -104,6 +116,8 @@ interface DesignerNodeData {
   label: string;
   kind: NoodleDesignerNodeKind;
   selected: boolean;
+  paramCount: number;
+  hasTransformation: boolean;
 }
 
 interface MomoMessage {
@@ -162,6 +176,13 @@ const DEFAULT_SCHEDULE: NoodleDesignerSchedule = {
 const CANVAS_HEIGHT = 720;
 const RUN_TABS = ["builder", "runs"] as const;
 const LOG_LEVELS: Array<NoodleDesignerLogLevel | "all"> = ["all", "log", "info", "warn"];
+const REPAIR_SCOPE_OPTIONS: NoodleDesignerRepairScope[] = [
+  "failed_and_dependents",
+  "failed",
+  "selected_and_dependents",
+  "selected"
+];
+const REPAIR_MODE_OPTIONS: NoodleDesignerRepairMode[] = ["best_effort", "exact"];
 const PANEL_FOCUS = ["repository", "canvas", "momo"] as const;
 const REPOSITORY_SECTIONS = ["palette", "connections", "deployment", "metadata", "schemas", "transformations", "spec"] as const;
 const CONNECTION_PLUGIN_OPTIONS = [
@@ -266,6 +287,69 @@ const workspaceTabsSx = {
     boxShadow: "0 8px 18px rgba(15, 23, 42, 0.08)"
   }
 };
+const noodleGlassCardSx = {
+  borderRadius: 4,
+  border: "1px solid rgba(154, 177, 205, 0.45)",
+  boxShadow: "0 24px 50px rgba(15, 23, 42, 0.08)",
+  bgcolor: "rgba(255,255,255,0.8)",
+  backdropFilter: "blur(18px)"
+};
+const noodleMetricCardSx = {
+  p: 1.75,
+  height: "100%",
+  borderRadius: 4,
+  color: "#f8fbff",
+  position: "relative",
+  overflow: "hidden",
+  border: "1px solid rgba(255,255,255,0.22)",
+  boxShadow: "0 18px 36px rgba(15, 23, 42, 0.16)",
+  background:
+    "linear-gradient(160deg, rgba(8, 27, 56, 0.94) 0%, rgba(22, 76, 142, 0.84) 58%, rgba(51, 128, 173, 0.78) 100%)",
+  "&::before": {
+    content: '""',
+    position: "absolute",
+    inset: "auto -15% -45% 45%",
+    height: 160,
+    borderRadius: "50%",
+    background: "radial-gradient(circle, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 72%)"
+  }
+};
+const noodleSectionLabelSx = {
+  color: "rgba(232, 241, 255, 0.76)",
+  fontWeight: 800,
+  letterSpacing: "0.12em",
+  textTransform: "uppercase"
+};
+const sidePanelHeroSx = {
+  p: 1.5,
+  borderRadius: 4,
+  border: "1px solid rgba(255,255,255,0.7)",
+  background:
+    "radial-gradient(circle at top right, rgba(120, 216, 255, 0.2), transparent 24%), linear-gradient(160deg, rgba(8, 27, 56, 0.04) 0%, rgba(32, 92, 134, 0.08) 100%)"
+};
+const repositorySectionChipSx = (selected: boolean) => ({
+  borderRadius: 999,
+  fontWeight: 800,
+  px: 0.4,
+  color: selected ? "#0e4e8b" : "#4f6480",
+  bgcolor: selected ? "#e6f2ff" : "rgba(255,255,255,0.82)",
+  border: selected ? "1px solid rgba(47, 110, 201, 0.26)" : "1px solid rgba(154, 177, 205, 0.3)"
+});
+const repositoryContentCardSx = {
+  p: 1.4,
+  borderRadius: 3.5,
+  border: "1px solid rgba(154, 177, 205, 0.3)",
+  bgcolor: "rgba(255,255,255,0.88)",
+  boxShadow: "0 14px 30px rgba(15, 23, 42, 0.05)"
+};
+const repositoryListChipSx = (selected: boolean) => ({
+  borderRadius: 999,
+  fontWeight: 800,
+  bgcolor: selected ? "#0e4e8b" : "rgba(255,255,255,0.92)",
+  color: selected ? "#fff" : "#405b78",
+  border: selected ? "1px solid rgba(14, 78, 139, 0.24)" : "1px solid rgba(154, 177, 205, 0.3)",
+  boxShadow: selected ? "0 10px 20px rgba(14, 78, 139, 0.18)" : "none"
+});
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -273,6 +357,36 @@ function createId(prefix: string) {
 
 function titleize(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function stateChipColor(state: NoodleDesignerRun["status"] | NoodleDesignerRun["task_runs"][number]["state"]) {
+  switch (state) {
+    case "success":
+      return "success";
+    case "failed":
+      return "error";
+    case "running":
+    case "retrying":
+      return "warning";
+    case "reused":
+      return "info";
+    default:
+      return "default";
+  }
+}
+
+function supportChipColor(level: "exact" | "best_effort" | "unsafe" | "blocked") {
+  switch (level) {
+    case "exact":
+      return "success";
+    case "best_effort":
+      return "warning";
+    case "unsafe":
+    case "blocked":
+      return "error";
+    default:
+      return "default";
+  }
 }
 
 function formatBytes(bytes: number) {
@@ -283,6 +397,127 @@ function formatBytes(bytes: number) {
   const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const value = bytes / 1024 ** exponent;
   return `${value >= 10 || exponent === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[exponent]}`;
+}
+
+function parseCachedOutputTable(previewText: string) {
+  const trimmed = previewText.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const buildTable = (rows: Array<Record<string, unknown>>) => {
+    if (!rows.length) {
+      return null;
+    }
+
+    const columns = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+    if (!columns.length) {
+      return null;
+    }
+
+    return {
+      columns,
+      rows
+    };
+  };
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) {
+      const rows = parsed.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry));
+      const table = buildTable(rows);
+      if (table) {
+        return table;
+      }
+    }
+
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      const nestedRows = ["rows", "items", "data"]
+        .map((key) => record[key])
+        .find((value) => Array.isArray(value));
+
+      if (Array.isArray(nestedRows)) {
+        const rows = nestedRows.filter(
+          (entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry)
+        );
+        const table = buildTable(rows);
+        if (table) {
+          return table;
+        }
+      }
+
+      const singleRowTable = buildTable([record]);
+      if (singleRowTable) {
+        return singleRowTable;
+      }
+    }
+  } catch {
+    // Fall through to JSONL or CSV parsing.
+  }
+
+  const lines = trimmed
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) {
+    return null;
+  }
+
+  const parsedRows: Array<Record<string, unknown>> = [];
+  for (const [index, line] of lines.entries()) {
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return null;
+      }
+      parsedRows.push(parsed as Record<string, unknown>);
+    } catch {
+      if (index === lines.length - 1 && parsedRows.length) {
+        break;
+      }
+      parsedRows.length = 0;
+      break;
+    }
+  }
+
+  const jsonlTable = buildTable(parsedRows);
+  if (jsonlTable) {
+    return jsonlTable;
+  }
+
+  if (lines.length >= 2 && lines[0].includes(",")) {
+    const headers = lines[0].split(",").map((value) => value.trim()).filter(Boolean);
+    if (!headers.length) {
+      return null;
+    }
+
+    const rows = lines
+      .slice(1)
+      .map((line) => line.split(",").map((value) => value.trim()))
+      .filter((values) => values.some((value) => value.length))
+      .map<Record<string, unknown>>((values) =>
+        headers.reduce<Record<string, unknown>>((row, header, headerIndex) => {
+          row[header] = values[headerIndex] ?? "";
+          return row;
+        }, {})
+      );
+
+    return buildTable(rows);
+  }
+
+  return null;
+}
+
+function formatCachedCellValue(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -924,13 +1159,26 @@ function createOrchestratorPlan(
   plan?: NoodleOrchestratorPlan | null
 ): NoodleOrchestratorPlan {
   const nextPlan: NoodleOrchestratorPlan = plan
-    ? {
+      ? {
         ...plan,
+        id: plan.id || createId("orchestrator-plan"),
+        name: plan.name || `${documentName} orchestrator plan`,
+        objective: plan.objective || `Coordinate ${documentName} through a versioned control-plane plan.`,
+        execution_target: plan.execution_target || workflowTemplate || "apache-airflow",
         tasks: plan.tasks.map((task) => ({
           ...task,
+          id: task.id || createId("task-plan"),
           depends_on: task.depends_on ?? [],
           outputs: task.outputs ?? []
-        }))
+        })),
+        notes:
+          plan.notes?.length
+            ? plan.notes
+            : [
+                "Keep scheduling, versioning, and metadata in the control plane.",
+                "Hand the saved JSON pipeline spec to Apache Airflow for DAG execution.",
+                "Treat logs, metrics, and lineage as part of the plan contract."
+              ]
       }
     : {
         id: createId("orchestrator-plan"),
@@ -946,7 +1194,11 @@ function createOrchestratorPlan(
         ]
       };
 
-  return synchronizeOrchestratorPlan(nodes, { ...nextPlan, trigger, execution_target: workflowTemplate ?? nextPlan.execution_target });
+  return synchronizeOrchestratorPlan(nodes, {
+    ...nextPlan,
+    trigger,
+    execution_target: workflowTemplate ?? nextPlan.execution_target ?? "apache-airflow"
+  });
 }
 
 function synchronizeOrchestratorPlan(
@@ -1312,9 +1564,28 @@ function normalizeDocument(
       document.orchestrator_plan ?? plannedOrchestratorPlan ?? seed.orchestrator_plan
     ),
     schedule: document.schedule ?? seed.schedule,
+    batch_sessions: (document.batch_sessions ?? seed.batch_sessions ?? []).map((session) => ({
+      ...session,
+      related_run_ids: session.related_run_ids ?? [],
+      attempts: session.attempts ?? []
+    })),
     runs: (document.runs ?? seed.runs).map((run) => ({
       ...run,
-      cached_outputs: run.cached_outputs ?? []
+      repair_plan: run.repair_plan
+        ? {
+            ...run.repair_plan,
+            rerun_task_ids: run.repair_plan.rerun_task_ids ?? [],
+            reused_task_ids: run.repair_plan.reused_task_ids ?? [],
+            downstream_task_ids: run.repair_plan.downstream_task_ids ?? [],
+            validation_issues: run.repair_plan.validation_issues ?? []
+          }
+        : null,
+      repaired_task_ids: run.repaired_task_ids ?? [],
+      reused_task_ids: run.reused_task_ids ?? [],
+      batch_session_ids: run.batch_session_ids ?? [],
+      cached_outputs: run.cached_outputs ?? [],
+      sink_bindings: run.sink_bindings ?? [],
+      lineage_records: run.lineage_records ?? []
     }))
   };
 }
@@ -1504,8 +1775,7 @@ function validateDocument(document: NoodlePipelineDesignerDocument): NoodleDesig
 function buildMomoWelcome(
   overview?: NoodleArchitectureOverview | null,
   principles: NoodleArchitecturePrinciple[] = [],
-  savedArchitecture?: SavedArchitectureDraft | null,
-  agentMomoBrief?: string | null
+  savedArchitecture?: SavedArchitectureDraft | null
 ) {
   const overviewText = overview?.objective ?? "Use the control-plane architecture to guide pipeline design decisions.";
   const principlesText = principles.length
@@ -1514,7 +1784,7 @@ function buildMomoWelcome(
   const architectureText = savedArchitecture
     ? `Saved architecture "${savedArchitecture.name}" is loaded as the platform context.`
     : "No saved architecture draft was passed in, so use the platform blueprint as the default context.";
-  return `${overviewText} ${principlesText} ${architectureText}${agentMomoBrief ? ` ${agentMomoBrief}` : ""}`;
+  return `${overviewText} ${principlesText} ${architectureText}`;
 }
 
 function inferTransformationMode(
@@ -1784,6 +2054,84 @@ function buildExecutionGuidance(architectureSummary: string): string {
   return `Execution-plane guidance: keep retries, worker dispatch, and task states out of the UI layer. Apache Airflow should orchestrate the DAG while workers own pending, queued, running, success, failed, retrying, skipped, and cancelled transitions. ${architectureSummary}`;
 }
 
+function buildNodeKindGuidance(
+  node: NoodleDesignerNode,
+  document: NoodlePipelineDesignerDocument,
+  architectureSummary: string
+): string {
+  const upstreamCount = document.edges.filter((edge) => edge.target === node.id).length;
+  const downstreamCount = document.edges.filter((edge) => edge.source === node.id).length;
+
+  switch (node.kind) {
+    case "source":
+      return `${node.label} is a source node. Keep it plugin-backed, attach a repository connection reference, and avoid embedding credentials or source-specific special cases in runtime code. It currently has ${downstreamCount} downstream dependency${downstreamCount === 1 ? "" : "ies"}. ${architectureSummary}`;
+    case "ingest":
+      return `${node.label} is an ingest stage. Use it to land data durably, normalize handoff into the execution plane, and keep landing-zone or runner-specific params here instead of in downstream transforms. It currently fans in ${upstreamCount} upstream and fans out to ${downstreamCount} downstream stages. ${architectureSummary}`;
+    case "transform":
+      return `${node.label} is a transform stage. Link it to a reusable transformation record, keep the logic plugin-oriented, and version the config alongside the pipeline JSON. It currently has ${upstreamCount} upstream and ${downstreamCount} downstream dependencies. ${architectureSummary}`;
+    case "cache":
+      return `${node.label} is a cache stage. Use it after transform, quality, feature, or serve nodes to expose bounded previews without turning the cache into a source of truth. It currently observes ${upstreamCount} upstream and serves ${downstreamCount} downstream stages. ${architectureSummary}`;
+    case "quality":
+      return `${node.label} is a quality gate. Keep contracts, schema checks, and freshness or null validation here so publishable outputs are enforced before feature or serve stages. It currently protects ${downstreamCount} downstream stage${downstreamCount === 1 ? "" : "s"}. ${architectureSummary}`;
+    case "feature":
+      return `${node.label} is a feature materialization stage. Keep reusable feature outputs and ML-ready payloads here, after quality validation and before serving surfaces. It currently has ${upstreamCount} upstream dependencies. ${architectureSummary}`;
+    case "serve":
+      return `${node.label} is a serving stage. It should depend only on validated outputs and publish versioned datasets, APIs, or downstream artifacts instead of re-running business logic. It currently depends on ${upstreamCount} upstream stage${upstreamCount === 1 ? "" : "s"}. ${architectureSummary}`;
+    default:
+      return `${node.label} should stay aligned with the control-plane blueprint and use portable JSON plus plugin-backed behavior. ${architectureSummary}`;
+  }
+}
+
+function buildRunGuidance(
+  document: NoodlePipelineDesignerDocument,
+  architectureSummary: string
+): string {
+  const latestRun = document.runs[0] ?? null;
+  if (!latestRun) {
+    return `Run guidance: no test runs have been recorded yet. Trigger a pipeline run to inspect task states, logs, cache previews, lineage, and repair behavior from the execution plane. ${architectureSummary}`;
+  }
+
+  return `Run guidance: the latest run is ${latestRun.label} with ${titleize(latestRun.status)} status, ${latestRun.task_runs.length} task runs, ${latestRun.logs.length} log entries, and ${latestRun.cached_outputs.length} cached output preview${latestRun.cached_outputs.length === 1 ? "" : "s"}. Use run review for repair planning, batch resume, and lineage validation. ${architectureSummary}`;
+}
+
+function buildReleaseGuidance(
+  document: NoodlePipelineDesignerDocument,
+  validationErrors: NoodleDesignerValidation[],
+  architectureSummary: string
+): string {
+  if (validationErrors.length) {
+    return `Release guidance: this workspace is blocked by ${validationErrors.length} validation issue${validationErrors.length === 1 ? "" : "s"}. Clear the blocking errors before publishing so the control plane, repository contracts, and execution DAG stay version-aligned. ${architectureSummary}`;
+  }
+
+  return `Release guidance: the graph is publishable from a dependency perspective. Keep the JSON pipeline, schedule, repository contracts, and deployment metadata versioned together when promoting release v${document.version}. ${architectureSummary}`;
+}
+
+function buildGeneralMomoGuidance(
+  prompt: string,
+  document: NoodlePipelineDesignerDocument,
+  selectedNode: NoodleDesignerNode | null,
+  architectureSummary: string,
+  validationErrors: NoodleDesignerValidation[]
+): string {
+  const matchedNode =
+    selectedNode ??
+    document.nodes.find((node) => {
+      const lowerPrompt = prompt.toLowerCase();
+      return lowerPrompt.includes(node.label.toLowerCase()) || lowerPrompt.includes(node.kind);
+    }) ??
+    null;
+
+  const validationSummary = validationErrors.length
+    ? `There are ${validationErrors.length} blocking issue${validationErrors.length === 1 ? "" : "s"} to resolve before publish.`
+    : "The current graph is publishable from a dependency perspective.";
+
+  if (matchedNode) {
+    return `For "${prompt.trim()}", the clearest current focus is ${matchedNode.label}. ${buildNodeKindGuidance(matchedNode, document, architectureSummary)} ${validationSummary}`;
+  }
+
+  return `For "${prompt.trim()}", I need a more specific design angle to give a sharp answer. I can help with sources, transforms, schemas, scheduling, dependencies, cache behavior, runs, deployment, or publishing. Right now the graph has ${document.nodes.length} nodes and ${document.edges.length} edges, and the repository stores ${document.connection_refs.length} connections, ${document.schemas.length} schemas, ${document.metadata_assets.length} metadata assets, and ${document.transformations.length} transformations. ${validationSummary} ${architectureSummary}`;
+}
+
 function buildBlueprintGuidance(
   overview: NoodleArchitectureOverview | null | undefined,
   principleSummary: string,
@@ -1825,8 +2173,7 @@ function buildMomoReply(
   overview?: NoodleArchitectureOverview | null,
   principles: NoodleArchitecturePrinciple[] = [],
   validations: NoodleDesignerValidation[] = [],
-  savedArchitecture?: SavedArchitectureDraft | null,
-  agentMomoBrief?: string | null
+  savedArchitecture?: SavedArchitectureDraft | null
 ) {
   const lowerPrompt = prompt.toLowerCase();
   const validationErrors = validations.filter((item) => item.level === "error");
@@ -1847,7 +2194,7 @@ function buildMomoReply(
       : document.nodes.find((node) => node.kind === "transform") ?? null;
   const existingForNode =
     selectedTransformation?.node_id === targetNode?.id
-      ? selectedTransformation
+      ? selectedTransformation ?? null
       : targetNode
         ? document.transformations.find((item) => item.node_id === targetNode.id) ?? null
         : null;
@@ -1859,14 +2206,30 @@ function buildMomoReply(
   const scheduleTopic = lowerPrompt.includes("schedule") || lowerPrompt.includes("cron");
   const dependencyTopic = lowerPrompt.includes("dependenc") || lowerPrompt.includes("dag") || lowerPrompt.includes("task");
   const schemaTopic = lowerPrompt.includes("schema");
-  const connectionTopic = lowerPrompt.includes("connection");
+  const connectionTopic = lowerPrompt.includes("connection") || lowerPrompt.includes("connector");
   const transformTopic =
     lowerPrompt.includes("transform") ||
     lowerPrompt.includes("transformation") ||
     lowerPrompt.includes("mapping") ||
     lowerPrompt.includes("rule");
   const executionTopic = lowerPrompt.includes("retry") || lowerPrompt.includes("worker") || lowerPrompt.includes("execution");
+  const runTopic =
+    lowerPrompt.includes("run") ||
+    lowerPrompt.includes("log") ||
+    lowerPrompt.includes("cache") ||
+    lowerPrompt.includes("batch") ||
+    lowerPrompt.includes("repair");
+  const releaseTopic =
+    lowerPrompt.includes("publish") ||
+    lowerPrompt.includes("release") ||
+    lowerPrompt.includes("deploy") ||
+    lowerPrompt.includes("deployment") ||
+    lowerPrompt.includes("version");
   const blueprintTopic = lowerPrompt.includes("blueprint") || lowerPrompt.includes("platform blueprint");
+  const kindMentionedNode =
+    selectedNode ??
+    document.nodes.find((node) => lowerPrompt.includes(node.kind) || lowerPrompt.includes(node.label.toLowerCase())) ??
+    null;
   const multiTopicCount = [
     sourceTopic,
     metadataTopic,
@@ -1876,30 +2239,15 @@ function buildMomoReply(
     connectionTopic,
     transformTopic,
     executionTopic,
+    runTopic,
+    releaseTopic,
     blueprintTopic
   ].filter(Boolean).length;
   const wantsCompositeGuidance =
     blueprintTopic ||
-    multiTopicCount > 1 ||
-    lowerPrompt.includes("how should i") ||
-    lowerPrompt.includes("how do i model") ||
-    lowerPrompt.includes("what should i do");
-
-  if (wantsCompositeGuidance) {
-    return buildBlueprintGuidance(
-      overview,
-      principleSummary,
-      architectureSummary,
-      document,
-      sourceCount,
-      targetNode,
-      existingForNode,
-      transformNodeCount,
-      linkedTransformationCount,
-      transformationIssues,
-      prompt
-    );
-  }
+    multiTopicCount >= 3 ||
+    ((lowerPrompt.includes("how should i") || lowerPrompt.includes("how do i model") || lowerPrompt.includes("what should i do")) &&
+      multiTopicCount >= 2);
 
   if (lowerPrompt.includes("schedule")) {
     return buildScheduleGuidance(document, architectureSummary);
@@ -1932,12 +2280,37 @@ function buildMomoReply(
   if (lowerPrompt.includes("retry") || lowerPrompt.includes("worker") || lowerPrompt.includes("execution")) {
     return buildExecutionGuidance(architectureSummary);
   }
+  if (runTopic) {
+    return buildRunGuidance(document, architectureSummary);
+  }
+  if (releaseTopic) {
+    return buildReleaseGuidance(document, validationErrors, architectureSummary);
+  }
+  if (kindMentionedNode) {
+    return buildNodeKindGuidance(kindMentionedNode, document, architectureSummary);
+  }
+  if (wantsCompositeGuidance) {
+    return buildBlueprintGuidance(
+      overview,
+      principleSummary,
+      architectureSummary,
+      document,
+      sourceCount,
+      targetNode,
+      existingForNode,
+      transformNodeCount,
+      linkedTransformationCount,
+      transformationIssues,
+      prompt
+    );
+  }
 
-  return `${overview?.objective ?? "Design against the Noodle architecture overview."} Apply ${principleSummary}. ${architectureSummary}${agentMomoBrief ? ` ${agentMomoBrief}` : ""} Your graph currently has ${document.nodes.length} nodes and ${document.edges.length} edges.${validationErrors.length ? ` Resolve these blocking issues first: ${validationErrors.map((item) => item.message).join(" | ")}` : " The current graph is publishable from a dependency perspective."}`;
+  return buildGeneralMomoGuidance(prompt, document, selectedNode ?? null, architectureSummary, validationErrors);
 }
 
 const DesignerNodeCard = ({ data }: NodeProps<DesignerNodeData>) => {
   const colors = NODE_COLORS[data.kind];
+  const nodeLabel = data.kind === "cache" ? "Cache Node" : titleize(data.kind);
 
   return (
     <>
@@ -1954,27 +2327,91 @@ const DesignerNodeCard = ({ data }: NodeProps<DesignerNodeData>) => {
       <Box
         data-testid={`designer-node-${data.id}`}
         sx={{
-          width: 210,
-          minHeight: 88,
-          borderRadius: 3,
-          border: data.selected ? "3px solid #17315c" : `2px solid ${colors.stroke}`,
-          bgcolor: colors.fill,
+          width: 236,
+          minHeight: 128,
+          borderRadius: 4,
+          border: data.selected ? "2px solid #112f5f" : `1px solid ${alpha(colors.stroke, 0.75)}`,
+          background: `linear-gradient(180deg, ${alpha("#ffffff", 0.96)} 0%, ${alpha(colors.fill, 0.88)} 100%)`,
           px: 2,
-          py: 1.4,
-          boxShadow: data.selected ? "0 16px 32px rgba(15, 23, 42, 0.12)" : "0 8px 18px rgba(15, 23, 42, 0.06)"
+          py: 1.7,
+          position: "relative",
+          overflow: "hidden",
+          boxShadow: data.selected ? "0 24px 44px rgba(17, 47, 95, 0.24)" : "0 14px 30px rgba(15, 23, 42, 0.10)",
+          "&::before": {
+            content: '""',
+            position: "absolute",
+            inset: "0 auto 0 0",
+            width: 6,
+            background: `linear-gradient(180deg, ${colors.stroke} 0%, ${alpha(colors.accent, 0.72)} 100%)`
+          },
+          "&::after": {
+            content: '""',
+            position: "absolute",
+            top: -34,
+            right: -30,
+            width: 108,
+            height: 108,
+            borderRadius: "50%",
+            background: `radial-gradient(circle, ${alpha(colors.stroke, 0.18)} 0%, rgba(255,255,255,0) 74%)`
+          }
         }}
       >
-        <Typography sx={{ fontWeight: 700, color: "#17315c", lineHeight: 1.1 }}>
-          {data.label}
-        </Typography>
-        <Typography variant="body2" sx={{ mt: 0.75, color: "#60779c" }}>
-          {data.kind === "cache" ? "Cache Node" : titleize(data.kind)}
-        </Typography>
-        {data.kind === "cache" ? (
-          <Typography variant="caption" sx={{ display: "block", mt: 0.4, color: "#7a4500", fontWeight: 700 }}>
-            30 MB bounded preview
+        <Stack spacing={1.25} sx={{ position: "relative", zIndex: 1 }}>
+          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
+            <Chip
+              size="small"
+              label={nodeLabel}
+              sx={{
+                height: 24,
+                bgcolor: alpha(colors.stroke, 0.14),
+                color: colors.accent,
+                fontWeight: 800,
+                borderRadius: 999
+              }}
+            />
+            <Box
+              sx={{
+                minWidth: 30,
+                height: 30,
+                px: 0.8,
+                borderRadius: 999,
+                display: "grid",
+                placeItems: "center",
+                bgcolor: alpha(colors.stroke, 0.12),
+                color: colors.accent,
+                fontSize: "0.72rem",
+                fontWeight: 900,
+                letterSpacing: "0.08em"
+              }}
+            >
+              {data.kind.slice(0, 3).toUpperCase()}
+            </Box>
+          </Stack>
+          <Typography sx={{ fontWeight: 800, color: "#17315c", lineHeight: 1.15, letterSpacing: "-0.02em" }}>
+            {data.label}
           </Typography>
-        ) : null}
+          <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+            <Chip
+              size="small"
+              label={`${data.paramCount} param${data.paramCount === 1 ? "" : "s"}`}
+              sx={{ height: 24, bgcolor: "rgba(255,255,255,0.82)", color: "#34506f", fontWeight: 700 }}
+            />
+            {data.hasTransformation ? (
+              <Chip
+                size="small"
+                label="Linked transform"
+                sx={{ height: 24, bgcolor: alpha("#2e7d32", 0.12), color: "#1f5f24", fontWeight: 700 }}
+              />
+            ) : null}
+            {data.kind === "cache" ? (
+              <Chip
+                size="small"
+                label="30 MB preview"
+                sx={{ height: 24, bgcolor: alpha("#ed6c02", 0.12), color: "#8a4700", fontWeight: 700 }}
+              />
+            ) : null}
+          </Stack>
+        </Stack>
       </Box>
       {NODE_CONNECTOR_POSITIONS.map((top, index) => (
         <Handle
@@ -2000,7 +2437,7 @@ function NoodlePipelineDesignerInner({
   architectureOverview,
   designPrinciples = [],
   savedArchitecture,
-  agentMomoBrief,
+  agentMomoBrief: _agentMomoBrief,
   deploymentSeed,
   seedDocument,
   plannedOrchestratorPlan
@@ -2018,6 +2455,15 @@ function NoodlePipelineDesignerInner({
   const [selectedSchemaId, setSelectedSchemaId] = useState<string | null>(null);
   const [selectedTransformationId, setSelectedTransformationId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedBatchSessionId, setSelectedBatchSessionId] = useState<string | null>(null);
+  const [repairMode, setRepairMode] = useState<NoodleDesignerRepairMode>("best_effort");
+  const [repairScope, setRepairScope] = useState<NoodleDesignerRepairScope>("failed_and_dependents");
+  const [repairReason, setRepairReason] = useState("");
+  const [selectedRepairTaskIds, setSelectedRepairTaskIds] = useState<string[]>([]);
+  const [batchResumeMode, setBatchResumeMode] = useState<NoodleDesignerRepairMode>("best_effort");
+  const [batchResumeReason, setBatchResumeReason] = useState("");
+  const [batchResumeOffset, setBatchResumeOffset] = useState("");
+  const [cachedOutputViewMode, setCachedOutputViewMode] = useState<"preview" | "table">("preview");
   const [activeTab, setActiveTab] = useState<(typeof RUN_TABS)[number]>("builder");
   const [repositorySection, setRepositorySection] = useState<(typeof REPOSITORY_SECTIONS)[number]>("palette");
   const [logFilter, setLogFilter] = useState<NoodleDesignerLogLevel | "all">("all");
@@ -2043,7 +2489,7 @@ function NoodlePipelineDesignerInner({
     {
       id: createId("momo"),
       role: "assistant",
-      content: buildMomoWelcome(architectureOverview, designPrinciples, savedArchitecture, agentMomoBrief)
+      content: buildMomoWelcome(architectureOverview, designPrinciples, savedArchitecture)
     }
   ]);
 
@@ -2109,10 +2555,10 @@ function NoodlePipelineDesignerInner({
       {
         id: createId("momo"),
         role: "assistant",
-        content: buildMomoWelcome(architectureOverview, designPrinciples, savedArchitecture, agentMomoBrief)
+        content: buildMomoWelcome(architectureOverview, designPrinciples, savedArchitecture)
       }
     ]);
-  }, [agentMomoBrief, architectureOverview, designPrinciples, savedArchitecture]);
+  }, [architectureOverview, designPrinciples, savedArchitecture]);
 
   useEffect(() => {
     if (!hydrated) {
@@ -2146,11 +2592,35 @@ function NoodlePipelineDesignerInner({
     [document.transformations, selectedNode]
   );
   const selectedRun = useMemo(() => document.runs.find((run) => run.id === selectedRunId) ?? null, [document.runs, selectedRunId]);
+  const selectedBatchSession = useMemo(
+    () => document.batch_sessions?.find((session) => session.id === selectedBatchSessionId) ?? null,
+    [document.batch_sessions, selectedBatchSessionId]
+  );
+  const selectedRunFailedTaskIds = useMemo(
+    () =>
+      selectedRun?.task_runs
+        .filter((task) => task.state === "failed" || task.state === "skipped" || task.state === "cancelled")
+        .map((task) => task.node_id) ?? [],
+    [selectedRun]
+  );
+  const selectedRunRepairable = selectedRun ? selectedRun.status === "failed" || selectedRun.status === "cancelled" : false;
+  const selectedRunBatchSessions = useMemo(
+    () =>
+      selectedRun
+        ? (document.batch_sessions ?? []).filter(
+            (session) =>
+              (selectedRun.batch_session_ids ?? []).includes(session.id) ||
+              session.last_run_id === selectedRun.id ||
+              session.related_run_ids.includes(selectedRun.id)
+          )
+        : document.batch_sessions ?? [],
+    [document.batch_sessions, selectedRun]
+  );
   const selectedRunCachedOutputs = useMemo(
     () =>
       selectedRun
         ? selectedNode?.kind === "cache"
-          ? selectedRun.cached_outputs.filter((item) => item.node_id === selectedNode.id)
+        ? selectedRun.cached_outputs.filter((item) => item.node_id === selectedNode.id)
           : selectedRun.cached_outputs
         : [],
     [selectedNode, selectedRun]
@@ -2176,9 +2646,16 @@ function NoodlePipelineDesignerInner({
         type: "designer",
         position: node.position,
         draggable: true,
-        data: { id: node.id, label: node.label, kind: node.kind, selected: node.id === selectedNodeId }
+        data: {
+          id: node.id,
+          label: node.label,
+          kind: node.kind,
+          selected: node.id === selectedNodeId,
+          paramCount: node.params.length,
+          hasTransformation: document.transformations.some((item) => item.node_id === node.id)
+        }
       })),
-    [document.nodes, selectedNodeId]
+    [document.nodes, document.transformations, selectedNodeId]
   );
 
   const flowEdges = useMemo<FlowEdge[]>(
@@ -2522,6 +2999,61 @@ function NoodlePipelineDesignerInner({
   }, [document.runs, selectedRunId]);
 
   useEffect(() => {
+    if (!selectedRun) {
+      if (selectedRepairTaskIds.length) {
+        setSelectedRepairTaskIds([]);
+      }
+      return;
+    }
+    if (repairScope === "selected" || repairScope === "selected_and_dependents") {
+      const availableTaskIds = new Set(selectedRun.task_runs.map((task) => task.node_id));
+      const retainedIds = selectedRepairTaskIds.filter((taskId) => availableTaskIds.has(taskId));
+      if (retainedIds.length !== selectedRepairTaskIds.length) {
+        setSelectedRepairTaskIds(retainedIds);
+      }
+      return;
+    }
+    const nextTaskIds = selectedRunFailedTaskIds;
+    if (
+      nextTaskIds.length !== selectedRepairTaskIds.length ||
+      nextTaskIds.some((taskId, index) => taskId !== selectedRepairTaskIds[index])
+    ) {
+      setSelectedRepairTaskIds(nextTaskIds);
+    }
+  }, [repairScope, selectedRepairTaskIds, selectedRun, selectedRunFailedTaskIds]);
+
+  useEffect(() => {
+    if (!document.batch_sessions?.length) {
+      if (selectedBatchSessionId) {
+        setSelectedBatchSessionId(null);
+      }
+      return;
+    }
+
+    const preferredSession =
+      selectedRunBatchSessions[0] ??
+      (selectedBatchSessionId ? document.batch_sessions.find((session) => session.id === selectedBatchSessionId) ?? null : null) ??
+      document.batch_sessions[0];
+
+    if (preferredSession && preferredSession.id !== selectedBatchSessionId) {
+      setSelectedBatchSessionId(preferredSession.id);
+    }
+  }, [document.batch_sessions, selectedBatchSessionId, selectedRunBatchSessions]);
+
+  useEffect(() => {
+    if (!selectedBatchSession) {
+      if (batchResumeOffset) {
+        setBatchResumeOffset("");
+      }
+      return;
+    }
+    const suggestedOffset = String(selectedBatchSession.next_offset);
+    if (!batchResumeOffset || batchResumeOffset === "0") {
+      setBatchResumeOffset(suggestedOffset);
+    }
+  }, [batchResumeOffset, selectedBatchSession]);
+
+  useEffect(() => {
     const previousSnapshot = runNotificationSnapshotRef.current;
     const nextSnapshot = new Map<string, NoodleDesignerRun["status"]>();
     for (const run of document.runs) {
@@ -2625,7 +3157,8 @@ function NoodlePipelineDesignerInner({
   }, [momoSuggestion, updateDocument]);
 
   const sendMomoMessage = useCallback(() => {
-    if (!momoPrompt.trim()) {
+    const prompt = momoPrompt.trim();
+    if (!prompt) {
       return;
     }
     const targetTransformNode =
@@ -2640,12 +3173,12 @@ function NoodlePipelineDesignerInner({
           : null;
     const shouldStageTransformationSuggestion =
       Boolean(targetTransformNode) &&
-      isTransformationPrompt(momoPrompt) &&
-      shouldMaterializeTransformation(momoPrompt);
+      isTransformationPrompt(prompt) &&
+      shouldMaterializeTransformation(prompt);
     if (shouldStageTransformationSuggestion && targetTransformNode) {
       const nextTransformation = buildSuggestedTransformationRecord(
         targetTransformNode,
-        momoPrompt,
+        prompt,
         existingTransformationForNode
       );
       setMomoSuggestion({
@@ -2654,24 +3187,23 @@ function NoodlePipelineDesignerInner({
         targetNodeLabel: targetTransformNode.label,
         replacesExisting: Boolean(existingTransformationForNode)
       });
-    } else if (!isTransformationPrompt(momoPrompt)) {
+    } else if (!isTransformationPrompt(prompt)) {
       setMomoSuggestion(null);
     }
-    const userMessage: MomoMessage = { id: createId("momo"), role: "user", content: momoPrompt.trim() };
+    const userMessage: MomoMessage = { id: createId("momo"), role: "user", content: prompt };
     const reply: MomoMessage = {
       id: createId("momo"),
       role: "assistant",
       content:
         buildMomoReply(
-          momoPrompt,
+          prompt,
           document,
-          targetTransformNode,
-          existingTransformationForNode,
+          selectedNode,
+          selectedTransformation ?? selectedNodeTransformation ?? existingTransformationForNode,
           architectureOverview,
           designPrinciples,
           validations,
-          savedArchitecture,
-          agentMomoBrief
+          savedArchitecture
         ) +
         (shouldStageTransformationSuggestion && targetTransformNode
           ? ` A suggested transformation for ${targetTransformNode.label} is ready below. Review it and click Apply Suggestion to add it to the pipeline.`
@@ -2680,13 +3212,13 @@ function NoodlePipelineDesignerInner({
     setMomoMessages((current) => [...current, userMessage, reply]);
     setMomoPrompt("");
   }, [
-    agentMomoBrief,
     architectureOverview,
     designPrinciples,
     document,
     momoPrompt,
     savedArchitecture,
     selectedNode,
+    selectedTransformation,
     selectedNodeTransformation,
     validations
   ]);
@@ -2718,6 +3250,20 @@ function NoodlePipelineDesignerInner({
       });
       return;
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Run request failed.";
+      const isConnectivityError =
+        message.includes("Could not reach the local frontend API proxy") ||
+        message.includes("Could not reach the API at");
+      if (!isConnectivityError) {
+        setSyncError(message);
+        setNotice({
+          id: createId("notice"),
+          severity: "warning",
+          message
+        });
+        return;
+      }
+
       const nextRun: NoodleDesignerRun = {
         id: createId("run"),
         label: hasBlockingErrors ? "Manual debug run" : "Manual Airflow run",
@@ -2768,6 +3314,364 @@ function NoodlePipelineDesignerInner({
     }
   }, [deploymentSeed, document, intentName, plannedOrchestratorPlan, sources, updateDocument, validationErrors, workflowTemplate]);
 
+  const toggleRepairTask = useCallback((taskId: string) => {
+    setSelectedRepairTaskIds((current) =>
+      current.includes(taskId) ? current.filter((entry) => entry !== taskId) : [...current, taskId]
+    );
+  }, []);
+
+  const repairRun = useCallback(async () => {
+    if (!selectedRun) {
+      setNotice({
+        id: createId("notice"),
+        severity: "warning",
+        message: "Select a failed or cancelled run before starting a repair."
+      });
+      return;
+    }
+    if (!selectedRunRepairable) {
+      setNotice({
+        id: createId("notice"),
+        severity: "info",
+        message: "Repair is currently available only for failed or cancelled runs."
+      });
+      return;
+    }
+    if ((repairScope === "selected" || repairScope === "selected_and_dependents") && selectedRepairTaskIds.length === 0) {
+      setNotice({
+        id: createId("notice"),
+        severity: "warning",
+        message: "Select at least one task for a selected-task repair."
+      });
+      return;
+    }
+
+    setRemoteBusy(true);
+    try {
+      const response = await createNoodlePipelineRepairRun(document.id, selectedRun.id, {
+        repair_scope: repairScope,
+        repair_mode: repairMode,
+        task_ids: selectedRepairTaskIds,
+        reason: repairReason.trim(),
+        orchestration_mode: document.schedule.orchestration_mode,
+        document
+      });
+      const persisted = normalizeDocument(response.pipeline, intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan);
+      setDocument(persisted);
+      setSavedDocuments((current) => {
+        const nextDocuments = mergeSavedNoodlePipelines(current, persisted);
+        storeSavedNoodlePipelines(nextDocuments);
+        return nextDocuments;
+      });
+      setSelectedRunId(response.run.id);
+      setActiveTab("runs");
+      setSyncError(null);
+      setNotice({
+        id: createId("notice"),
+        severity: response.run.status === "failed" ? "warning" : "success",
+        message: `${response.run.label} is ${titleize(response.run.status)}.`
+      });
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Repair request failed.";
+      const isConnectivityError =
+        message.includes("Could not reach the local frontend API proxy") ||
+        message.includes("Could not reach the API at");
+      if (!isConnectivityError) {
+        setSyncError(message);
+        setNotice({
+          id: createId("notice"),
+          severity: "warning",
+          message
+        });
+        return;
+      }
+
+      const rerunTaskIds =
+        repairScope === "selected" || repairScope === "selected_and_dependents"
+          ? selectedRepairTaskIds
+          : selectedRunFailedTaskIds;
+      const nextRun: NoodleDesignerRun = {
+        id: createId("run"),
+        label: `Repair ${(selectedRun.repair_attempt ?? 0) + 1} for ${selectedRun.label}`,
+        orchestrator: "Apache Airflow",
+        status: "success",
+        trigger: "manual",
+        orchestration_mode: document.schedule.orchestration_mode,
+        started_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+        document_version: document.version,
+        root_run_id: selectedRun.root_run_id ?? selectedRun.id,
+        repair_of_run_id: selectedRun.id,
+        repair_attempt: (selectedRun.repair_attempt ?? 0) + 1,
+        repair_attempt_id: `${selectedRun.root_run_id ?? selectedRun.id}:repair-${(selectedRun.repair_attempt ?? 0) + 1}`,
+        repair_scope: repairScope,
+        repair_mode: repairMode,
+        repair_outcome: repairMode === "exact" ? "blocked" : "best_effort",
+        repair_reason: repairReason.trim() || null,
+        repaired_task_ids: rerunTaskIds,
+        reused_task_ids: selectedRun.task_runs
+          .filter((task) => !rerunTaskIds.includes(task.node_id))
+          .map((task) => task.node_id),
+        repair_plan: {
+          attempt_id: `${selectedRun.root_run_id ?? selectedRun.id}:repair-${(selectedRun.repair_attempt ?? 0) + 1}`,
+          base_run_id: selectedRun.id,
+          root_run_id: selectedRun.root_run_id ?? selectedRun.id,
+          document_version: document.version,
+          mode: repairMode,
+          outcome: repairMode === "exact" ? "blocked" : "best_effort",
+          scope: repairScope,
+          rerun_task_ids: rerunTaskIds,
+          reused_task_ids: selectedRun.task_runs
+            .filter((task) => !rerunTaskIds.includes(task.node_id))
+            .map((task) => task.node_id),
+          downstream_task_ids: [],
+          validation_issues: [
+            {
+              severity: repairMode === "exact" ? "error" : "warn",
+              code: isConnectivityError ? "repair_service_unavailable" : "repair_request_failed",
+              message: `${message} Repair was simulated locally only.`
+            }
+          ]
+        },
+        task_runs: selectedRun.task_runs.map((task) => ({
+          id: createId("task-run"),
+          node_id: task.node_id,
+          node_label: task.node_label,
+          state: rerunTaskIds.includes(task.node_id) ? "success" : "reused",
+          started_at: rerunTaskIds.includes(task.node_id) ? new Date().toISOString() : task.started_at,
+          finished_at: new Date().toISOString()
+        })),
+        logs: [
+          createRunLogs("Repair run", "log", `Repair created from ${selectedRun.label}.`),
+          createRunLogs("Repair run", "info", `Repair scope ${repairScope.replaceAll("_", " ")} targeted ${rerunTaskIds.length} tasks in ${repairMode.replaceAll("_", " ")} mode.`),
+          createRunLogs(
+            "Repair run",
+            "warn",
+            `${message} Repair was simulated locally only.`
+          )
+        ],
+        cached_outputs: selectedRun.cached_outputs,
+        sink_bindings: [],
+        lineage_records: []
+      };
+      updateDocument((current) => ({
+        ...current,
+        runs: [nextRun, ...current.runs]
+      }));
+      setSelectedRunId(nextRun.id);
+      setActiveTab("runs");
+      setSyncError(
+        error instanceof Error
+          ? `${error.message} Repair run was simulated locally only.`
+          : "Repair service unavailable; repair was simulated locally only."
+      );
+      setNotice({
+        id: createId("notice"),
+        severity: "info",
+        message: "Repair service was unavailable, so the repair was simulated locally."
+      });
+    } finally {
+      setRemoteBusy(false);
+    }
+  }, [
+    deploymentSeed,
+    document,
+    intentName,
+    plannedOrchestratorPlan,
+    repairMode,
+    repairReason,
+    repairScope,
+    selectedRepairTaskIds,
+    selectedRun,
+    selectedRunFailedTaskIds,
+    selectedRunRepairable,
+    sources,
+    updateDocument,
+    workflowTemplate
+  ]);
+
+  const resumeBatchSession = useCallback(async () => {
+    if (!selectedBatchSession) {
+      setNotice({
+        id: createId("notice"),
+        severity: "warning",
+        message: "Select a batch session before starting a resume."
+      });
+      return;
+    }
+
+    const parsedOffset = batchResumeOffset.trim() ? Number(batchResumeOffset) : selectedBatchSession.next_offset;
+    if (!Number.isFinite(parsedOffset) || parsedOffset < 1) {
+      setNotice({
+        id: createId("notice"),
+        severity: "warning",
+        message: "Resume offset must be a positive integer."
+      });
+      return;
+    }
+
+    setRemoteBusy(true);
+    try {
+      const response = await resumeNoodlePipelineBatchSession(document.id, selectedBatchSession.id, {
+        mode: batchResumeMode,
+        from_offset: parsedOffset,
+        reason: batchResumeReason.trim(),
+        document
+      });
+      const persisted = normalizeDocument(response.pipeline, intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan);
+      setDocument(persisted);
+      setSavedDocuments((current) => {
+        const nextDocuments = mergeSavedNoodlePipelines(current, persisted);
+        storeSavedNoodlePipelines(nextDocuments);
+        return nextDocuments;
+      });
+      setSelectedRunId(response.run.id);
+      setSelectedBatchSessionId(response.batch_session.id);
+      setBatchResumeOffset(String(response.batch_session.next_offset));
+      setSyncError(null);
+      setNotice({
+        id: createId("notice"),
+        severity: response.run.status === "failed" ? "warning" : "success",
+        message: `${response.run.label} is ${titleize(response.run.status)}.`
+      });
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Batch resume request failed.";
+      const isConnectivityError =
+        message.includes("Could not reach the local frontend API proxy") ||
+        message.includes("Could not reach the API at");
+      if (!isConnectivityError) {
+        setSyncError(message);
+        setNotice({
+          id: createId("notice"),
+          severity: "warning",
+          message
+        });
+        return;
+      }
+
+      const runId = createId("run");
+      const rootRunId = selectedBatchSession.root_run_id ?? selectedRun?.root_run_id ?? runId;
+      const blocked = batchResumeMode === "exact" && !selectedBatchSession.exact_supported;
+      const committed = !blocked;
+      const nextSession: NoodleDesignerBatchSession = {
+        ...selectedBatchSession,
+        staged_count: committed ? selectedBatchSession.expected_count : selectedBatchSession.staged_count,
+        committed_count: committed ? selectedBatchSession.expected_count : selectedBatchSession.committed_count,
+        next_offset: committed ? selectedBatchSession.expected_count + 1 : selectedBatchSession.next_offset,
+        max_contiguous_committed_offset: committed ? selectedBatchSession.expected_count : selectedBatchSession.max_contiguous_committed_offset,
+        status: committed ? "committed" : selectedBatchSession.status,
+        committed_version: committed ? `v${document.version}:${rootRunId}:local-resume:${selectedBatchSession.source_node_id}` : selectedBatchSession.committed_version,
+        last_run_id: runId,
+        root_run_id: rootRunId,
+        related_run_ids: [...selectedBatchSession.related_run_ids, runId],
+        resume_token: {
+          ...selectedBatchSession.resume_token,
+          next_offset: committed ? selectedBatchSession.expected_count + 1 : selectedBatchSession.next_offset,
+          last_committed_at: committed ? new Date().toISOString() : selectedBatchSession.resume_token.last_committed_at
+        },
+        attempts: [
+          ...selectedBatchSession.attempts,
+          {
+            id: createId("batch-attempt"),
+            run_id: runId,
+            kind: "resume",
+            mode: batchResumeMode,
+            status: blocked ? "blocked" : "committed",
+            from_offset: parsedOffset,
+            started_at: new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+            staged_count: committed ? selectedBatchSession.expected_count : selectedBatchSession.staged_count,
+            next_offset: committed ? selectedBatchSession.expected_count + 1 : selectedBatchSession.next_offset,
+            committed_version: committed ? `v${document.version}:${rootRunId}:local-resume:${selectedBatchSession.source_node_id}` : null,
+            reason: `${batchResumeReason.trim() || "Connectivity fallback."} Resume was simulated locally only.`
+          }
+        ]
+      };
+      const nextRun: NoodleDesignerRun = {
+        id: runId,
+        label: `Resume batch ${selectedBatchSession.source_batch_id}`,
+        orchestrator: "Apache Airflow",
+        status: blocked ? "failed" : "success",
+        trigger: "manual",
+        orchestration_mode: selectedRun?.orchestration_mode ?? document.schedule.orchestration_mode,
+        started_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+        document_version: document.version,
+        root_run_id: rootRunId,
+        repair_attempt_id: `${rootRunId}:local-resume`,
+        repair_mode: batchResumeMode,
+        repair_outcome: blocked ? "blocked" : batchResumeMode,
+        repair_reason: batchResumeReason.trim() || null,
+        batch_session_ids: [selectedBatchSession.id],
+        task_runs: (selectedRun?.task_runs ?? []).map((task) => ({
+          id: createId("task-run"),
+          node_id: task.node_id,
+          node_label: task.node_label,
+          state:
+            task.node_id === selectedBatchSession.source_node_id
+              ? blocked
+                ? "failed"
+                : "success"
+              : (selectedRun?.task_runs.some((runTask) => runTask.node_id === selectedBatchSession.source_node_id) ?? false)
+                ? "reused"
+                : task.state,
+          started_at: new Date().toISOString(),
+          finished_at: new Date().toISOString()
+        })),
+        logs: [
+          createRunLogs("Batch resume", "log", `Resume created for ${selectedBatchSession.source_batch_id} from offset ${parsedOffset}.`),
+          createRunLogs(
+            "Batch resume",
+            blocked ? "warn" : "info",
+            blocked
+              ? `${message} Exact resume remained blocked because the selected batch session is not exact-capable.`
+              : `${message} Resume was simulated locally only.`
+          )
+        ],
+        cached_outputs: [],
+        sink_bindings: selectedRun?.sink_bindings ?? [],
+        lineage_records: selectedRun?.lineage_records ?? []
+      };
+      updateDocument((current) => ({
+        ...current,
+        batch_sessions: (current.batch_sessions ?? []).map((session) => (session.id === nextSession.id ? nextSession : session)),
+        runs: [nextRun, ...current.runs]
+      }));
+      setSelectedRunId(nextRun.id);
+      setSelectedBatchSessionId(nextSession.id);
+      setBatchResumeOffset(String(nextSession.next_offset));
+      setSyncError(
+        blocked
+          ? `${message} Exact resume stayed blocked in local fallback mode.`
+          : `${message} Batch resume was simulated locally only.`
+      );
+      setNotice({
+        id: createId("notice"),
+        severity: blocked ? "warning" : "info",
+        message: blocked
+          ? "Batch resume stayed blocked because exact sink support could not be proven."
+          : "Batch resume was simulated locally because the API was unavailable."
+      });
+    } finally {
+      setRemoteBusy(false);
+    }
+  }, [
+    batchResumeMode,
+    batchResumeOffset,
+    batchResumeReason,
+    deploymentSeed,
+    document,
+    intentName,
+    plannedOrchestratorPlan,
+    selectedBatchSession,
+    selectedRun,
+    sources,
+    updateDocument,
+    workflowTemplate
+  ]);
+
   const filteredLogs = useMemo(
     () => selectedRun?.logs.filter((entry) => (logFilter === "all" ? true : entry.level === logFilter)) ?? [],
     [logFilter, selectedRun]
@@ -2799,6 +3703,35 @@ function NoodlePipelineDesignerInner({
     : "Ready to publish";
   const repositoryCoverage = document.connection_refs.length + document.metadata_assets.length + document.schemas.length + document.transformations.length;
   const graphDensityLabel = `${document.nodes.length} nodes / ${document.edges.length} edges`;
+  const orchestrationScore = Math.max(
+    18,
+    Math.min(100, Math.round(((document.nodes.length * 1.2 + document.edges.length + repositoryCoverage) / Math.max(3, document.nodes.length * 3.2)) * 100))
+  );
+  const repositoryDepth = Math.max(
+    12,
+    Math.min(
+      100,
+      Math.round(
+        ((document.connection_refs.length * 1.6 + document.metadata_assets.length + document.schemas.length + document.transformations.length * 1.2) /
+          Math.max(2, document.nodes.length * 2.4)) *
+          100
+      )
+    )
+  );
+  const focusTitle = selectedNode
+    ? `${selectedNode.label} selected`
+    : selectedEdge
+      ? "Dependency selected"
+      : activeTab === "runs"
+        ? "Run review mode"
+        : "Canvas ready";
+  const focusDescription = selectedNode
+    ? `${titleize(selectedNode.kind)} node with ${selectedNode.params.length} parameter${selectedNode.params.length === 1 ? "" : "s"}${selectedNodeTransformation ? ` and linked transformation ${selectedNodeTransformation.name}.` : "."}`
+    : selectedEdge
+      ? `${document.nodes.find((node) => node.id === selectedEdge.source)?.label ?? selectedEdge.source} flows into ${document.nodes.find((node) => node.id === selectedEdge.target)?.label ?? selectedEdge.target}.`
+      : activeTab === "runs"
+        ? "Inspect cached previews, task states, and repair readiness without leaving the designer."
+        : "Drag stages onto the canvas, connect them left-to-right, and keep repository contracts in sync with the graph.";
   const repositoryVisible = panelFocus === null || panelFocus === "repository";
   const centerVisible = panelFocus === null || panelFocus === "canvas";
   const momoVisible = panelFocus === null || panelFocus === "momo";
@@ -2809,111 +3742,247 @@ function NoodlePipelineDesignerInner({
     <Stack
       spacing={2.5}
       sx={{
+        "--panel-border": "rgba(154, 177, 205, 0.34)",
+        "--panel-surface": "rgba(255,255,255,0.84)",
         minHeight: { xs: "auto", lg: "calc(100vh - 180px)" },
+        position: "relative",
+        "&::before": {
+          content: '""',
+          position: "absolute",
+          inset: "140px -10% auto auto",
+          width: 280,
+          height: 280,
+          borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(111, 208, 255, 0.12) 0%, rgba(111, 208, 255, 0) 72%)",
+          pointerEvents: "none"
+        },
         "& .MuiButton-root": noodleButtonBaseSx
       }}
     >
       <Card
         sx={{
-          borderRadius: 5,
-          border: "1px solid #d8e3f0",
-          boxShadow: "none",
+          borderRadius: 6,
           overflow: "hidden",
+          border: "1px solid rgba(10, 37, 71, 0.18)",
+          boxShadow: "0 30px 70px rgba(15, 23, 42, 0.16)",
           background:
-            "radial-gradient(circle at top left, rgba(49, 111, 214, 0.14), transparent 28%), radial-gradient(circle at top right, rgba(14, 116, 144, 0.14), transparent 26%), linear-gradient(180deg, #fdfefe 0%, #f6faff 100%)"
+            "radial-gradient(circle at 12% 20%, rgba(111, 208, 255, 0.24), transparent 20%), radial-gradient(circle at 88% 18%, rgba(246, 196, 92, 0.2), transparent 18%), linear-gradient(135deg, #081b38 0%, #133d73 48%, #205c86 100%)"
         }}
       >
-        <CardContent sx={{ p: { xs: 2.25, md: 2.75 } }}>
-          <Stack spacing={2.25}>
-            <Stack direction={{ xs: "column", xl: "row" }} justifyContent="space-between" spacing={2}>
-              <Stack spacing={1}>
-                <Typography variant="overline" sx={{ color: "var(--accent)", letterSpacing: "0.14em", fontWeight: 800 }}>
+        <CardContent sx={{ p: { xs: 2.25, md: 3 } }}>
+          <Stack spacing={2.5}>
+            <Stack direction={{ xs: "column", xl: "row" }} justifyContent="space-between" spacing={2.25}>
+              <Stack spacing={1.2} sx={{ color: "#f8fbff", maxWidth: 980 }}>
+                <Typography variant="overline" sx={{ color: "rgba(214, 234, 255, 0.82)", letterSpacing: "0.18em", fontWeight: 900 }}>
                   Noodle Design Studio
                 </Typography>
-                <Typography variant="h4" sx={{ letterSpacing: "-0.03em" }}>
+                <Typography variant="h3" sx={{ fontSize: { xs: "2rem", md: "2.9rem" }, letterSpacing: "-0.05em", lineHeight: 0.96 }}>
                   {document.name}
                 </Typography>
-                <Typography variant="body1" sx={{ color: "var(--muted)", maxWidth: 960 }}>
-                  Build the working pipeline spec, wire repository contracts, and move from draft to publishable DAG execution without leaving the designer.
+                <Typography variant="body1" sx={{ color: "rgba(232, 241, 255, 0.8)", maxWidth: 880, fontSize: { xs: "0.98rem", md: "1.02rem" } }}>
+                  Shape the DAG, tune repository-backed contracts, and drive the pipeline from working sketch to publishable release inside one high-signal workspace.
                 </Typography>
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                  <Chip label={publishReadinessLabel} color={validationErrors.length ? "warning" : "success"} sx={{ borderRadius: 999, fontWeight: 700 }} />
-                  <Chip label={document.status === "published" ? "Published workspace" : "Working draft"} sx={{ borderRadius: 999, bgcolor: document.status === "published" ? "#e8fff1" : "#eef6ff", fontWeight: 700 }} />
-                  {latestPublished ? <Chip label={`Latest release v${latestPublished.version}`} variant="outlined" sx={{ borderRadius: 999, fontWeight: 700 }} /> : null}
-                  {workflowTemplate ? <Chip label={workflowTemplate.replaceAll("-", " ")} sx={{ borderRadius: 999, bgcolor: "#f1f5f9", fontWeight: 700, textTransform: "capitalize" }} /> : null}
+                  <Chip
+                    label={publishReadinessLabel}
+                    sx={{
+                      borderRadius: 999,
+                      fontWeight: 800,
+                      bgcolor: validationErrors.length ? "rgba(250, 204, 21, 0.18)" : "rgba(74, 222, 128, 0.16)",
+                      color: validationErrors.length ? "#fde68a" : "#bbf7d0",
+                      border: "1px solid rgba(255,255,255,0.16)"
+                    }}
+                  />
+                  <Chip
+                    label={document.status === "published" ? "Published workspace" : "Working draft"}
+                    sx={{
+                      borderRadius: 999,
+                      fontWeight: 800,
+                      bgcolor: "rgba(255,255,255,0.12)",
+                      color: "#f8fbff",
+                      border: "1px solid rgba(255,255,255,0.14)"
+                    }}
+                  />
+                  {latestPublished ? (
+                    <Chip
+                      label={`Latest release v${latestPublished.version}`}
+                      sx={{ borderRadius: 999, fontWeight: 800, bgcolor: "rgba(255,255,255,0.08)", color: "#dceafd" }}
+                    />
+                  ) : null}
+                  {workflowTemplate ? (
+                    <Chip
+                      label={workflowTemplate.replaceAll("-", " ")}
+                      sx={{ borderRadius: 999, fontWeight: 800, textTransform: "capitalize", bgcolor: "rgba(119, 217, 255, 0.16)", color: "#b5f0ff" }}
+                    />
+                  ) : null}
                 </Stack>
               </Stack>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                <Button
-                  variant="outlined"
-                  onClick={() => setDocument(buildSeedDocument(intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan))}
-                  sx={noodleButtonSecondarySx}
-                  disabled={remoteBusy}
+              <Stack spacing={1.1} sx={{ minWidth: { xl: 380 } }}>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap" useFlexGap>
+                  <Button
+                    variant="outlined"
+                    onClick={() => setDocument(buildSeedDocument(intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan))}
+                    sx={{
+                      ...noodleButtonSecondarySx,
+                      bgcolor: "rgba(255,255,255,0.1)",
+                      color: "#f8fbff",
+                      borderColor: "rgba(255,255,255,0.2)",
+                      "&:hover": {
+                        borderColor: "rgba(255,255,255,0.35)",
+                        bgcolor: "rgba(255,255,255,0.16)"
+                      }
+                    }}
+                    disabled={remoteBusy}
+                  >
+                    Reset Seed
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={() => void handleSaveVersion("draft")}
+                    sx={{
+                      ...noodleButtonSecondarySx,
+                      bgcolor: "rgba(255,255,255,0.1)",
+                      color: "#f8fbff",
+                      borderColor: "rgba(255,255,255,0.2)",
+                      "&:hover": {
+                        borderColor: "rgba(255,255,255,0.35)",
+                        bgcolor: "rgba(255,255,255,0.16)"
+                      }
+                    }}
+                    disabled={remoteBusy}
+                  >
+                    {remoteBusy ? "Saving..." : "Save Draft"}
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={() => void triggerRun()}
+                    sx={{
+                      ...noodleButtonSecondarySx,
+                      bgcolor: "rgba(255,255,255,0.1)",
+                      color: "#f8fbff",
+                      borderColor: "rgba(255,255,255,0.2)",
+                      "&:hover": {
+                        borderColor: "rgba(255,255,255,0.35)",
+                        bgcolor: "rgba(255,255,255,0.16)"
+                      }
+                    }}
+                    disabled={remoteBusy}
+                  >
+                    {remoteBusy ? "Working..." : "Run Pipeline"}
+                  </Button>
+                  <Button
+                    variant="contained"
+                    disabled={validationErrors.length > 0 || remoteBusy}
+                    onClick={() => void handleSaveVersion("published")}
+                    sx={{
+                      ...noodleButtonPrimarySx,
+                      bgcolor: "#ffd166",
+                      color: "#0b1f3a",
+                      boxShadow: "0 18px 30px rgba(255, 209, 102, 0.22)",
+                      "&:hover": {
+                        bgcolor: "#ffc247"
+                      }
+                    }}
+                  >
+                    Publish Release
+                  </Button>
+                </Stack>
+                <Box
+                  sx={{
+                    p: 1.5,
+                    borderRadius: 4,
+                    border: "1px solid rgba(255,255,255,0.16)",
+                    bgcolor: "rgba(5, 18, 37, 0.26)",
+                    color: "#dceafd"
+                  }}
                 >
-                  Reset Seed
-                </Button>
-                <Button variant="outlined" onClick={() => void handleSaveVersion("draft")} sx={noodleButtonSecondarySx} disabled={remoteBusy}>
-                  {remoteBusy ? "Saving..." : "Save Draft"}
-                </Button>
-                <Button variant="outlined" onClick={() => void triggerRun()} sx={noodleButtonSecondarySx} disabled={remoteBusy}>
-                  {remoteBusy ? "Working..." : "Run Pipeline"}
-                </Button>
-                <Button variant="contained" disabled={validationErrors.length > 0 || remoteBusy} onClick={() => void handleSaveVersion("published")} sx={noodleButtonPrimarySx}>
-                  Publish Release
-                </Button>
+                  <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} justifyContent="space-between">
+                    <Box>
+                      <Typography variant="caption" sx={noodleSectionLabelSx}>
+                        Focus
+                      </Typography>
+                      <Typography variant="h6" sx={{ mt: 0.35, color: "#fff", letterSpacing: "-0.03em" }}>
+                        {focusTitle}
+                      </Typography>
+                      <Typography variant="body2" sx={{ mt: 0.35, color: "rgba(232, 241, 255, 0.78)", maxWidth: 520 }}>
+                        {focusDescription}
+                      </Typography>
+                    </Box>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ alignSelf: { md: "flex-start" } }}>
+                      <Chip label={`${orchestrationScore}% orchestration`} sx={{ bgcolor: "rgba(111, 208, 255, 0.16)", color: "#b5f0ff", fontWeight: 800 }} />
+                      <Chip label={`${repositoryDepth}% repository depth`} sx={{ bgcolor: "rgba(255, 209, 102, 0.16)", color: "#ffe7a8", fontWeight: 800 }} />
+                      <Chip label={panelFocus ? `${titleize(panelFocus)} maximized` : "Balanced layout"} sx={{ bgcolor: "rgba(255,255,255,0.08)", color: "#eef6ff", fontWeight: 800 }} />
+                    </Stack>
+                  </Stack>
+                </Box>
               </Stack>
             </Stack>
 
             <Grid container spacing={1.5}>
               <Grid item xs={12} sm={6} xl={3}>
-                <Box sx={{ p: 1.6, borderRadius: 3.5, bgcolor: "rgba(255,255,255,0.82)", border: "1px solid #dde8f5" }}>
-                  <Typography variant="caption" sx={{ color: "var(--muted)", fontWeight: 800, letterSpacing: "0.08em" }}>
-                    GRAPH
+                <Box sx={noodleMetricCardSx}>
+                  <Typography variant="caption" sx={noodleSectionLabelSx}>
+                    Graph Density
                   </Typography>
-                  <Typography variant="h6" sx={{ mt: 0.35 }}>
+                  <Typography variant="h4" sx={{ mt: 0.55, letterSpacing: "-0.05em" }}>
                     {graphDensityLabel}
                   </Typography>
-                  <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                    Interactive DAG canvas with editable node contracts.
+                  <Typography variant="body2" sx={{ mt: 0.55, color: "rgba(232, 241, 255, 0.76)" }}>
+                    Interactive DAG canvas with deeper node cards and clearer flow hierarchy.
                   </Typography>
+                  <Box sx={{ mt: 1.4, height: 6, borderRadius: 999, bgcolor: "rgba(255,255,255,0.14)" }}>
+                    <Box sx={{ width: `${orchestrationScore}%`, height: 1, borderRadius: 999, bgcolor: "#78d8ff" }} />
+                  </Box>
                 </Box>
               </Grid>
               <Grid item xs={12} sm={6} xl={3}>
-                <Box sx={{ p: 1.6, borderRadius: 3.5, bgcolor: "rgba(255,255,255,0.82)", border: "1px solid #dde8f5" }}>
-                  <Typography variant="caption" sx={{ color: "var(--muted)", fontWeight: 800, letterSpacing: "0.08em" }}>
-                    REPOSITORY
+                <Box sx={noodleMetricCardSx}>
+                  <Typography variant="caption" sx={noodleSectionLabelSx}>
+                    Repository
                   </Typography>
-                  <Typography variant="h6" sx={{ mt: 0.35 }}>
+                  <Typography variant="h4" sx={{ mt: 0.55, letterSpacing: "-0.05em" }}>
                     {repositoryCoverage} contracts
                   </Typography>
-                  <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                    Connections, metadata, schemas, and transformations travel with the spec.
-                  </Typography>
+                    <Typography variant="body2" sx={{ mt: 0.55, color: "rgba(232, 241, 255, 0.76)" }}>
+                      Relative repository coverage for this DAG, based on connection refs, schemas, metadata assets, and transformations versus graph size.
+                    </Typography>
+                    <Typography variant="body2" sx={{ mt: 1.05, color: "#ffe7a8", fontWeight: 800 }}>
+                      {document.connection_refs.length} connections, {document.schemas.length} schemas, {document.metadata_assets.length} metadata assets, {document.transformations.length} transforms.
+                    </Typography>
+                    <Box sx={{ mt: 1.4, height: 6, borderRadius: 999, bgcolor: "rgba(255,255,255,0.14)" }}>
+                      <Box sx={{ width: `${repositoryDepth}%`, height: 1, borderRadius: 999, bgcolor: "#ffd166" }} />
+                    </Box>
                 </Box>
               </Grid>
               <Grid item xs={12} sm={6} xl={3}>
-                <Box sx={{ p: 1.6, borderRadius: 3.5, bgcolor: "rgba(255,255,255,0.82)", border: "1px solid #dde8f5" }}>
-                  <Typography variant="caption" sx={{ color: "var(--muted)", fontWeight: 800, letterSpacing: "0.08em" }}>
-                    RELEASE
+                <Box sx={noodleMetricCardSx}>
+                  <Typography variant="caption" sx={noodleSectionLabelSx}>
+                    Release State
                   </Typography>
-                  <Typography variant="h6" sx={{ mt: 0.35 }}>
+                  <Typography variant="h4" sx={{ mt: 0.55, letterSpacing: "-0.05em" }}>
                     v{document.version}
                   </Typography>
-                  <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                    {latestPublished ? `Last published version is v${latestPublished.version}.` : "No published release yet."}
+                  <Typography variant="body2" sx={{ mt: 0.55, color: "rgba(232, 241, 255, 0.76)" }}>
+                    {latestPublished ? `Last published version is v${latestPublished.version}.` : "This workspace has not been published yet."}
+                  </Typography>
+                  <Typography variant="body2" sx={{ mt: 1.05, color: validationErrors.length ? "#ffe7a8" : "#bbf7d0", fontWeight: 800 }}>
+                    {validationErrors.length ? "Resolve blockers to publish cleanly." : "Release gate is clear."}
                   </Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} sm={6} xl={3}>
-                <Box sx={{ p: 1.6, borderRadius: 3.5, bgcolor: "rgba(255,255,255,0.82)", border: "1px solid #dde8f5" }}>
-                  <Typography variant="caption" sx={{ color: "var(--muted)", fontWeight: 800, letterSpacing: "0.08em" }}>
-                    RUNS
+                <Box sx={noodleMetricCardSx}>
+                  <Typography variant="caption" sx={noodleSectionLabelSx}>
+                    Test Runs
                   </Typography>
-                  <Typography variant="h6" sx={{ mt: 0.35 }}>
-                    {document.runs.length} history entries
+                  <Typography variant="h4" sx={{ mt: 0.55, letterSpacing: "-0.05em" }}>
+                    {document.runs.length} entries
                   </Typography>
-                  <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                    {selectedRun ? `Latest run is ${titleize(selectedRun.status)}.` : "No run selected yet."}
+                  <Typography variant="body2" sx={{ mt: 0.55, color: "rgba(232, 241, 255, 0.76)" }}>
+                    {selectedRun ? `Latest focus is ${selectedRun.label} with ${titleize(selectedRun.status)} status.` : "Trigger a run to review logs, cache previews, and repair options."}
+                  </Typography>
+                  <Typography variant="body2" sx={{ mt: 1.05, color: "#b5f0ff", fontWeight: 800 }}>
+                    {document.schedule.enabled ? "Scheduler enabled." : "Manual execution mode."}
                   </Typography>
                 </Box>
               </Grid>
@@ -2936,7 +4005,7 @@ function NoodlePipelineDesignerInner({
           <Stack spacing={2}>
             {activeTab === "builder" ? (
               <>
-            <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "#f8fbff" }}>
+            <Card sx={{ ...noodleGlassCardSx, bgcolor: "rgba(243, 249, 255, 0.82)" }}>
               <CardContent sx={{ p: { xs: 1.25, md: 1.5 } }}>
                 <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5} alignItems={{ xs: "flex-start", md: "center" }}>
                   <Box>
@@ -2953,17 +4022,26 @@ function NoodlePipelineDesignerInner({
               </CardContent>
             </Card>
 
-            <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
+            <Card sx={noodleGlassCardSx}>
               <CardContent sx={{ p: 2.2 }}>
                 <Stack spacing={1.25}>
                   <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
                     <Box>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>DAG Canvas</Typography>
-                      <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                        Drag nodes from the repository, connect them on the canvas, and generate an Airflow-friendly DAG without mixing runtime code into the spec.
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: "-0.02em" }}>DAG Canvas</Typography>
+                      <Typography variant="body2" sx={{ color: "var(--muted)", maxWidth: 760 }}>
+                        Drag stages from the repository, snap dependencies into place, and refine an orchestration-ready DAG without mixing runtime code into the portable spec.
                       </Typography>
                     </Box>
                     <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={() => void triggerRun()}
+                        disabled={remoteBusy}
+                        sx={noodleButtonPrimarySx}
+                      >
+                        {remoteBusy ? "Working..." : "Run Pipeline"}
+                      </Button>
                       <Button size="small" onClick={() => flowInstance?.fitView({ padding: 0.16 })}>Fit View</Button>
                       <Tooltip title={canvasCollapsed ? "Expand canvas panel" : "Collapse canvas panel"}>
                         <IconButton
@@ -3003,6 +4081,12 @@ function NoodlePipelineDesignerInner({
                       ) : null}
                     </Stack>
                   </Stack>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    <Chip label={focusTitle} sx={{ bgcolor: "#e9f5ff", color: "#0d4f8b", fontWeight: 800 }} />
+                    <Chip label={`${document.nodes.length} stages`} sx={{ bgcolor: "#fff7e6", color: "#8a5a00", fontWeight: 800 }} />
+                    <Chip label={`${document.edges.length} dependencies`} sx={{ bgcolor: "#edf8ef", color: "#22603d", fontWeight: 800 }} />
+                    <Chip label="Double-click a node to rename" sx={{ bgcolor: "#f3f4f6", color: "#475467", fontWeight: 700 }} />
+                  </Stack>
                   {!canvasCollapsed ? (
                     <Box
                       data-testid="designer-canvas"
@@ -3011,7 +4095,16 @@ function NoodlePipelineDesignerInner({
                         event.preventDefault();
                         event.dataTransfer.dropEffect = "move";
                       }}
-                      sx={{ height: canvasHeight, minHeight: 520, borderRadius: 3, overflow: "hidden", border: "1px solid var(--line)", bgcolor: "#f8fbff" }}
+                      sx={{
+                        height: canvasHeight,
+                        minHeight: 520,
+                        borderRadius: 4,
+                        overflow: "hidden",
+                        position: "relative",
+                        border: "1px solid rgba(145, 169, 198, 0.35)",
+                        background:
+                          "radial-gradient(circle at 0% 0%, rgba(120, 216, 255, 0.22), transparent 20%), radial-gradient(circle at 100% 0%, rgba(255, 209, 102, 0.18), transparent 18%), linear-gradient(180deg, #f9fcff 0%, #f1f7ff 100%)"
+                      }}
                     >
                       <ReactFlow
                         nodes={flowNodes}
@@ -3042,11 +4135,65 @@ function NoodlePipelineDesignerInner({
                         nodesConnectable
                         elementsSelectable
                         connectionMode={ConnectionMode.Loose}
+                        minZoom={0.3}
+                        maxZoom={1.8}
+                        defaultEdgeOptions={{
+                          animated: false,
+                          style: { stroke: "#2f6ec9", strokeWidth: 2.5 },
+                          markerEnd: { type: MarkerType.ArrowClosed, color: "#2f6ec9" }
+                        }}
+                        snapToGrid
+                        snapGrid={[20, 20]}
+                        proOptions={{ hideAttribution: true }}
+                        style={{ background: "transparent" }}
                       >
-                        <MiniMap />
-                        <Controls />
-                        <Background color="#d7e5f5" gap={20} />
+                        <MiniMap
+                          pannable
+                          zoomable
+                          nodeStrokeColor={(node) => NODE_COLORS[(node.data?.kind as NoodleDesignerNodeKind) ?? "source"].stroke}
+                          nodeColor={(node) => alpha(NODE_COLORS[(node.data?.kind as NoodleDesignerNodeKind) ?? "source"].fill, 0.92)}
+                          maskColor="rgba(8, 27, 56, 0.08)"
+                          style={{
+                            background: "rgba(255,255,255,0.88)",
+                            border: "1px solid rgba(148, 163, 184, 0.28)",
+                            borderRadius: 18
+                          }}
+                        />
+                        <Controls
+                          style={{
+                            border: "1px solid rgba(148, 163, 184, 0.32)",
+                            borderRadius: 18,
+                            overflow: "hidden",
+                            boxShadow: "0 10px 28px rgba(15, 23, 42, 0.10)"
+                          }}
+                        />
+                        <Background color="#cfe0f2" gap={20} size={1.2} />
                       </ReactFlow>
+                      <Stack
+                        spacing={0.6}
+                        sx={{
+                          position: "absolute",
+                          left: 16,
+                          bottom: 16,
+                          p: 1.3,
+                          maxWidth: 340,
+                          borderRadius: 3,
+                          border: "1px solid rgba(255,255,255,0.8)",
+                          bgcolor: "rgba(255,255,255,0.78)",
+                          backdropFilter: "blur(16px)",
+                          boxShadow: "0 16px 34px rgba(15, 23, 42, 0.10)"
+                        }}
+                      >
+                        <Typography variant="caption" sx={{ color: "#0f4f9b", fontWeight: 900, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+                          Canvas Focus
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: "#17315c", fontWeight: 700 }}>
+                          {focusTitle}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: "#60779c" }}>
+                          {focusDescription}
+                        </Typography>
+                      </Stack>
                     </Box>
                   ) : (
                     <Alert severity="info">
@@ -3057,7 +4204,7 @@ function NoodlePipelineDesignerInner({
               </CardContent>
             </Card>
 
-            <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
+            <Card sx={noodleGlassCardSx}>
               <CardContent sx={{ p: 2.2 }}>
                 <Stack spacing={1.25}>
                   <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Configuration</Typography>
@@ -3141,22 +4288,76 @@ function NoodlePipelineDesignerInner({
                           {latestCachedOutputForSelectedNode ? (
                             <Box sx={{ p: 1.2, borderRadius: 2.5, border: "1px solid var(--line)", bgcolor: "#fffaf2" }}>
                               <Stack spacing={1}>
-                                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                  <Chip size="small" label={`Captured ${formatBytes(latestCachedOutputForSelectedNode.output.captured_bytes)}`} />
-                                  <Chip size="small" label={`Preview ${formatBytes(latestCachedOutputForSelectedNode.output.preview_bytes)}`} />
-                                  <Chip size="small" label={`${latestCachedOutputForSelectedNode.output.approx_records.toLocaleString()} rows est.`} />
+                                <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
+                                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                    <Chip size="small" label={`Captured ${formatBytes(latestCachedOutputForSelectedNode.output.captured_bytes)}`} />
+                                    <Chip size="small" label={`Preview ${formatBytes(latestCachedOutputForSelectedNode.output.preview_bytes)}`} />
+                                    <Chip size="small" label={`${latestCachedOutputForSelectedNode.output.approx_records.toLocaleString()} rows est.`} />
+                                  </Stack>
+                                  <Stack direction="row" spacing={1}>
+                                    <Button
+                                      size="small"
+                                      variant={cachedOutputViewMode === "preview" ? "contained" : "outlined"}
+                                      onClick={() => setCachedOutputViewMode("preview")}
+                                    >
+                                      Preview
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      variant={cachedOutputViewMode === "table" ? "contained" : "outlined"}
+                                      onClick={() => setCachedOutputViewMode("table")}
+                                    >
+                                      Table
+                                    </Button>
+                                  </Stack>
                                 </Stack>
                                 <Typography variant="caption" sx={{ color: "var(--muted)" }}>
                                   {latestCachedOutputForSelectedNode.output.summary}
                                 </Typography>
-                                <TextField
-                                  label="Latest Cached Preview"
-                                  multiline
-                                  minRows={6}
-                                  maxRows={12}
-                                  value={latestCachedOutputForSelectedNode.output.preview_text}
-                                  InputProps={{ readOnly: true }}
-                                />
+                                {cachedOutputViewMode === "table" && parseCachedOutputTable(latestCachedOutputForSelectedNode.output.preview_text) ? (
+                                  <TableContainer
+                                    sx={{
+                                      maxHeight: 320,
+                                      borderRadius: 2.5,
+                                      border: "1px solid rgba(154, 177, 205, 0.34)",
+                                      bgcolor: "#fff"
+                                    }}
+                                  >
+                                    <Table stickyHeader size="small">
+                                      <TableHead>
+                                        <TableRow>
+                                          {parseCachedOutputTable(latestCachedOutputForSelectedNode.output.preview_text)?.columns.map((column) => (
+                                            <TableCell key={column} sx={{ fontWeight: 800, bgcolor: "#eef6ff", whiteSpace: "nowrap" }}>
+                                              {column}
+                                            </TableCell>
+                                          ))}
+                                        </TableRow>
+                                      </TableHead>
+                                      <TableBody>
+                                        {parseCachedOutputTable(latestCachedOutputForSelectedNode.output.preview_text)?.rows.map((row, rowIndex) => (
+                                          <TableRow key={`${latestCachedOutputForSelectedNode.output.id}-row-${rowIndex}`} hover>
+                                            {parseCachedOutputTable(latestCachedOutputForSelectedNode.output.preview_text)?.columns.map((column) => (
+                                              <TableCell key={`${column}-${rowIndex}`} sx={{ maxWidth: 240, verticalAlign: "top" }}>
+                                                <Typography variant="caption" sx={{ color: "#314760", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                                  {formatCachedCellValue(row[column])}
+                                                </Typography>
+                                              </TableCell>
+                                            ))}
+                                          </TableRow>
+                                        ))}
+                                      </TableBody>
+                                    </Table>
+                                  </TableContainer>
+                                ) : (
+                                  <TextField
+                                    label="Latest Cached Preview"
+                                    multiline
+                                    minRows={6}
+                                    maxRows={12}
+                                    value={latestCachedOutputForSelectedNode.output.preview_text}
+                                    InputProps={{ readOnly: true }}
+                                  />
+                                )}
                                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                                   <Button size="small" onClick={() => setActiveTab("runs")}>
                                     Open Test Run Tab
@@ -3218,7 +4419,7 @@ function NoodlePipelineDesignerInner({
               </>
             ) : (
               <>
-                <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", bgcolor: "#f8fbff" }}>
+                <Card sx={{ ...noodleGlassCardSx, bgcolor: "rgba(243, 249, 255, 0.82)" }}>
                   <CardContent sx={{ p: { xs: 1.25, md: 1.5 } }}>
                     <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5} alignItems={{ xs: "flex-start", md: "center" }}>
                       <Box>
@@ -3235,7 +4436,7 @@ function NoodlePipelineDesignerInner({
                   </CardContent>
                 </Card>
 
-                <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
+                <Card sx={noodleGlassCardSx}>
                   <CardContent sx={{ p: 2.2 }}>
                     <Stack spacing={1.25}>
                       <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5}>
@@ -3245,17 +4446,212 @@ function NoodlePipelineDesignerInner({
                             Trigger and inspect test runs without leaving the designer.
                           </Typography>
                         </Box>
-                        <Button variant="contained" onClick={() => void triggerRun()} sx={noodleButtonPrimarySx} disabled={remoteBusy}>
-                          {remoteBusy ? "Working..." : "Trigger Test Run"}
-                        </Button>
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                          <Button variant="outlined" onClick={() => void triggerRun()} sx={noodleButtonSecondarySx} disabled={remoteBusy}>
+                            {remoteBusy ? "Working..." : "Trigger Test Run"}
+                          </Button>
+                          <Button
+                            variant="contained"
+                            onClick={() => void repairRun()}
+                            sx={noodleButtonPrimarySx}
+                            disabled={remoteBusy || !selectedRunRepairable}
+                          >
+                            {remoteBusy ? "Working..." : "Repair Selected Run"}
+                          </Button>
+                        </Stack>
                       </Stack>
                       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                         <Chip label={`Runs: ${document.runs.length}`} sx={{ bgcolor: "#eef6ff" }} />
                         <Chip label={`Latest: ${selectedRun ? titleize(selectedRun.status) : "No runs"}`} sx={{ bgcolor: "#f8fbff" }} />
+                        {selectedRun?.repair_attempt ? <Chip label={`Repair ${selectedRun.repair_attempt}`} color="info" variant="outlined" /> : null}
+                        {selectedRun?.repair_outcome ? (
+                          <Chip
+                            label={titleize(selectedRun.repair_outcome)}
+                            color={supportChipColor(selectedRun.repair_outcome)}
+                            variant="outlined"
+                          />
+                        ) : null}
                       </Stack>
+                      <Grid container spacing={2}>
+                        <Grid item xs={12} md={3}>
+                          <TextField
+                            select
+                            fullWidth
+                            size="small"
+                            label="Repair Mode"
+                            value={repairMode}
+                            onChange={(event) => setRepairMode(event.target.value as NoodleDesignerRepairMode)}
+                            disabled={!selectedRun}
+                          >
+                            {REPAIR_MODE_OPTIONS.map((mode) => (
+                              <MenuItem key={mode} value={mode}>{titleize(mode)}</MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} md={3}>
+                          <TextField
+                            select
+                            fullWidth
+                            size="small"
+                            label="Repair Scope"
+                            value={repairScope}
+                            onChange={(event) => setRepairScope(event.target.value as NoodleDesignerRepairScope)}
+                            disabled={!selectedRun}
+                          >
+                            {REPAIR_SCOPE_OPTIONS.map((scope) => (
+                              <MenuItem key={scope} value={scope}>{titleize(scope)}</MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Repair Reason"
+                            value={repairReason}
+                            onChange={(event) => setRepairReason(event.target.value)}
+                            placeholder="Why are you repairing this run?"
+                            disabled={!selectedRun}
+                          />
+                        </Grid>
+                      </Grid>
+                      {selectedRun ? (
+                        <Alert severity={selectedRunRepairable ? "info" : "warning"}>
+                          {selectedRunRepairable
+                            ? repairMode === "exact"
+                              ? "Exact repair validates sink contracts and lineage before execution. If any rerun task reaches a non-idempotent sink, the attempt is recorded but blocked."
+                              : "Best-effort repair reruns the selected task set and preserves prior successful work without claiming exact external effects."
+                            : "Repair is enabled only for failed or cancelled runs."}
+                        </Alert>
+                      ) : (
+                        <Alert severity="info">Select a run from the timeline to configure a repair.</Alert>
+                      )}
                     </Stack>
                   </CardContent>
                 </Card>
+
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={5}>
+                    <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", height: "100%" }}>
+                      <CardContent sx={{ p: 2.2 }}>
+                        <Stack spacing={1.25}>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Batch Session Control</Typography>
+                          {selectedBatchSession ? (
+                            <>
+                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                <Chip label={selectedBatchSession.source_batch_id} variant="outlined" />
+                                <Chip label={titleize(selectedBatchSession.status)} color={stateChipColor(selectedBatchSession.status === "committed" ? "success" : selectedBatchSession.status === "partial" ? "failed" : "running")} />
+                                <Chip
+                                  label={selectedBatchSession.exact_supported ? "Exact supported" : "Best effort only"}
+                                  color={selectedBatchSession.exact_supported ? "success" : "warning"}
+                                  variant="outlined"
+                                />
+                              </Stack>
+                              <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                                Resume from offset {selectedBatchSession.next_offset} of {selectedBatchSession.expected_count}. Schema {selectedBatchSession.schema_fingerprint}.
+                              </Typography>
+                              <Grid container spacing={2}>
+                                <Grid item xs={12} md={4}>
+                                  <TextField
+                                    select
+                                    fullWidth
+                                    size="small"
+                                    label="Resume Mode"
+                                    value={batchResumeMode}
+                                    onChange={(event) => setBatchResumeMode(event.target.value as NoodleDesignerRepairMode)}
+                                  >
+                                    {REPAIR_MODE_OPTIONS.map((mode) => (
+                                      <MenuItem key={mode} value={mode}>{titleize(mode)}</MenuItem>
+                                    ))}
+                                  </TextField>
+                                </Grid>
+                                <Grid item xs={12} md={4}>
+                                  <TextField
+                                    fullWidth
+                                    size="small"
+                                    label="From Offset"
+                                    value={batchResumeOffset}
+                                    onChange={(event) => setBatchResumeOffset(event.target.value)}
+                                  />
+                                </Grid>
+                                <Grid item xs={12} md={4}>
+                                  <Button
+                                    fullWidth
+                                    variant="contained"
+                                    sx={noodleButtonPrimarySx}
+                                    disabled={remoteBusy || selectedBatchSession.status === "committed"}
+                                    onClick={() => void resumeBatchSession()}
+                                  >
+                                    {remoteBusy ? "Working..." : "Resume Batch"}
+                                  </Button>
+                                </Grid>
+                              </Grid>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Resume Reason"
+                                value={batchResumeReason}
+                                onChange={(event) => setBatchResumeReason(event.target.value)}
+                                placeholder="Why are you resuming this batch?"
+                              />
+                              <Alert severity={batchResumeMode === "exact" ? (selectedBatchSession.exact_supported ? "success" : "warning") : "info"}>
+                                {batchResumeMode === "exact"
+                                  ? selectedBatchSession.exact_supported
+                                    ? selectedBatchSession.exact_support_summary
+                                    : `Exact resume is blocked: ${selectedBatchSession.exact_support_summary}`
+                                  : "Best-effort resume will continue from the selected offset and rely on staging or sink dedup semantics."}
+                              </Alert>
+                            </>
+                          ) : (
+                            <Alert severity="info">Select a batch session to inspect checkpoint and resume state.</Alert>
+                          )}
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} md={7}>
+                    <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", height: "100%" }}>
+                      <CardContent sx={{ p: 2.2 }}>
+                        <Stack spacing={1.25}>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Batch Sessions</Typography>
+                          {(selectedRunBatchSessions.length ? selectedRunBatchSessions : document.batch_sessions ?? []).length ? (
+                            (selectedRunBatchSessions.length ? selectedRunBatchSessions : document.batch_sessions ?? []).map((session) => (
+                              <Box
+                                key={session.id}
+                                onClick={() => setSelectedBatchSessionId(session.id)}
+                                sx={{
+                                  p: 1.2,
+                                  borderRadius: 2.5,
+                                  border: session.id === selectedBatchSessionId ? "2px solid var(--accent)" : "1px solid var(--line)",
+                                  bgcolor: session.id === selectedBatchSessionId ? "#eef6ff" : "#fff",
+                                  cursor: "pointer"
+                                }}
+                              >
+                                <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
+                                  <Box>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{session.source_batch_id}</Typography>
+                                    <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                                      {session.source_node_label} · next offset {session.next_offset} / {session.expected_count}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                    <Chip size="small" label={titleize(session.status)} color={session.status === "committed" ? "success" : session.status === "partial" ? "error" : "warning"} />
+                                    <Chip size="small" label={`${session.staged_count}/${session.expected_count} staged`} variant="outlined" />
+                                    <Chip size="small" label={`${session.attempts.length} attempts`} variant="outlined" />
+                                  </Stack>
+                                </Stack>
+                              </Box>
+                            ))
+                          ) : (
+                            <Alert severity="info">
+                              No batch sessions have been recorded yet. Add source-node params like `source_batch_id`, `expected_count`, and optional `fail_after_offset` to exercise partial-batch resume.
+                            </Alert>
+                          )}
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
 
                 <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
                   <CardContent sx={{ p: 2.2 }}>
@@ -3279,10 +4675,19 @@ function NoodlePipelineDesignerInner({
                               <Typography variant="caption" sx={{ color: "var(--muted)" }}>
                                 {new Date(run.started_at).toLocaleString()}
                               </Typography>
+                              {run.repair_of_run_id ? (
+                                <Typography variant="caption" sx={{ display: "block", color: "var(--muted)" }}>
+                                  Repair of {run.repair_of_run_id}
+                                </Typography>
+                              ) : null}
                             </Box>
                             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                               <Chip size="small" label={titleize(run.trigger)} variant="outlined" />
-                              <Chip size="small" label={titleize(run.status)} color={run.status === "success" ? "success" : run.status === "failed" ? "error" : "warning"} />
+                              {run.repair_attempt ? <Chip size="small" label={`Repair ${run.repair_attempt}`} color="info" variant="outlined" /> : null}
+                              {run.repair_outcome ? (
+                                <Chip size="small" label={titleize(run.repair_outcome)} color={supportChipColor(run.repair_outcome)} variant="outlined" />
+                              ) : null}
+                              <Chip size="small" label={titleize(run.status)} color={stateChipColor(run.status)} />
                             </Stack>
                           </Stack>
                         </Box>
@@ -3290,6 +4695,115 @@ function NoodlePipelineDesignerInner({
                     </Stack>
                   </CardContent>
                 </Card>
+
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={5}>
+                    <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", height: "100%" }}>
+                      <CardContent sx={{ p: 2.2 }}>
+                        <Stack spacing={1.25}>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Repair Summary</Typography>
+                          {selectedRun ? (
+                            <>
+                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                <Chip label={`Doc v${selectedRun.document_version ?? document.version}`} variant="outlined" />
+                                {selectedRun.repair_mode ? <Chip label={titleize(selectedRun.repair_mode)} variant="outlined" /> : null}
+                                {selectedRun.repair_outcome ? (
+                                  <Chip label={titleize(selectedRun.repair_outcome)} color={supportChipColor(selectedRun.repair_outcome)} />
+                                ) : null}
+                              </Stack>
+                              {selectedRun.repair_attempt_id ? (
+                                <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                                  Attempt Id: {selectedRun.repair_attempt_id}
+                                </Typography>
+                              ) : null}
+                              {selectedRun.repair_plan ? (
+                                <>
+                                  <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                                    Rerun {selectedRun.repair_plan.rerun_task_ids.length} tasks, reuse {selectedRun.repair_plan.reused_task_ids.length}, downstream expansion {selectedRun.repair_plan.downstream_task_ids.length}.
+                                  </Typography>
+                                  {selectedRun.repair_plan.validation_issues.length ? (
+                                    selectedRun.repair_plan.validation_issues.map((issue, index) => (
+                                      <Alert
+                                        key={`${issue.code}-${index}`}
+                                        severity={issue.severity === "error" ? "warning" : issue.severity === "warn" ? "warning" : "info"}
+                                      >
+                                        {issue.message}
+                                      </Alert>
+                                    ))
+                                  ) : (
+                                    <Alert severity="success">No repair validation issues were recorded for this run.</Alert>
+                                  )}
+                                </>
+                              ) : (
+                                <Alert severity="info">Select a repair attempt to inspect exactness checks and validation issues.</Alert>
+                              )}
+                            </>
+                          ) : (
+                            <Alert severity="info">Select a run to inspect repair planning metadata.</Alert>
+                          )}
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} md={7}>
+                    <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none", height: "100%" }}>
+                      <CardContent sx={{ p: 2.2 }}>
+                        <Stack spacing={1.25}>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Lineage and Sink Contracts</Typography>
+                          {selectedRun ? (
+                            <>
+                              {(selectedRun.sink_bindings?.length ?? 0) > 0 ? (
+                                selectedRun.sink_bindings?.map((binding) => (
+                                  <Box key={`${binding.task_id}-${binding.sink_node_id}`} sx={{ p: 1.2, borderRadius: 2.5, border: "1px solid var(--line)", bgcolor: "#fff" }}>
+                                    <Stack spacing={0.75}>
+                                      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
+                                        <Box>
+                                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{binding.task_label} to {binding.sink_node_label}</Typography>
+                                          <Typography variant="caption" sx={{ color: "var(--muted)" }}>{binding.output_asset_id}</Typography>
+                                        </Box>
+                                        <Chip size="small" label={titleize(binding.support_level)} color={supportChipColor(binding.support_level)} />
+                                      </Stack>
+                                      <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                                        Plugin {binding.sink_plugin} · Idempotency {binding.idempotency_strategy} · Transaction {binding.transaction_strategy}
+                                      </Typography>
+                                      {binding.output_version ? (
+                                        <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                                          Output version {binding.output_version}
+                                        </Typography>
+                                      ) : null}
+                                    </Stack>
+                                  </Box>
+                                ))
+                              ) : (
+                                <Alert severity="info">No sink bindings were recorded for the selected run.</Alert>
+                              )}
+                              {(selectedRun.lineage_records?.length ?? 0) > 0 ? (
+                                selectedRun.lineage_records?.map((record) => (
+                                  <Box key={record.task_id} sx={{ p: 1.2, borderRadius: 2.5, border: "1px solid var(--line)", bgcolor: "#f8fbff" }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{record.task_label}</Typography>
+                                    <Typography variant="caption" sx={{ display: "block", color: "var(--muted)" }}>
+                                      Inputs: {record.input_assets.length ? record.input_assets.join(", ") : "None recorded"}
+                                    </Typography>
+                                    <Typography variant="caption" sx={{ display: "block", color: "var(--muted)" }}>
+                                      Outputs: {record.output_assets.length ? record.output_assets.join(", ") : "None recorded"}
+                                    </Typography>
+                                    {record.output_version ? (
+                                      <Typography variant="caption" sx={{ display: "block", color: "var(--muted)" }}>
+                                        Version: {record.output_version}
+                                      </Typography>
+                                    ) : null}
+                                  </Box>
+                                ))
+                              ) : null}
+                            </>
+                          ) : (
+                            <Alert severity="info">Select a run to inspect lineage and sink contracts.</Alert>
+                          )}
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
 
                 <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
                   <CardContent sx={{ p: 2.2 }}>
@@ -3301,9 +4815,25 @@ function NoodlePipelineDesignerInner({
                             Cache nodes buffer transformed payloads with a 30 MB ceiling and expose a bounded preview for inspection.
                           </Typography>
                         </Box>
-                        {selectedNode?.kind === "cache" ? (
-                          <Chip label={`Filtered to ${selectedNode.label}`} sx={{ alignSelf: "flex-start" }} />
-                        ) : null}
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          {selectedNode?.kind === "cache" ? (
+                            <Chip label={`Filtered to ${selectedNode.label}`} sx={{ alignSelf: "flex-start" }} />
+                          ) : null}
+                          <Button
+                            size="small"
+                            variant={cachedOutputViewMode === "preview" ? "contained" : "outlined"}
+                            onClick={() => setCachedOutputViewMode("preview")}
+                          >
+                            Preview
+                          </Button>
+                          <Button
+                            size="small"
+                            variant={cachedOutputViewMode === "table" ? "contained" : "outlined"}
+                            onClick={() => setCachedOutputViewMode("table")}
+                          >
+                            Table
+                          </Button>
+                        </Stack>
                       </Stack>
                       {selectedRun ? (
                         selectedRunCachedOutputs.length ? (
@@ -3324,14 +4854,50 @@ function NoodlePipelineDesignerInner({
                                   </Stack>
                                 </Stack>
                                 <Typography variant="caption" sx={{ color: "var(--muted)" }}>{output.summary}</Typography>
-                                <TextField
-                                  label={`${output.node_label} Preview`}
-                                  multiline
-                                  minRows={6}
-                                  maxRows={14}
-                                  value={output.preview_text}
-                                  InputProps={{ readOnly: true }}
-                                />
+                                {cachedOutputViewMode === "table" && parseCachedOutputTable(output.preview_text) ? (
+                                  <TableContainer
+                                    sx={{
+                                      maxHeight: 340,
+                                      borderRadius: 2.5,
+                                      border: "1px solid rgba(154, 177, 205, 0.34)",
+                                      bgcolor: "#fff"
+                                    }}
+                                  >
+                                    <Table stickyHeader size="small">
+                                      <TableHead>
+                                        <TableRow>
+                                          {parseCachedOutputTable(output.preview_text)?.columns.map((column) => (
+                                            <TableCell key={`${output.id}-${column}`} sx={{ fontWeight: 800, bgcolor: "#eef6ff", whiteSpace: "nowrap" }}>
+                                              {column}
+                                            </TableCell>
+                                          ))}
+                                        </TableRow>
+                                      </TableHead>
+                                      <TableBody>
+                                        {parseCachedOutputTable(output.preview_text)?.rows.map((row, rowIndex) => (
+                                          <TableRow key={`${output.id}-table-row-${rowIndex}`} hover>
+                                            {parseCachedOutputTable(output.preview_text)?.columns.map((column) => (
+                                              <TableCell key={`${output.id}-${column}-${rowIndex}`} sx={{ maxWidth: 240, verticalAlign: "top" }}>
+                                                <Typography variant="caption" sx={{ color: "#314760", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                                  {formatCachedCellValue(row[column])}
+                                                </Typography>
+                                              </TableCell>
+                                            ))}
+                                          </TableRow>
+                                        ))}
+                                      </TableBody>
+                                    </Table>
+                                  </TableContainer>
+                                ) : (
+                                  <TextField
+                                    label={`${output.node_label} Preview`}
+                                    multiline
+                                    minRows={6}
+                                    maxRows={14}
+                                    value={output.preview_text}
+                                    InputProps={{ readOnly: true }}
+                                  />
+                                )}
                                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                                   <Button size="small" onClick={() => void copyCachedOutput(output, selectedRun.label)}>
                                     Copy Preview
@@ -3367,13 +4933,28 @@ function NoodlePipelineDesignerInner({
                           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Run Tasks</Typography>
                           {selectedRun ? (
                             selectedRun.task_runs.map((task) => (
-                              <Box key={task.id} sx={{ p: 1.2, borderRadius: 2.5, border: "1px solid var(--line)", bgcolor: "#fff" }}>
+                              <Box
+                                key={task.id}
+                                sx={{
+                                  p: 1.2,
+                                  borderRadius: 2.5,
+                                  border: "1px solid var(--line)",
+                                  bgcolor: selectedRepairTaskIds.includes(task.node_id) ? "#eef6ff" : "#fff"
+                                }}
+                              >
                                 <Stack direction="row" justifyContent="space-between" spacing={1}>
                                   <Box>
                                     <Typography variant="body2" sx={{ fontWeight: 700 }}>{task.node_label}</Typography>
                                     <Typography variant="caption" sx={{ color: "var(--muted)" }}>{task.node_id}</Typography>
                                   </Box>
-                                  <Chip size="small" label={task.state} color={task.state === "success" ? "success" : task.state === "failed" ? "error" : task.state === "running" ? "warning" : "default"} />
+                                  <Stack direction="row" spacing={1} alignItems="center">
+                                    <Chip size="small" label={task.state} color={stateChipColor(task.state)} />
+                                    {selectedRunRepairable && (repairScope === "selected" || repairScope === "selected_and_dependents") ? (
+                                      <Button size="small" variant={selectedRepairTaskIds.includes(task.node_id) ? "contained" : "outlined"} onClick={() => toggleRepairTask(task.node_id)}>
+                                        {selectedRepairTaskIds.includes(task.node_id) ? "Selected" : "Select"}
+                                      </Button>
+                                    ) : null}
+                                  </Stack>
                                 </Stack>
                               </Box>
                             ))
@@ -3440,13 +5021,16 @@ function NoodlePipelineDesignerInner({
         {repositoryVisible ? (
         <Grid item xs={12} lg={sideLg} sx={{ order: { xs: 1, lg: 1 } }}>
           <Stack spacing={2}>
-            <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
+            <Card sx={noodleGlassCardSx}>
               <CardContent sx={{ p: 2.2 }}>
                 <Stack spacing={1.25}>
                   <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
                     <Box>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Repository</Typography>
-                      <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                      <Typography variant="overline" sx={{ color: "var(--accent)", fontWeight: 900, letterSpacing: "0.14em" }}>
+                        Pipeline Repository
+                      </Typography>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: "-0.02em" }}>Repository</Typography>
+                      <Typography variant="body2" sx={{ color: "var(--muted)", maxWidth: 360 }}>
                         Save plugin-backed connection details, metadata assets, schemas, and transformations alongside the portable JSON pipeline spec.
                       </Typography>
                     </Box>
@@ -3473,19 +5057,28 @@ function NoodlePipelineDesignerInner({
                       </Tooltip>
                     </Stack>
                   </Stack>
-                  <Alert severity="info">
-                    Stored now: {document.connection_refs.length} connections, {document.metadata_assets.length} metadata assets, {document.schemas.length} schemas, {document.transformations.length} transformations.
-                  </Alert>
+                  <Box sx={sidePanelHeroSx}>
+                    <Stack spacing={1}>
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        <Chip label={`${document.connection_refs.length} connections`} sx={{ bgcolor: "#e8f3ff", color: "#0e4e8b", fontWeight: 800 }} />
+                        <Chip label={`${document.metadata_assets.length} metadata`} sx={{ bgcolor: "#f3f4f6", color: "#475467", fontWeight: 800 }} />
+                        <Chip label={`${document.schemas.length} schemas`} sx={{ bgcolor: "#edf8ef", color: "#215c3d", fontWeight: 800 }} />
+                        <Chip label={`${document.transformations.length} transforms`} sx={{ bgcolor: "#fff5e5", color: "#8a5a00", fontWeight: 800 }} />
+                      </Stack>
+                      <Typography variant="body2" sx={{ color: "#47627f" }}>
+                        Stored now: {document.connection_refs.length} connections, {document.metadata_assets.length} metadata assets, {document.schemas.length} schemas, and {document.transformations.length} transformations.
+                      </Typography>
+                    </Stack>
+                  </Box>
                   {!repositoryCollapsed ? (
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                       {REPOSITORY_SECTIONS.map((section) => (
                         <Chip
                           key={section}
                           label={titleize(section)}
-                          color={repositorySection === section ? "primary" : "default"}
                           onClick={() => setRepositorySection(section)}
                           variant={repositorySection === section ? "filled" : "outlined"}
-                          sx={{ borderRadius: 999, fontWeight: 700 }}
+                          sx={repositorySectionChipSx(repositorySection === section)}
                         />
                       ))}
                     </Stack>
@@ -3510,12 +5103,12 @@ function NoodlePipelineDesignerInner({
                           event.dataTransfer.effectAllowed = "move";
                         }}
                         sx={{
-                          p: 1.2,
-                          borderRadius: 2.5,
-                          border: `1px solid ${NODE_COLORS[entry.kind].stroke}`,
-                          bgcolor: NODE_COLORS[entry.kind].fill,
+                          p: 1.35,
+                          borderRadius: 3,
+                          border: `1px solid ${alpha(NODE_COLORS[entry.kind].stroke, 0.34)}`,
+                          background: `linear-gradient(180deg, ${alpha("#ffffff", 0.88)} 0%, ${alpha(NODE_COLORS[entry.kind].fill, 0.98)} 100%)`,
                           cursor: "grab",
-                          boxShadow: "0 6px 14px rgba(15, 23, 42, 0.05)"
+                          boxShadow: "0 12px 24px rgba(15, 23, 42, 0.06)"
                         }}
                       >
                         <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
@@ -3529,9 +5122,9 @@ function NoodlePipelineDesignerInner({
                             size="small"
                             onClick={() => insertNode(entry.kind)}
                             sx={{
-                              borderColor: NODE_COLORS[entry.kind].stroke,
+                              borderColor: alpha(NODE_COLORS[entry.kind].stroke, 0.45),
                               color: NODE_COLORS[entry.kind].accent,
-                              bgcolor: "#ffffffbf",
+                              bgcolor: "#ffffffd8",
                               "&:hover": { bgcolor: "#fff" }
                             }}
                           >
@@ -3553,7 +5146,23 @@ function NoodlePipelineDesignerInner({
                     <>
                   <Divider />
 
-                  <Stack spacing={1}>
+                  <Stack spacing={1.2}>
+                      <Box sx={repositoryContentCardSx}>
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2} justifyContent="space-between">
+                          <Box>
+                            <Typography variant="body2" sx={{ fontWeight: 800 }}>Connection Catalog</Typography>
+                            <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                              Switch plugin families quickly and keep each connection aligned to its runtime adapter template.
+                            </Typography>
+                          </Box>
+                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                            <Chip label={`${document.connection_refs.length} refs`} sx={{ bgcolor: "#e8f3ff", color: "#0e4e8b", fontWeight: 800 }} />
+                            {selectedConnection ? (
+                              <Chip label={titleize(selectedConnection.plugin.replace("-plugin", ""))} sx={{ bgcolor: "#fff5e5", color: "#8a5a00", fontWeight: 800 }} />
+                            ) : null}
+                          </Stack>
+                        </Stack>
+                      </Box>
                       <Stack direction="row" justifyContent="space-between" alignItems="center">
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>Connections</Typography>
                         <Stack direction="row" spacing={1}>
@@ -3591,11 +5200,33 @@ function NoodlePipelineDesignerInner({
                     </Stack>
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                       {document.connection_refs.map((item) => (
-                        <Chip key={item.id} label={item.name} color={item.id === selectedConnectionId ? "primary" : "default"} onClick={() => setSelectedConnectionId(item.id)} variant={item.id === selectedConnectionId ? "filled" : "outlined"} />
+                        <Chip
+                          key={item.id}
+                          label={item.name}
+                          onClick={() => setSelectedConnectionId(item.id)}
+                          variant={item.id === selectedConnectionId ? "filled" : "outlined"}
+                          sx={repositoryListChipSx(item.id === selectedConnectionId)}
+                        />
                       ))}
                     </Stack>
                     {selectedConnection ? (
-                      <Stack spacing={1}>
+                      <Stack spacing={1.2}>
+                        <Box sx={repositoryContentCardSx}>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2} justifyContent="space-between">
+                            <Box>
+                              <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                {selectedConnection.name}
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                                Plugin-backed connection contract with environment, auth reference, and structured adapter parameters.
+                              </Typography>
+                            </Box>
+                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                              <Chip label={selectedConnection.environment || "unset"} sx={{ bgcolor: "#f3f4f6", color: "#475467", fontWeight: 800 }} />
+                              <Chip label={titleize(selectedConnection.plugin.replace("-plugin", ""))} sx={{ bgcolor: "#e8f3ff", color: "#0e4e8b", fontWeight: 800 }} />
+                            </Stack>
+                          </Stack>
+                        </Box>
                         <TextField label="Connection Name" size="small" value={selectedConnection.name} onChange={(event) => updateSelectedConnection((item) => ({ ...item, name: event.target.value }))} />
                         <TextField
                           select
@@ -3603,8 +5234,13 @@ function NoodlePipelineDesignerInner({
                           size="small"
                           value={selectedConnection.plugin}
                           onChange={(event) =>
-                            updateSelectedConnection((item) => applyConnectionTemplate(item, event.target.value, "fill"))
+                            updateSelectedConnection((item) =>
+                              item.plugin === event.target.value
+                                ? item
+                                : applyConnectionTemplate(item, event.target.value, "replace")
+                            )
                           }
+                          helperText="Changing plugin families replaces the parameter template so the connection matches the new adapter."
                         >
                           {CONNECTION_PLUGIN_OPTIONS.map((plugin) => (
                             <MenuItem key={plugin} value={plugin}>{plugin}</MenuItem>
@@ -3618,10 +5254,11 @@ function NoodlePipelineDesignerInner({
                           onChange={(event) => updateSelectedConnection((item) => ({ ...item, auth_ref: event.target.value }))}
                           helperText={authRefHelperTextForPlugin(selectedConnection.plugin)}
                         />
+                        <Box sx={repositoryContentCardSx}>
                         <Stack spacing={1}>
                           <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1}>
                             <Box>
-                              <Typography variant="body2" sx={{ fontWeight: 700 }}>Connection Parameters</Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 800 }}>Connection Parameters</Typography>
                               <Typography variant="caption" sx={{ color: "var(--muted)" }}>
                                 {connectionParameterHelpText(selectedConnection.plugin)}
                               </Typography>
@@ -3696,6 +5333,7 @@ function NoodlePipelineDesignerInner({
                             <Alert severity="info">No structured parameters yet. Add them here or apply the plugin template.</Alert>
                           )}
                         </Stack>
+                        </Box>
                         <TextField label="Notes" size="small" multiline minRows={2} value={selectedConnection.notes} onChange={(event) => updateSelectedConnection((item) => ({ ...item, notes: event.target.value }))} />
                         <Button
                           color="error"
@@ -4287,9 +5925,11 @@ function NoodlePipelineDesignerInner({
                   ) : null}
                     </>
                   ) : (
-                    <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                      Repository content is collapsed. Expand it to manage connections, metadata, schemas, transformations, and the raw JSON spec.
-                    </Typography>
+                    <Box sx={{ p: 1.4, borderRadius: 3, bgcolor: "rgba(247, 250, 255, 0.9)", border: "1px dashed rgba(154, 177, 205, 0.44)" }}>
+                      <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                        Repository content is collapsed. Expand it to manage connections, metadata, schemas, transformations, and the raw JSON spec.
+                      </Typography>
+                    </Box>
                   )}
                 </Stack>
               </CardContent>
@@ -4301,13 +5941,16 @@ function NoodlePipelineDesignerInner({
         {momoVisible ? (
         <Grid item xs={12} lg={sideLg} sx={{ order: { xs: 3, lg: 3 } }}>
           <Stack spacing={2}>
-            <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
+            <Card sx={noodleGlassCardSx}>
               <CardContent sx={{ p: 2.2 }}>
                 <Stack spacing={1.25}>
                   <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
                     <Box>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Agent Momo</Typography>
-                      <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                      <Typography variant="overline" sx={{ color: "var(--accent)", fontWeight: 900, letterSpacing: "0.14em" }}>
+                        Design Copilot
+                      </Typography>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: "-0.02em" }}>Agent Momo</Typography>
+                      <Typography variant="body2" sx={{ color: "var(--muted)", maxWidth: 360 }}>
                         Architecture context is loaded into the assistant so it can guide pipeline design decisions.
                       </Typography>
                     </Box>
@@ -4336,6 +5979,18 @@ function NoodlePipelineDesignerInner({
                   </Stack>
                   {!momoCollapsed ? (
                     <>
+                  <Box sx={sidePanelHeroSx}>
+                    <Stack spacing={1}>
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        <Chip label={`${momoMessages.length} messages`} sx={{ bgcolor: "#e8f3ff", color: "#0e4e8b", fontWeight: 800 }} />
+                        <Chip label={savedArchitecture ? "Architecture loaded" : "Blueprint only"} sx={{ bgcolor: "#edf8ef", color: "#215c3d", fontWeight: 800 }} />
+                        <Chip label={momoSuggestion ? "Suggestion ready" : "Guidance mode"} sx={{ bgcolor: "#fff5e5", color: "#8a5a00", fontWeight: 800 }} />
+                      </Stack>
+                      <Typography variant="body2" sx={{ color: "#47627f" }}>
+                        Use Momo for transformation scaffolds, orchestration guidance, and architecture-aware design decisions.
+                      </Typography>
+                    </Stack>
+                  </Box>
                   {architectureOverview ? (
                     <Alert severity="info">{architectureOverview.objective}</Alert>
                   ) : (
@@ -4345,16 +6000,6 @@ function NoodlePipelineDesignerInner({
                     <Alert severity="success">
                       Saved architecture loaded: {savedArchitecture.name}
                     </Alert>
-                  ) : null}
-                  {agentMomoBrief ? (
-                    <Box sx={{ p: 1.4, borderRadius: 2.5, bgcolor: "#f8fbff", border: "1px solid var(--line)" }}>
-                      <Typography variant="caption" sx={{ color: "var(--muted)", fontWeight: 800 }}>
-                        MOMO BRIEF
-                      </Typography>
-                      <Typography variant="body2" sx={{ mt: 0.6, color: "var(--text)" }}>
-                        {agentMomoBrief}
-                      </Typography>
-                    </Box>
                   ) : null}
                   {momoSuggestion ? (
                     <Box sx={{ p: 1.4, borderRadius: 2.5, bgcolor: "#fffaf2", border: "1px solid #f3d6a4" }}>
@@ -4402,10 +6047,31 @@ function NoodlePipelineDesignerInner({
                       </Stack>
                     </Box>
                   ) : null}
-                  <Stack spacing={1} sx={{ maxHeight: panelFocus === "momo" ? "calc(100vh - 360px)" : 420, overflowY: "auto" }}>
+                  <Stack
+                    spacing={1}
+                    sx={{
+                      maxHeight: panelFocus === "momo" ? "calc(100vh - 360px)" : 420,
+                      overflowY: "auto",
+                      p: 1.1,
+                      borderRadius: 3.5,
+                      border: "1px solid rgba(154, 177, 205, 0.28)",
+                      bgcolor: "rgba(245, 249, 255, 0.76)"
+                    }}
+                  >
                     {momoMessages.map((message) => (
-                      <Box key={message.id} sx={{ alignSelf: message.role === "user" ? "flex-end" : "flex-start", maxWidth: "100%", p: 1.4, borderRadius: 3, border: "1px solid var(--line)", bgcolor: message.role === "user" ? "#eef6ff" : "#fff" }}>
-                        <Typography variant="caption" sx={{ color: message.role === "user" ? "var(--accent)" : "#0b5b7f", fontWeight: 800 }}>
+                      <Box
+                        key={message.id}
+                        sx={{
+                          alignSelf: message.role === "user" ? "flex-end" : "flex-start",
+                          maxWidth: "100%",
+                          p: 1.4,
+                          borderRadius: 3.5,
+                          border: message.role === "user" ? "1px solid rgba(49, 111, 214, 0.18)" : "1px solid rgba(11, 91, 127, 0.14)",
+                          bgcolor: message.role === "user" ? "rgba(232, 243, 255, 0.94)" : "rgba(255,255,255,0.96)",
+                          boxShadow: "0 10px 22px rgba(15, 23, 42, 0.05)"
+                        }}
+                      >
+                        <Typography variant="caption" sx={{ color: message.role === "user" ? "var(--accent)" : "#0b5b7f", fontWeight: 900, letterSpacing: "0.08em" }}>
                           {message.role === "user" ? "YOU" : "AGENT MOMO"}
                         </Typography>
                         <Typography variant="body2" sx={{ color: "var(--text)", mt: 0.5, whiteSpace: "pre-wrap" }}>
@@ -4414,24 +6080,49 @@ function NoodlePipelineDesignerInner({
                       </Box>
                     ))}
                   </Stack>
-                  <TextField label="Ask Agent Momo" multiline minRows={4} value={momoPrompt} onChange={(event) => setMomoPrompt(event.target.value)} placeholder="How should I model plugin-backed sources, metadata, scheduling, or task dependencies?" />
-                  <Button variant="contained" onClick={sendMomoMessage} sx={{ bgcolor: "var(--accent)", color: "#fff", "&:hover": { bgcolor: "#265db8" } }}>
+                  <TextField
+                    label="Ask Agent Momo"
+                    multiline
+                    minRows={4}
+                    value={momoPrompt}
+                    onChange={(event) => setMomoPrompt(event.target.value)}
+                    placeholder="How should I model plugin-backed sources, metadata, scheduling, or task dependencies?"
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        borderRadius: 3,
+                        bgcolor: "rgba(255,255,255,0.94)"
+                      }
+                    }}
+                  />
+                  <Button variant="contained" onClick={sendMomoMessage} sx={noodleButtonPrimarySx}>
                     Send To Agent Momo
                   </Button>
                     </>
                   ) : (
-                    <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                      Agent Momo is collapsed. Expand it to review architecture context, message history, and design guidance.
-                    </Typography>
+                    <Box sx={{ p: 1.4, borderRadius: 3, bgcolor: "rgba(247, 250, 255, 0.9)", border: "1px dashed rgba(154, 177, 205, 0.44)" }}>
+                      <Typography variant="body2" sx={{ color: "var(--muted)" }}>
+                        Agent Momo is collapsed. Expand it to review architecture context, message history, and design guidance.
+                      </Typography>
+                    </Box>
                   )}
                     </Stack>
                   </CardContent>
                 </Card>
 
-                <Card sx={{ borderRadius: 4, border: "1px solid var(--line)", boxShadow: "none" }}>
+                <Card sx={noodleGlassCardSx}>
                   <CardContent sx={{ p: 2.2 }}>
                     <Stack spacing={1.25}>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Validation Status</Typography>
+                  <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: "-0.02em" }}>Validation Status</Typography>
+                    <Chip
+                      label={validations.length ? `${validations.length} issue${validations.length === 1 ? "" : "s"}` : "All clear"}
+                      sx={{
+                        bgcolor: validations.length ? "#fff5e5" : "#edf8ef",
+                        color: validations.length ? "#8a5a00" : "#215c3d",
+                        fontWeight: 800
+                      }}
+                    />
+                  </Stack>
                   {validations.length ? (
                     validations.map((validation) => (
                       <Alert key={validation.id} severity={validation.level === "error" ? "error" : "warning"}>

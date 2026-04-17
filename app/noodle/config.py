@@ -24,10 +24,18 @@ def _read_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_database_url(database_url: str) -> str:
+    if database_url.startswith("postgresql+psycopg://"):
+        return "postgresql://" + database_url[len("postgresql+psycopg://") :]
+    return database_url
+
+
 def get_noodle_settings() -> NoodleSettings:
-    database_url = (
+    database_url = _normalize_database_url(
         os.getenv("NOODLE_DATABASE_URL")
         or os.getenv("DATABASE_URL")
+        or os.getenv("ALLOCATOR_DATABASE_URL")
+        or os.getenv("RBAC_DATABASE_URL")
         or "postgresql://postgres:postgres@localhost:5432/noodle_control_plane"
     )
     return NoodleSettings(

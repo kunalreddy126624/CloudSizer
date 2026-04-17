@@ -30,6 +30,7 @@ import {
   planNoodlePipeline
 } from "@/lib/api";
 import {
+  loadNoodlePipelineDraft,
   loadSavedArchitectureDrafts,
   storePendingNoodleDesignerSession,
   storePendingNoodleSchedulerSession,
@@ -218,6 +219,11 @@ function buildGitHubDeploymentSeed(intentName: string): NoodleDesignerDeployment
   };
 }
 
+function sanitizePlanForUi(plan: NoodlePipelinePlanResponse) {
+  const { agent_momo_brief: _agentMomoBrief, ...visiblePlan } = plan;
+  return visiblePlan;
+}
+
 export function NoodleWorkspace() {
   const router = useRouter();
   const [overview, setOverview] = useState<NoodleArchitectureOverview | null>(null);
@@ -238,6 +244,7 @@ export function NoodleWorkspace() {
   const [copyNotice, setCopyNotice] = useState<{ severity: "success" | "warning"; message: string } | null>(null);
   const designPrinciples = blueprint?.design_principles ?? [];
   const selectedArchitecture = savedArchitectures.find((entry) => entry.id === selectedArchitectureId) ?? null;
+  const visiblePlan = plan ? sanitizePlanForUi(plan) : null;
 
   const loadWorkspace = useCallback(async () => {
     setError(null);
@@ -318,10 +325,12 @@ export function NoodleWorkspace() {
   }
 
   function openSoupSchedulerPage() {
+    const currentDraft = typeof window === "undefined" ? null : loadNoodlePipelineDraft();
     storePendingNoodleSchedulerSession({
       source: "orchestrator",
       intent_name: intent.name,
       orchestrator_plan: orchestratorPlan,
+      document: currentDraft,
       opened_at: new Date().toISOString()
     });
     router.push("/noodle/scheduler");
@@ -336,7 +345,7 @@ export function NoodleWorkspace() {
       return;
     }
 
-    const copied = await copyTextToClipboard(JSON.stringify(plan, null, 2));
+    const copied = await copyTextToClipboard(JSON.stringify(sanitizePlanForUi(plan), null, 2));
     setCopyNotice({
       severity: copied ? "success" : "warning",
       message: copied ? "Generated plan JSON copied." : "Clipboard copy failed in this environment."
@@ -1105,9 +1114,9 @@ export function NoodleWorkspace() {
                               ))}
                             </Grid>
                             <Grid item xs={12} md={6}>
-                              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Agent Momo Brief</Typography>
+                              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Workflow Template</Typography>
                               <Typography variant="body2" sx={{ color: "var(--muted)", mt: 1 }}>
-                                {plan.agent_momo_brief}
+                                {titleize(plan.workflow_template)} with control-plane scheduling and execution-plane handoff.
                               </Typography>
                             </Grid>
                           </Grid>
@@ -1131,7 +1140,7 @@ export function NoodleWorkspace() {
                             </Grid>
                           </Grid>
                           <Box component="pre" sx={{ m: 0, p: 2, borderRadius: 3, bgcolor: "#111827", color: "#e5eefb", overflowX: "auto", fontSize: 12 }}>
-                            {JSON.stringify(plan, null, 2)}
+                            {JSON.stringify(visiblePlan, null, 2)}
                           </Box>
                         </>
                       ) : (

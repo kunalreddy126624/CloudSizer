@@ -990,6 +990,7 @@ export interface NoodlePipelineDesignerDocument {
   deployment: NoodleDesignerDeployment;
   orchestrator_plan: NoodleOrchestratorPlan;
   schedule: NoodleDesignerSchedule;
+  batch_sessions?: NoodleDesignerBatchSession[];
   runs: NoodleDesignerRun[];
   saved_at: string;
 }
@@ -1080,8 +1081,14 @@ export type NoodleDesignerTaskRunState =
   | "failed"
   | "retrying"
   | "skipped"
-  | "cancelled";
+  | "cancelled"
+  | "reused";
 export type NoodleDesignerLogLevel = "log" | "info" | "warn";
+export type NoodleDesignerRepairScope = "failed" | "failed_and_dependents" | "selected" | "selected_and_dependents";
+export type NoodleDesignerRepairMode = "exact" | "best_effort";
+export type NoodleDesignerRepairOutcome = "exact" | "best_effort" | "blocked";
+export type NoodleDesignerSinkSupportLevel = "exact" | "best_effort" | "unsafe";
+export type NoodleDesignerBatchSessionStatus = "staging" | "partial" | "publishing" | "committed" | "failed" | "blocked";
 
 export interface NoodleDesignerRunTask {
   id: string;
@@ -1117,6 +1124,99 @@ export interface NoodleDesignerCachedOutput {
   approx_records: number;
 }
 
+export interface NoodleDesignerRepairIssue {
+  severity: "info" | "warn" | "error";
+  code: string;
+  message: string;
+  task_id?: string | null;
+}
+
+export interface NoodleDesignerSinkBinding {
+  task_id: string;
+  task_label: string;
+  sink_node_id: string;
+  sink_node_label: string;
+  sink_plugin: string;
+  support_level: NoodleDesignerSinkSupportLevel;
+  idempotency_strategy: string;
+  transaction_strategy: string;
+  output_asset_id: string;
+  output_version?: string | null;
+  idempotency_key?: string | null;
+  notes: string;
+}
+
+export interface NoodleDesignerLineageRecord {
+  task_id: string;
+  task_label: string;
+  input_assets: string[];
+  output_assets: string[];
+  output_version?: string | null;
+}
+
+export interface NoodleDesignerRepairPlan {
+  attempt_id: string;
+  base_run_id: string;
+  root_run_id: string;
+  document_version: number;
+  mode: NoodleDesignerRepairMode;
+  outcome: NoodleDesignerRepairOutcome;
+  scope: NoodleDesignerRepairScope;
+  rerun_task_ids: string[];
+  reused_task_ids: string[];
+  downstream_task_ids: string[];
+  validation_issues: NoodleDesignerRepairIssue[];
+}
+
+export interface NoodleDesignerBatchResumeToken {
+  source_system: string;
+  source_batch_id: string;
+  expected_count: number;
+  next_offset: number;
+  ordering_key: string;
+  schema_fingerprint: string;
+  payload_fingerprint_mode: string;
+  last_committed_at?: string | null;
+}
+
+export interface NoodleDesignerBatchSessionAttempt {
+  id: string;
+  run_id: string;
+  kind: "run" | "resume";
+  mode: NoodleDesignerRepairMode;
+  status: NoodleDesignerBatchSessionStatus;
+  from_offset: number;
+  started_at: string;
+  finished_at?: string | null;
+  staged_count: number;
+  next_offset: number;
+  committed_version?: string | null;
+  reason?: string | null;
+}
+
+export interface NoodleDesignerBatchSession {
+  id: string;
+  source_node_id: string;
+  source_node_label: string;
+  source_system: string;
+  source_batch_id: string;
+  expected_count: number;
+  staged_count: number;
+  committed_count: number;
+  next_offset: number;
+  max_contiguous_committed_offset: number;
+  status: NoodleDesignerBatchSessionStatus;
+  resume_token: NoodleDesignerBatchResumeToken;
+  exact_supported: boolean;
+  exact_support_summary: string;
+  schema_fingerprint: string;
+  last_run_id?: string | null;
+  root_run_id?: string | null;
+  committed_version?: string | null;
+  related_run_ids: string[];
+  attempts: NoodleDesignerBatchSessionAttempt[];
+}
+
 export interface NoodleDesignerRun {
   id: string;
   label: string;
@@ -1126,9 +1226,24 @@ export interface NoodleDesignerRun {
   orchestration_mode: "tasks" | "plan";
   started_at: string;
   finished_at?: string | null;
+  document_version?: number | null;
+  root_run_id?: string | null;
+  repair_of_run_id?: string | null;
+  repair_attempt?: number | null;
+  repair_attempt_id?: string | null;
+  repair_scope?: NoodleDesignerRepairScope | null;
+  repair_mode?: NoodleDesignerRepairMode | null;
+  repair_outcome?: NoodleDesignerRepairOutcome | null;
+  repair_reason?: string | null;
+  repaired_task_ids?: string[];
+  reused_task_ids?: string[];
+  repair_plan?: NoodleDesignerRepairPlan | null;
+  batch_session_ids?: string[];
   task_runs: NoodleDesignerRunTask[];
   logs: NoodleDesignerRunLog[];
   cached_outputs: NoodleDesignerCachedOutput[];
+  sink_bindings?: NoodleDesignerSinkBinding[];
+  lineage_records?: NoodleDesignerLineageRecord[];
 }
 
 export interface NoodlePipelineRunCreateRequest {
@@ -1139,10 +1254,35 @@ export interface NoodlePipelineRunCreateRequest {
   document?: NoodlePipelineDesignerDocument | null;
 }
 
+export interface NoodlePipelineRepairRunRequest {
+  repair_scope: NoodleDesignerRepairScope;
+  repair_mode: NoodleDesignerRepairMode;
+  task_ids: string[];
+  reason?: string;
+  orchestration_mode?: "tasks" | "plan" | null;
+  document?: NoodlePipelineDesignerDocument | null;
+}
+
+export interface NoodlePipelineBatchResumeRequest {
+  mode: NoodleDesignerRepairMode;
+  from_offset?: number | null;
+  reason?: string;
+  dry_run?: boolean;
+  document?: NoodlePipelineDesignerDocument | null;
+}
+
 export interface NoodlePipelineRunResponse {
   pipeline: NoodlePipelineDesignerDocument;
   run: NoodleDesignerRun;
 }
+
+export interface NoodlePipelineBatchResumeResponse {
+  pipeline: NoodlePipelineDesignerDocument;
+  batch_session: NoodleDesignerBatchSession;
+  run: NoodleDesignerRun;
+}
+
+export type NoodleSchedulerExecutionProfile = "batch" | "streaming" | "one_time_ingestion";
 
 export interface NoodleSchedulerPlanTask {
   id: string;
@@ -1151,8 +1291,13 @@ export interface NoodleSchedulerPlanTask {
   pipeline_name: string;
   trigger: NoodlePipelineRunCreateRequest["trigger"];
   orchestration_mode: NoodlePipelineRunCreateRequest["orchestration_mode"];
+  execution_profile?: NoodleSchedulerExecutionProfile | null;
   depends_on: string[];
   notes: string;
+  canvas_position?: {
+    x: number;
+    y: number;
+  } | null;
   last_run_id?: string | null;
   last_status?: NoodleDesignerRunStatus | null;
 }
