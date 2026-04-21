@@ -62,6 +62,55 @@ class NoodleAiCapability(BaseModel):
     activation_rule: str
 
 
+class NoodleRagQueryRequest(BaseModel):
+    query: str = Field(min_length=5, max_length=500)
+    max_results: int = Field(default=3, ge=1, le=10)
+    architecture_context: NoodleSavedArchitectureContext | None = None
+    pipeline_document: NoodlePipelineDocument | None = None
+
+
+class NoodleRagSource(BaseModel):
+    id: str
+    title: str
+    kind: str
+    score: float
+    snippet: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class NoodleRagQueryResponse(BaseModel):
+    query: str
+    answer: str
+    sources: list[NoodleRagSource] = Field(default_factory=list)
+    retrieval_backend: str
+
+
+NoodleAgentKind = Literal["estimator", "architect", "momo"]
+NoodleAgentRecoveryStrategy = Literal["direct", "query_rewrite", "fallback_context", "fallback_guidance"]
+
+
+class NoodleAgentQueryRequest(BaseModel):
+    agent: NoodleAgentKind
+    user_turn: str = Field(min_length=5, max_length=1000)
+    max_results: int = Field(default=4, ge=1, le=10)
+    conversation_history: list[str] = Field(default_factory=list)
+    context_blocks: list[str] = Field(default_factory=list)
+    architecture_context: NoodleSavedArchitectureContext | None = None
+    pipeline_document: NoodlePipelineDocument | None = None
+    intent: NoodlePipelineIntent | None = None
+
+
+class NoodleAgentQueryResponse(BaseModel):
+    assistant: str
+    answer: str
+    brief: str = ""
+    sources: list[NoodleRagSource] = Field(default_factory=list)
+    retrieval_backend: str
+    recovered: bool = False
+    recovery_strategy: NoodleAgentRecoveryStrategy = "direct"
+    attempted_queries: list[str] = Field(default_factory=list)
+
+
 class NoodleObservabilityCapability(BaseModel):
     name: str
     metric_family: str
@@ -134,6 +183,7 @@ class NoodleSavedArchitectureContext(BaseModel):
     selected_providers: list[str] = Field(default_factory=list)
     diagram_style: str | None = None
     summary: str = ""
+    system_design: str = ""
     assumptions: list[str] = Field(default_factory=list)
     components: list[str] = Field(default_factory=list)
     cloud_services: list[str] = Field(default_factory=list)
@@ -204,6 +254,19 @@ class NoodleReferenceSpec(BaseModel):
     summary: str
     tags: list[str]
     sample_intent: NoodlePipelineIntent
+
+
+class NoodlePipelineIntentCatalogItem(BaseModel):
+    id: str
+    name: str
+    summary: str
+    tags: list[str] = Field(default_factory=list)
+    intent: NoodlePipelineIntent
+    recommended_workflow_template: str
+
+
+class NoodlePipelineIntentCatalogResponse(BaseModel):
+    items: list[NoodlePipelineIntentCatalogItem] = Field(default_factory=list)
 
 
 class NoodleArchitectureOverview(BaseModel):
@@ -726,3 +789,22 @@ class NoodlePipelineBatchResumeResponse(BaseModel):
     pipeline: NoodlePipelineDocument
     batch_session: NoodleDesignerBatchSession
     run: NoodleDesignerRun
+
+
+class NoodleDesignerMomoQueryRequest(BaseModel):
+    user_turn: str = Field(min_length=5, max_length=1000)
+    max_results: int = Field(default=4, ge=1, le=10)
+    architecture_context: NoodleSavedArchitectureContext | None = None
+    pipeline_document: NoodlePipelineDocument | None = None
+    intent: NoodlePipelineIntent | None = None
+
+
+class NoodleDesignerMomoResponse(BaseModel):
+    assistant: Literal["agent-momo"] = "agent-momo"
+    answer: str
+    brief: str = ""
+    sources: list[NoodleRagSource] = Field(default_factory=list)
+    retrieval_backend: str
+    recovered: bool = False
+    recovery_strategy: NoodleAgentRecoveryStrategy = "direct"
+    attempted_queries: list[str] = Field(default_factory=list)

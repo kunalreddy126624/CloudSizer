@@ -190,6 +190,17 @@ function buildArchitectureContext(architecture: SavedArchitectureDraft | null): 
     selected_providers: architecture.selected_providers,
     diagram_style: architecture.diagram_style ?? null,
     summary: typeof plan.summary === "string" ? plan.summary : "",
+    system_design: [
+      typeof plan.summary === "string" ? plan.summary : "",
+      readStringArray(plan.components).length ? `Components: ${readStringArray(plan.components).join(", ")}.` : "",
+      readStringArray(plan.dataFlow).length ? `Data flow: ${readStringArray(plan.dataFlow).join(" -> ")}.` : "",
+      readStringArray(plan.scalingStrategy).length ? `Scaling: ${readStringArray(plan.scalingStrategy).join(", ")}.` : "",
+      readStringArray(plan.securityConsiderations).length
+        ? `Security: ${readStringArray(plan.securityConsiderations).join(", ")}.`
+        : ""
+    ]
+      .filter(Boolean)
+      .join(" "),
     assumptions: readStringArray(plan.assumptions),
     components: readStringArray(plan.components),
     cloud_services: readStringArray(plan.cloudServices),
@@ -329,8 +340,9 @@ export function NoodleWorkspace() {
     storePendingNoodleSchedulerSession({
       source: "orchestrator",
       intent_name: intent.name,
+      pipeline_id: currentDraft?.id ?? null,
+      pipeline_name: currentDraft?.name ?? null,
       orchestrator_plan: orchestratorPlan,
-      document: currentDraft,
       opened_at: new Date().toISOString()
     });
     router.push("/noodle/scheduler");

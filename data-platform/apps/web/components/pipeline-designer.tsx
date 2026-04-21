@@ -11,6 +11,7 @@ import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, type Conne
 import { getOpalTemplates, nodeCatalog, sortNodesForWorkflowSteps } from "@data-platform/designer-core";
 import { Badge, Button, Toolbar, ValidationList } from "@data-platform/ui";
 
+import { DesignerAssistantPanel } from "@/components/designer-assistant-panel";
 import { getPipeline, publishPipeline, runPipeline, savePipeline, validatePipeline } from "@/lib/api";
 import { NodeInspector } from "@/components/node-inspector";
 import { NodePalette } from "@/components/node-palette";
@@ -489,6 +490,15 @@ function DesignerSurface({ pipelineId }: { pipelineId: string }) {
           </section>
 
           <div className="space-y-4">
+            <DesignerAssistantPanel
+              spec={spec}
+              initialDescription={pipelineQuery.data?.description ?? spec.description}
+              onUseIntentPrompt={(nextPrompt) => {
+                setPrompt(nextPrompt);
+                setPromptMode("replace");
+                setEditorMode("builder");
+              }}
+            />
             <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Selected Step</p>
               {selectedNode ? (
@@ -557,6 +567,15 @@ function DesignerSurface({ pipelineId }: { pipelineId: string }) {
             <ValidationList issues={issues} />
           </section>
           <div className="space-y-4">
+            <DesignerAssistantPanel
+              spec={spec}
+              initialDescription={pipelineQuery.data?.description ?? spec.description}
+              onUseIntentPrompt={(nextPrompt) => {
+                setPrompt(nextPrompt);
+                setPromptMode("replace");
+                setEditorMode("builder");
+              }}
+            />
             <NodeInspector />
             <RunsPanel pipelineId={pipelineId} />
           </div>

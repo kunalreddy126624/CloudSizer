@@ -546,6 +546,41 @@ class NoodlePipelineControlPlaneTests(unittest.TestCase):
         self.assertGreaterEqual(len(response.run.task_runs), 2)
         self.assertEqual(response.run.task_runs[0].node_label, "Ingest source")
 
+    def test_stop_run_marks_active_tasks_cancelled(self) -> None:
+        created = self.service.create_run(
+            self.document.id,
+            NoodlePipelineRunCreateRequest(
+                trigger="manual",
+                orchestration_mode="tasks",
+            ),
+        )
+
+        self.assertEqual(created.run.status, "running")
+        stopped = self.service.stop_run(self.document.id, created.run.id)
+
+        self.assertEqual(stopped.run.status, "cancelled")
+        self.assertIsNotNone(stopped.run.finished_at)
+        self.assertEqual(stopped.run.task_runs[0].state, "cancelled")
+        self.assertTrue(all(task.state == "cancelled" for task in stopped.run.task_runs))
+        self.assertTrue(any("Run was stopped manually before completion." in log.message for log in stopped.run.logs))
+        self.assertEqual(stopped.pipeline.runs[0].id, created.run.id)
+        self.assertEqual(stopped.pipeline.batch_sessions[0].status, "failed")
+        self.assertEqual(stopped.pipeline.batch_sessions[0].attempts[-1].status, "failed")
+
+    def test_stop_run_rejects_terminal_runs(self) -> None:
+        created = self.service.create_run(
+            self.document.id,
+            NoodlePipelineRunCreateRequest(
+                trigger="if",
+                orchestration_mode="tasks",
+                if_condition="false",
+            ),
+        )
+
+        self.assertEqual(created.run.status, "cancelled")
+        with self.assertRaises(ValueError):
+            self.service.stop_run(self.document.id, created.run.id)
+
     def test_pipeline_preserves_github_deployment_contract(self) -> None:
         deployment_document = NoodlePipelineDocument.model_validate(
             {

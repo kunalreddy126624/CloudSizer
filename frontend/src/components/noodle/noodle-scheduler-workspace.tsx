@@ -3,6 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
+import CloseFullscreenRoundedIcon from "@mui/icons-material/CloseFullscreenRounded";
+import ExpandLessRoundedIcon from "@mui/icons-material/ExpandLessRounded";
+import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
+import OpenInFullRoundedIcon from "@mui/icons-material/OpenInFullRounded";
+import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
+import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
+import StopRoundedIcon from "@mui/icons-material/StopRounded";
 import {
   Alert,
   Box,
@@ -12,9 +19,11 @@ import {
   Chip,
   Container,
   Grid,
+  IconButton,
   MenuItem,
   Stack,
   TextField,
+  Tooltip,
   Typography
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
@@ -31,10 +40,12 @@ import ReactFlow, {
   type Edge as FlowEdge,
   type Node as FlowNode,
   type NodeDragHandler,
-  type NodeProps
+  type NodeProps,
+  type ReactFlowInstance
 } from "reactflow";
 
-import { createNoodlePipelineRun, listNoodlePipelines } from "@/lib/api";
+import { createNoodlePipelineRun, listNoodlePipelines, stopNoodlePipelineRun } from "@/lib/api";
+import { GlossyTransportButton } from "@/components/noodle/glossy-transport-button";
 import {
   clearPendingNoodleSchedulerSession,
   loadNoodlePipelineDraft,
@@ -69,15 +80,18 @@ const noodleSecondaryButtonSx = {
     bgcolor: "#f8fbff"
   }
 };
-const noodlePrimaryButtonSx = {
-  ...noodleButtonSx,
-  bgcolor: "var(--accent)",
-  color: "#fff",
-  boxShadow: "0 10px 24px rgba(38, 93, 184, 0.18)",
+const schedulerPanelIconButtonSx = {
+  width: 36,
+  height: 36,
+  border: "1px solid var(--line)",
+  bgcolor: "#fff",
+  color: "var(--text)",
   "&:hover": {
-    bgcolor: "#265db8"
+    borderColor: "#9db8d8",
+    bgcolor: "#f8fbff"
   }
 };
+const SCHEDULER_CANVAS_HEIGHT = 460;
 
 type SchedulerNodeData = {
   label: string;
@@ -197,6 +211,46 @@ function buildTaskCanvasPosition(task: NoodleSchedulerPlanTask, index: number) {
   };
 }
 
+function orderTaskIdsForDispatch(tasks: NoodleSchedulerPlanTask[]) {
+  const originalIndexById = new Map(tasks.map((task, index) => [task.id, index]));
+  const inDegree = new Map(tasks.map((task) => [task.id, task.depends_on.length]));
+  const downstreamByDependency = new Map<string, string[]>();
+
+  tasks.forEach((task) => {
+    task.depends_on.forEach((dependencyId) => {
+      const downstream = downstreamByDependency.get(dependencyId) ?? [];
+      downstream.push(task.id);
+      downstreamByDependency.set(dependencyId, downstream);
+    });
+  });
+
+  const ready = tasks
+    .filter((task) => (inDegree.get(task.id) ?? 0) === 0)
+    .sort((left, right) => (originalIndexById.get(left.id) ?? 0) - (originalIndexById.get(right.id) ?? 0))
+    .map((task) => task.id);
+  const ordered: string[] = [];
+
+  while (ready.length) {
+    const nextTaskId = ready.shift();
+    if (!nextTaskId) {
+      continue;
+    }
+
+    ordered.push(nextTaskId);
+
+    (downstreamByDependency.get(nextTaskId) ?? []).forEach((downstreamTaskId) => {
+      const nextInDegree = (inDegree.get(downstreamTaskId) ?? 0) - 1;
+      inDegree.set(downstreamTaskId, nextInDegree);
+      if (nextInDegree === 0) {
+        ready.push(downstreamTaskId);
+        ready.sort((left, right) => (originalIndexById.get(left) ?? 0) - (originalIndexById.get(right) ?? 0));
+      }
+    });
+  }
+
+  return ordered.length === tasks.length ? ordered : null;
+}
+
 function canReachTask(tasks: NoodleSchedulerPlanTask[], fromTaskId: string, targetTaskId: string): boolean {
   const visited = new Set<string>();
   const queue = [fromTaskId];
@@ -299,14 +353,15 @@ function buildPlanFromPendingSession(
     return basePlan;
   }
 
-  const fallbackPipeline = pending.document
-    ? pipelines.find((entry) => entry.id === pending.document?.id) ?? pending.document
-    : pipelines[0];
+  const fallbackPipeline =
+    (pending.pipeline_id ? pipelines.find((entry) => entry.id === pending.pipeline_id) : null) ??
+    (pending.document ? pipelines.find((entry) => entry.id === pending.document?.id) ?? pending.document : null) ??
+    pipelines[0];
   const seededTasks = (pending.orchestrator_plan?.tasks ?? []).map<NoodleSchedulerPlanTask>((task, index) => ({
     id: task.id || createId("soup-task"),
     task_name: task.name || `Task ${index + 1}`,
     pipeline_id: fallbackPipeline?.id ?? "",
-    pipeline_name: fallbackPipeline?.name ?? "Select pipeline",
+    pipeline_name: fallbackPipeline?.name ?? pending.pipeline_name ?? "Select pipeline",
     trigger: pending.orchestrator_plan?.trigger ?? "manual",
     orchestration_mode: "plan",
     execution_profile: inferExecutionProfile(fallbackPipeline, pending.orchestrator_plan?.trigger ?? "manual"),
@@ -345,6 +400,12 @@ export function NoodleSchedulerWorkspace() {
   const [dispatching, setDispatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [stoppingTaskId, setStoppingTaskId] = useState<string | null>(null);
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const [canvasExpanded, setCanvasExpanded] = useState(false);
+  const [canvasCollapsed, setCanvasCollapsed] = useState(false);
+  const [panelFocus, setPanelFocus] = useState<"canvas" | null>(null);
+  const canvasHeight = canvasExpanded ? "calc(100vh - 300px)" : SCHEDULER_CANVAS_HEIGHT;
 
   useEffect(() => {
     let active = true;
@@ -366,12 +427,11 @@ export function NoodleSchedulerWorkspace() {
         if (localDraft && !pipelineList.some((entry) => entry.id === localDraft.id)) {
           pipelineList = [localDraft, ...pipelineList];
         }
-        if (pending?.document && !pipelineList.some((entry) => entry.id === pending.document?.id)) {
-          pipelineList = [pending.document, ...pipelineList];
-        }
         const preferredPipeline =
-          pending?.document
-            ? pipelineList.find((entry) => entry.id === pending.document?.id)
+          pending?.pipeline_id
+            ? pipelineList.find((entry) => entry.id === pending.pipeline_id)
+            : pending?.document
+              ? pipelineList.find((entry) => entry.id === pending.document?.id)
             : pending?.intent_name
               ? pipelineList.find((entry) => entry.name === pending.intent_name)
               : pipelineList[0];
@@ -537,6 +597,30 @@ export function NoodleSchedulerWorkspace() {
     }));
   }
 
+  function renameTask(taskId: string) {
+    const task = plan.tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      return;
+    }
+
+    const nextName = window.prompt("Rename task", task.task_name);
+    if (nextName === null) {
+      return;
+    }
+
+    const normalized = nextName.trim();
+    if (!normalized) {
+      return;
+    }
+
+    updateTask(taskId, (current) => ({
+      ...current,
+      task_name: normalized
+    }));
+    setSelectedTaskId(taskId);
+    setNotice(`Renamed task to ${normalized}.`);
+  }
+
   function handleConnect(connection: Connection) {
     if (!connection.source || !connection.target) {
       return;
@@ -585,6 +669,30 @@ export function NoodleSchedulerWorkspace() {
     setNotice("Dependency removed from Soup Scheduler DAG.");
   }
 
+  async function stopSelectedTaskRun() {
+    if (!selectedTask?.pipeline_id || !selectedTask.last_run_id) {
+      return;
+    }
+
+    setStoppingTaskId(selectedTask.id);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const response = await stopNoodlePipelineRun(selectedTask.pipeline_id, selectedTask.last_run_id);
+      updateTask(selectedTask.id, (task) => ({
+        ...task,
+        last_status: response.run.status,
+        notes: appendNote(task.notes, `Stopped run ${response.run.id} from Soup Scheduler.`)
+      }));
+      setNotice(`Stopped run ${response.run.id} for ${selectedTask.task_name}.`);
+    } catch (stopError) {
+      setError(stopError instanceof Error ? stopError.message : "Failed to stop the selected scheduler task run.");
+    } finally {
+      setStoppingTaskId(null);
+    }
+  }
+
   async function dispatchPlan() {
     if (!plan.tasks.length) {
       setError("Add at least one task before dispatching the plan.");
@@ -595,18 +703,31 @@ export function NoodleSchedulerWorkspace() {
     setError(null);
     setNotice(null);
 
+    const orderedTaskIds = orderTaskIdsForDispatch(plan.tasks);
+    if (!orderedTaskIds) {
+      setDispatching(false);
+      setError("Soup Scheduler could not derive a DAG dispatch order. Check task dependencies for a cycle.");
+      return;
+    }
+
     let successCount = 0;
     let failureCount = 0;
     const failureMessages: string[] = [];
     const nextTasks = [...plan.tasks];
     const pipelineById = new Map(pipelines.map((pipeline) => [pipeline.id, pipeline]));
+    const taskIndexById = new Map(nextTasks.map((task, index) => [task.id, index]));
 
-    for (let index = 0; index < nextTasks.length; index += 1) {
-      const task = nextTasks[index];
+    for (const taskId of orderedTaskIds) {
+      const taskIndex = taskIndexById.get(taskId);
+      if (taskIndex === undefined) {
+        continue;
+      }
+
+      const task = nextTasks[taskIndex];
       if (!task.pipeline_id) {
         failureCount += 1;
         failureMessages.push(`${task.task_name}: missing pipeline assignment.`);
-        nextTasks[index] = {
+        nextTasks[taskIndex] = {
           ...task,
           last_status: "failed",
           notes: appendNote(task.notes, "Missing pipeline assignment.")
@@ -618,7 +739,7 @@ export function NoodleSchedulerWorkspace() {
       if (!pipeline) {
         failureCount += 1;
         failureMessages.push(`${task.task_name}: selected pipeline could not be found in the current scheduler catalog.`);
-        nextTasks[index] = {
+        nextTasks[taskIndex] = {
           ...task,
           last_status: "failed",
           notes: appendNote(task.notes, "Selected pipeline could not be found in the current scheduler catalog.")
@@ -629,7 +750,7 @@ export function NoodleSchedulerWorkspace() {
       if (pipeline.status !== "published") {
         failureCount += 1;
         failureMessages.push(`${task.task_name}: pipeline "${pipeline.name}" is still a draft. Publish it before dispatching from Soup Scheduler.`);
-        nextTasks[index] = {
+        nextTasks[taskIndex] = {
           ...task,
           last_status: "failed",
           notes: appendNote(task.notes, "Pipeline is still a draft. Publish it before dispatching from Soup Scheduler.")
@@ -643,7 +764,7 @@ export function NoodleSchedulerWorkspace() {
           orchestration_mode: task.orchestration_mode
         });
         successCount += 1;
-        nextTasks[index] = {
+        nextTasks[taskIndex] = {
           ...task,
           last_run_id: response.run.id,
           last_status: response.run.status,
@@ -654,7 +775,7 @@ export function NoodleSchedulerWorkspace() {
         const reason =
           dispatchError instanceof Error ? dispatchError.message : "Dispatch failed; verify pipeline and run API availability.";
         failureMessages.push(`${task.task_name}: ${reason}`);
-        nextTasks[index] = {
+        nextTasks[taskIndex] = {
           ...task,
           last_status: "failed",
           notes: appendNote(task.notes, reason)
@@ -717,7 +838,12 @@ export function NoodleSchedulerWorkspace() {
           ) : null}
 
           <Grid container spacing={3}>
-            <Grid item xs={12} lg={5}>
+            <Grid
+              item
+              xs={12}
+              lg={panelFocus === "canvas" ? 0 : 5}
+              sx={{ display: panelFocus === "canvas" ? { lg: "none" } : undefined }}
+            >
               <Stack spacing={3}>
                 <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
                   <CardContent sx={{ p: 3 }}>
@@ -743,9 +869,9 @@ export function NoodleSchedulerWorkspace() {
                           <Chip label={`${executionProfileCounts.one_time_ingestion} one-time`} sx={{ bgcolor: "#fff7e8" }} />
                           <Chip label={`Saved ${new Date(plan.saved_at).toLocaleString()}`} sx={{ bgcolor: "#f1f5f9" }} />
                         </Stack>
-                      <Button variant="contained" onClick={savePlan} sx={noodlePrimaryButtonSx}>
-                        Save Soup Plan
-                      </Button>
+                      <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                        Use the glossy control cluster on the canvas to save the plan, dispatch tasks in DAG order, or stop the selected active run.
+                      </Typography>
                     </Stack>
                   </CardContent>
                 </Card>
@@ -830,7 +956,7 @@ export function NoodleSchedulerWorkspace() {
               </Stack>
             </Grid>
 
-            <Grid item xs={12} lg={7}>
+            <Grid item xs={12} lg={panelFocus === "canvas" ? 12 : 7}>
               <Stack spacing={3}>
                 <Card sx={{ borderRadius: 5, border: "1px solid var(--line)", boxShadow: "none" }}>
                   <CardContent sx={{ p: 3 }}>
@@ -842,37 +968,112 @@ export function NoodleSchedulerWorkspace() {
                             Connect nodes to define task dependencies, drag them to shape the schedule, and orchestrate batch, streaming, and one-time ingestion flows in one graph.
                           </Typography>
                         </Box>
-                        <Button
-                          variant="contained"
-                          onClick={() => void dispatchPlan()}
-                          sx={noodlePrimaryButtonSx}
-                          disabled={dispatching || !plan.tasks.length}
-                        >
-                          {dispatching ? "Dispatching..." : "Dispatch Plan"}
-                        </Button>
+                        <Stack direction="row" spacing={1} alignItems="flex-start">
+                          <Tooltip title={canvasCollapsed ? "Expand canvas panel" : "Collapse canvas panel"}>
+                            <IconButton
+                              size="small"
+                              onClick={() => setCanvasCollapsed((current) => !current)}
+                              aria-label={canvasCollapsed ? "Expand canvas panel" : "Collapse canvas panel"}
+                              sx={schedulerPanelIconButtonSx}
+                            >
+                              {canvasCollapsed ? <ExpandMoreRoundedIcon fontSize="small" /> : <ExpandLessRoundedIcon fontSize="small" />}
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title={panelFocus === "canvas" ? "Restore layout" : "Maximize canvas panel"}>
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setPanelFocus((current) => (current === "canvas" ? null : "canvas"));
+                                window.setTimeout(() => flowInstance?.fitView({ padding: 0.16 }), 0);
+                              }}
+                              aria-label={panelFocus === "canvas" ? "Restore layout" : "Maximize canvas panel"}
+                              sx={schedulerPanelIconButtonSx}
+                            >
+                              {panelFocus === "canvas" ? <CloseFullscreenRoundedIcon fontSize="small" /> : <OpenInFullRoundedIcon fontSize="small" />}
+                            </IconButton>
+                          </Tooltip>
+                          <Button
+                            size="small"
+                            onClick={() => {
+                              setCanvasExpanded((current) => !current);
+                              window.setTimeout(() => flowInstance?.fitView({ padding: 0.16 }), 0);
+                            }}
+                          >
+                            {canvasExpanded ? "Reduce Height" : "Expand Height"}
+                          </Button>
+                        </Stack>
                       </Stack>
-                      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                        <Chip label={`${flowNodes.length} scheduled nodes`} sx={{ bgcolor: "#eef6ff" }} />
-                        <Chip label={`${flowEdges.length} dependency edges`} sx={{ bgcolor: "#f4f9ff" }} />
-                        <Chip label={`${executionProfileCounts.streaming} streaming live`} sx={{ bgcolor: "#ecfff5" }} />
-                        <Chip label={selectedTask ? `Focused ${selectedTask.task_name}` : "Select a node to edit"} sx={{ bgcolor: "#fff8e8" }} />
-                      </Stack>
-                      <Box
-                        sx={{
-                          height: 460,
-                          borderRadius: 5,
-                          overflow: "hidden",
-                          border: "1px solid rgba(148, 163, 184, 0.3)",
-                          background:
-                            "radial-gradient(circle at top left, rgba(111, 208, 255, 0.22), transparent 18%), radial-gradient(circle at 92% 10%, rgba(255, 209, 102, 0.16), transparent 14%), linear-gradient(180deg, #fbfdff 0%, #eef5fb 100%)"
-                        }}
+                      <Stack
+                        direction={{ xs: "column", lg: "row" }}
+                        spacing={1.1}
+                        justifyContent="flex-start"
+                        alignItems={{ xs: "stretch", lg: "center" }}
                       >
+                        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                          <Chip label={`${flowNodes.length} scheduled nodes`} sx={{ bgcolor: "#eef6ff" }} />
+                          <Chip label={`${flowEdges.length} dependency edges`} sx={{ bgcolor: "#f4f9ff" }} />
+                          <Chip label={`${executionProfileCounts.streaming} streaming live`} sx={{ bgcolor: "#ecfff5" }} />
+                          <Chip label={selectedTask ? `Focused ${selectedTask.task_name}` : "Select a node to edit"} sx={{ bgcolor: "#fff8e8" }} />
+                        </Stack>
+                        <Stack direction="row" spacing={1.1} sx={{ ml: { lg: 2.5 } }} justifyContent="flex-start">
+                          <GlossyTransportButton
+                            title={
+                              selectedTask?.last_run_id
+                                ? `Stop run ${selectedTask.last_run_id} for ${selectedTask.task_name}`
+                                : "Select a scheduler task with an active run to stop it"
+                            }
+                            label="Stop"
+                            variant="stop"
+                            size="compact"
+                            icon={<StopRoundedIcon />}
+                            onClick={() => void stopSelectedTaskRun()}
+                            disabled={
+                              !selectedTask ||
+                              !selectedTask.last_run_id ||
+                              !selectedTask.last_status ||
+                              !["queued", "running"].includes(selectedTask.last_status) ||
+                              dispatching ||
+                              stoppingTaskId === selectedTask.id
+                            }
+                          />
+                          <GlossyTransportButton
+                            title="Save Soup Plan"
+                            label="Save"
+                            variant="utility"
+                            size="compact"
+                            icon={<SaveRoundedIcon />}
+                            onClick={savePlan}
+                          />
+                          <GlossyTransportButton
+                            title="Dispatch Plan"
+                            label={dispatching ? "Wait" : "Run"}
+                            variant="play"
+                            size="compact"
+                            icon={<PlayArrowRoundedIcon />}
+                            onClick={() => void dispatchPlan()}
+                            disabled={dispatching || stoppingTaskId !== null || !plan.tasks.length}
+                          />
+                        </Stack>
+                      </Stack>
+                      {!canvasCollapsed ? (
+                        <Box
+                          sx={{
+                            height: canvasHeight,
+                            minHeight: 460,
+                            borderRadius: 5,
+                            overflow: "hidden",
+                            border: "1px solid rgba(148, 163, 184, 0.3)",
+                            background:
+                              "radial-gradient(circle at top left, rgba(111, 208, 255, 0.22), transparent 18%), radial-gradient(circle at 92% 10%, rgba(255, 209, 102, 0.16), transparent 14%), linear-gradient(180deg, #fbfdff 0%, #eef5fb 100%)"
+                          }}
+                        >
                         {plan.tasks.length ? (
                           <ReactFlow
                             nodes={flowNodes}
                             edges={flowEdges}
                             nodeTypes={schedulerNodeTypes}
                             fitView
+                            onInit={setFlowInstance}
                             connectionMode={ConnectionMode.Loose}
                             nodesDraggable
                             nodesConnectable
@@ -882,6 +1083,10 @@ export function NoodleSchedulerWorkspace() {
                             onNodeClick={(_, node) => {
                               setSelectedTaskId(node.id);
                               setNotice(null);
+                            }}
+                            onNodeDoubleClick={(_, node) => {
+                              setSelectedTaskId(node.id);
+                              renameTask(node.id);
                             }}
                             onConnect={handleConnect}
                             onNodeDragStop={handleNodeDragStop}
@@ -918,7 +1123,10 @@ export function NoodleSchedulerWorkspace() {
                             </Typography>
                           </Stack>
                         )}
-                      </Box>
+                        </Box>
+                      ) : (
+                        <Alert severity="info">Scheduler canvas is collapsed. Expand the panel to edit dependencies visually.</Alert>
+                      )}
                       <Alert severity="info">
                         Draw an edge from one task into another to make the target wait for the source. Delete an edge to remove that dependency.
                       </Alert>

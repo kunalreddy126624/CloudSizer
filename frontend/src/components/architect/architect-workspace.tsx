@@ -30,6 +30,7 @@ import {
   upsertSavedArchitectureDraft
 } from "@/lib/scenario-store";
 import { ArchitectFlowCanvas, type CanvasSelection } from "@/components/architect/architect-flow-canvas";
+import { queryNoodleAgent } from "@/lib/api";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -79,6 +80,7 @@ import {
   type DiagramProvider,
   type DiagramStyle
 } from "@/lib/architect-diagram";
+import { buildArchitectContextBlocks, buildArchitectureContextFromPlan } from "@/lib/noodle-agent";
 import type { RecommendationRequest } from "@/lib/types";
 
 interface ArchitectWorkspaceProps {
@@ -238,6 +240,36 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
   const historySignatureRef = useRef<string>("");
   const isApplyingHistoryRef = useRef(false);
 
+  const refreshArchitectGuidance = useCallback(
+    async (
+      nextPlan: DiagramPlan,
+      nextPrompt: string,
+      nextProviders: ArchitectureCloudProvider[],
+      nextDiagramStyle: DiagramStyle
+    ) => {
+      const fallbackMessage = buildAgentMessage(nextPlan);
+      try {
+        const response = await queryNoodleAgent({
+          agent: "architect",
+          user_turn: nextPrompt,
+          conversation_history: [nextPrompt],
+          context_blocks: buildArchitectContextBlocks(nextPlan),
+          architecture_context: buildArchitectureContextFromPlan(
+            nextPlan.title,
+            nextPrompt,
+            nextProviders,
+            nextDiagramStyle,
+            nextPlan
+          )
+        });
+        setAgentMessage(response.answer);
+      } catch {
+        setAgentMessage(fallbackMessage);
+      }
+    },
+    []
+  );
+
   const currentHistorySnapshot = useMemo<ArchitectHistorySnapshot>(
     () => ({
       prompt,
@@ -307,8 +339,14 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setZoneOverrides((draft.zone_overrides as Record<string, Partial<CanvasZone>> | undefined) ?? {});
     setLaneOverrides((draft.lane_overrides as Record<string, Partial<CanvasLane>> | undefined) ?? {});
     setAgentMessage(buildAgentMessage(draft.plan as unknown as DiagramPlan));
+    void refreshArchitectGuidance(
+      draft.plan as unknown as DiagramPlan,
+      draft.prompt,
+      draft.selected_providers as ArchitectureCloudProvider[],
+      ((draft.diagram_style as DiagramStyle | undefined) ?? "reference")
+    );
     setHistoryHydrated(true);
-  }, [canvasOnly]);
+  }, [canvasOnly, refreshArchitectGuidance]);
 
   useEffect(() => {
     if (canvasOnly) {
@@ -344,10 +382,11 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setZoneOverrides({});
     setLaneOverrides({});
     setAgentMessage(buildAgentMessage(nextPlan));
+    void refreshArchitectGuidance(nextPlan, nextPrompt, nextPlan.providers, diagramStyle);
     setImportMessage(`Imported "${pendingScenario.name}" into Agent Architect.`);
     clearPendingArchitectScenario();
     setHistoryHydrated(true);
-  }, [canvasOnly, diagramStyle, selectedPattern, selectedScenario]);
+  }, [canvasOnly, diagramStyle, refreshArchitectGuidance, selectedPattern, selectedScenario]);
 
   useEffect(() => {
     if (!canvasOnly || !historyHydrated) {
@@ -696,6 +735,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
       setZoneOverrides({});
       setLaneOverrides({});
       setAgentMessage(buildAgentMessage(nextPlan));
+      void refreshArchitectGuidance(nextPlan, nextPrompt, nextPlan.providers, diagramStyle);
       clearSelection();
       setConnectFromId(null);
     });
@@ -735,6 +775,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setImportMessage(null);
     setPlan(nextPlan);
     setAgentMessage(buildAgentMessage(nextPlan));
+    void refreshArchitectGuidance(nextPlan, nextPrompt, entry.defaultProviders, entry.defaultDiagramStyle);
     setZoneOverrides({});
     setLaneOverrides({});
     clearSelection();
@@ -763,6 +804,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setImportMessage(null);
     setPlan(nextPlan);
     setAgentMessage(buildAgentMessage(nextPlan));
+    void refreshArchitectGuidance(nextPlan, nextPrompt, nextPlan.providers, diagramStyle);
     setZoneOverrides({});
     setLaneOverrides({});
     clearSelection();
@@ -791,6 +833,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setZoneOverrides({});
     setLaneOverrides({});
     setAgentMessage(buildAgentMessage(nextPlan));
+    void refreshArchitectGuidance(nextPlan, prompt, nextPlan.providers, nextDiagramStyle);
     clearSelection();
     setConnectFromId(null);
   }
@@ -815,6 +858,7 @@ export function ArchitectWorkspace({ canvasOnly = false }: ArchitectWorkspacePro
     setSelectedPattern(nextPlan.pattern);
     setImportMessage(null);
     setAgentMessage(buildAgentMessage(nextPlan));
+    void refreshArchitectGuidance(nextPlan, prompt, nextPlan.providers, diagramStyle);
     setZoneOverrides({});
     setLaneOverrides({});
     clearSelection();

@@ -5,17 +5,24 @@ from fastapi import APIRouter, HTTPException
 from app.noodle.microservices.api import router as microservices_router
 from app.noodle.pipeline_service import get_noodle_pipeline_control_plane
 from app.noodle.schemas import (
+    NoodleAgentQueryRequest,
+    NoodleAgentQueryResponse,
     NoodleArchitectureOverview,
+    NoodleDesignerMomoQueryRequest,
+    NoodleDesignerMomoResponse,
     NoodlePipelineDocument,
     NoodlePipelineBatchResumeRequest,
     NoodlePipelineBatchResumeResponse,
     NoodlePipelineIntent,
+    NoodlePipelineIntentCatalogResponse,
     NoodlePipelinePlanningRequest,
     NoodlePipelinePlanResponse,
     NoodlePipelineRepairRunRequest,
     NoodlePipelineRunCreateRequest,
     NoodlePipelineRunResponse,
     NoodlePlatformBlueprint,
+    NoodleRagQueryRequest,
+    NoodleRagQueryResponse,
     NoodleReferenceSpec,
 )
 from app.noodle.service import get_noodle_service
@@ -60,6 +67,26 @@ def noodle_blueprint() -> NoodlePlatformBlueprint:
 @router.get("/reference-specs", response_model=list[NoodleReferenceSpec])
 def noodle_reference_specs() -> list[NoodleReferenceSpec]:
     return get_noodle_service().list_reference_specs()
+
+
+@router.get("/pipeline-intents", response_model=NoodlePipelineIntentCatalogResponse)
+def noodle_pipeline_intents() -> NoodlePipelineIntentCatalogResponse:
+    return get_noodle_service().list_pipeline_intents()
+
+
+@router.post("/rag/query", response_model=NoodleRagQueryResponse)
+def noodle_query_rag(request: NoodleRagQueryRequest) -> NoodleRagQueryResponse:
+    return get_noodle_service().query_knowledge(request)
+
+
+@router.post("/agents/query", response_model=NoodleAgentQueryResponse)
+def noodle_query_agent(request: NoodleAgentQueryRequest) -> NoodleAgentQueryResponse:
+    return get_noodle_service().query_agent(request)
+
+
+@router.post("/designer/momo/query", response_model=NoodleDesignerMomoResponse)
+def noodle_designer_momo_query(request: NoodleDesignerMomoQueryRequest) -> NoodleDesignerMomoResponse:
+    return get_noodle_service().query_designer_momo(request)
 
 
 @router.post("/pipelines/plan", response_model=NoodlePipelinePlanResponse)
@@ -110,6 +137,21 @@ def noodle_create_pipeline_run(
         return get_noodle_pipeline_control_plane().create_run(pipeline_id, request)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Pipeline not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        _raise_noodle_control_plane_error(exc)
+
+
+@router.post("/pipelines/{pipeline_id}/runs/{run_id}/stop", response_model=NoodlePipelineRunResponse)
+def noodle_stop_pipeline_run(
+    pipeline_id: str,
+    run_id: str,
+) -> NoodlePipelineRunResponse:
+    try:
+        return get_noodle_pipeline_control_plane().stop_run(pipeline_id, run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Pipeline or run not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

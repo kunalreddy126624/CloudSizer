@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv12/
+.venv*/
 .env
 .env.local
 .pytest_cache/
@@ -20,6 +22,9 @@ frontend/*.err.log
 coverage/
 dist/
 build/
+test-results/
+.idea/
+*.tsbuildinfo
 
 *.sqlite3
 *.db-journal

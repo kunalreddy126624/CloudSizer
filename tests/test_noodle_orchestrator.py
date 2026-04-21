@@ -4,6 +4,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.noodle.api import router
+from app.noodle.connectors.registry import CONNECTOR_BY_SOURCE_KIND
+from app.noodle.sample_specs import REFERENCE_SPECS
+from app.noodle.service import get_noodle_service
 
 
 class NoodleOrchestratorApiTest(unittest.TestCase):
@@ -99,8 +102,44 @@ class NoodleOrchestratorApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         specs = response.json()
-        self.assertGreaterEqual(len(specs), 2)
+        self.assertGreaterEqual(len(specs), 10)
         self.assertEqual(specs[0]["id"], "hybrid-orders-analytics")
+
+    def test_pipeline_intent_catalog_is_available(self) -> None:
+        response = self.client.get("/noodle/pipeline-intents")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertGreaterEqual(len(payload["items"]), 10)
+        self.assertEqual(payload["items"][0]["id"], "hybrid-orders-analytics")
+        self.assertIn("recommended_workflow_template", payload["items"][0])
+
+    def test_reference_specs_cover_all_supported_source_kinds(self) -> None:
+        supported_source_kinds = set(CONNECTOR_BY_SOURCE_KIND)
+        referenced_source_kinds = {
+            source.kind
+            for spec in REFERENCE_SPECS
+            for source in spec.sample_intent.sources
+        }
+
+        self.assertEqual(referenced_source_kinds, supported_source_kinds)
+
+    def test_reference_specs_cover_all_workflow_template_variants(self) -> None:
+        workflow_service = get_noodle_service().workflow
+        templates = {
+            workflow_service.choose_template(spec.sample_intent)
+            for spec in REFERENCE_SPECS
+        }
+
+        self.assertEqual(
+            templates,
+            {
+                "temporal-standard-batch-orchestration",
+                "temporal-batch-plus-feature-materialization",
+                "temporal-hybrid-streaming",
+                "temporal-event-driven-realtime",
+            },
+        )
 
     def test_microservice_catalog_exposes_planner_and_governance_services(self) -> None:
         response = self.client.get("/noodle/microservices")

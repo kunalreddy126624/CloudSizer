@@ -31,6 +31,10 @@ from app.models import (
     ServiceComparisonGroup,
     ServicePricingRequest,
     ServicePricingResponse,
+    ToonEncodeRequest,
+    ToonEncodeResponse,
+    ToonDecodeRequest,
+    ToonDecodeResponse,
 )
 from app.services.advisor import advise_estimation_chat, advise_estimation_plan
 from app.services.auth import authenticate_user, create_session, get_user_for_token, revoke_session
@@ -57,6 +61,7 @@ from app.services.resource_allocator import (
 )
 from app.services.recommendation import build_recommendations
 from app.services.service_pricing import calculate_service_pricing
+from app.services.toon import from_toon, to_toon
 from app.rbac.security import decode_access_token
 from app.rbac.service import get_rbac_service
 
@@ -108,6 +113,22 @@ def require_authenticated_actor(
 @router.get("/health")
 def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.post("/toon/encode", response_model=ToonEncodeResponse)
+def toon_encode(request: ToonEncodeRequest) -> ToonEncodeResponse:
+    try:
+        return ToonEncodeResponse(toon=to_toon(request.value))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/toon/decode", response_model=ToonDecodeResponse)
+def toon_decode(request: ToonDecodeRequest) -> ToonDecodeResponse:
+    try:
+        return ToonDecodeResponse(value=from_toon(request.toon))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/providers", response_model=list[ProviderSummary])

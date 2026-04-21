@@ -21,10 +21,12 @@ class AllocatorControlPlaneTest(unittest.TestCase):
             "ALLOCATOR_DATABASE_URL": os.getenv("ALLOCATOR_DATABASE_URL"),
             "ALLOCATOR_TERRAFORM_ARTIFACT_DIR": os.getenv("ALLOCATOR_TERRAFORM_ARTIFACT_DIR"),
             "ALLOCATOR_MOCK_CLOUD_CONTROL_PLANE": os.getenv("ALLOCATOR_MOCK_CLOUD_CONTROL_PLANE"),
+            "ALLOCATOR_MOCK_TERRAFORM_APPLY": os.getenv("ALLOCATOR_MOCK_TERRAFORM_APPLY"),
         }
         os.environ["ALLOCATOR_DATABASE_URL"] = f"sqlite:///{Path(self.temp_dir.name) / 'allocator.db'}"
         os.environ["ALLOCATOR_TERRAFORM_ARTIFACT_DIR"] = str(Path(self.temp_dir.name) / "artifacts")
         os.environ["ALLOCATOR_MOCK_CLOUD_CONTROL_PLANE"] = "true"
+        os.environ["ALLOCATOR_MOCK_TERRAFORM_APPLY"] = "true"
         self.control_plane = AllocatorControlPlane()
 
     def tearDown(self) -> None:
@@ -191,10 +193,62 @@ class AllocatorControlPlaneTest(unittest.TestCase):
 
         self.assertEqual(allocated.run.status.value, "completed")
         self.assertTrue(allocated.run.provisioning_result.applied)
+        self.assertEqual(allocated.run.provisioning_result.runner_mode, "mock")
         self.assertEqual(allocated.run.account_plan.provider.value, "cloudflare")
         artifact_path = Path(allocated.run.provisioning_result.terraform_artifact_path or "")
         self.assertTrue(artifact_path.exists())
         self.assertTrue((artifact_path / "main.tf").exists())
+        self.assertTrue(Path(allocated.run.provisioning_result.execution_log_path or "").exists())
+
+    def test_allocate_run_fails_cleanly_when_terraform_binary_is_missing(self) -> None:
+        os.environ["ALLOCATOR_MOCK_TERRAFORM_APPLY"] = "false"
+        self.control_plane = AllocatorControlPlane()
+
+        submitted = self.control_plane.submit_run(
+            AllocatorRunCreateRequest(
+                requested_by="engineer",
+                change_reason="Validate live apply failure handling.",
+                payload=self._build_request("aws"),
+            ),
+            self._principal(
+                "architect@example.com",
+                [RoleName.ARCHITECT],
+                [PermissionName.CREATE_ESTIMATION],
+            ),
+        )
+        approved = self.control_plane.approve_run(
+            submitted.run.id,
+            ApprovalActionRequest(reviewer="architect", comment="approved"),
+            self._principal(
+                "approver@example.com",
+                [RoleName.APPROVER],
+                [PermissionName.APPROVE_REQUEST],
+            ),
+        )
+        budget_validated = self.control_plane.validate_budget(
+            approved.run.id,
+            BudgetValidationActionRequest(reviewer="finops", comment="budget cleared"),
+            self._principal(
+                "finops@example.com",
+                [RoleName.FINOPS],
+                [PermissionName.VIEW_COST],
+            ),
+        )
+
+        allocated = self.control_plane.allocate_run(
+            budget_validated.run.id,
+            AllocationActionRequest(operator="operator", comment="trigger apply"),
+            self._principal(
+                "operator@example.com",
+                [RoleName.OPERATOR],
+                [PermissionName.ALLOCATE_RESOURCES],
+            ),
+        )
+
+        self.assertEqual(allocated.run.status.value, "failed")
+        self.assertFalse(allocated.run.provisioning_result.applied)
+        self.assertIn("Terraform binary", allocated.run.provisioning_result.message)
+        self.assertTrue(Path(allocated.run.provisioning_result.execution_log_path or "").exists())
 
     def test_requester_cannot_self_approve(self) -> None:
         submitted = self.control_plane.submit_run(

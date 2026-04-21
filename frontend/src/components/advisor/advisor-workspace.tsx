@@ -21,8 +21,9 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "@/components/auth/auth-provider";
-import { advisorChat, createSavedEstimate } from "@/lib/api";
+import { advisorChat, createSavedEstimate, queryNoodleAgent } from "@/lib/api";
 import { MAX_GUEST_RUNS, loadGuestUsageSummary, recordGuestUsage } from "@/lib/guest-usage";
+import { buildEstimatorContextBlocks } from "@/lib/noodle-agent";
 import { buildRecommendationDetailHref } from "@/lib/query";
 import { storePendingEstimatorScenario } from "@/lib/scenario-store";
 import { formatWorkloadLabel } from "@/lib/workloads";
@@ -271,12 +272,29 @@ export function AdvisorWorkspace() {
         preferred_providers: providers,
         monthly_budget_usd: typeof budget === "number" ? budget : null
       });
+      let assistantMessage = response.assistant_message;
+      try {
+        const ragResponse = await queryNoodleAgent({
+          agent: "estimator",
+          user_turn: nextUserMessage.content,
+          conversation_history: nextMessages.map((message) => message.content),
+          context_blocks: buildEstimatorContextBlocks({
+            preferredProviders: providers,
+            monthlyBudget: budget,
+            inferredRequest: response.inferred_request ?? null,
+            estimate: response.estimate ?? null
+          })
+        });
+        assistantMessage = `${response.assistant_message}\n\n${ragResponse.answer}`;
+      } catch {
+        // Keep the advisor response if the self-healing RAG layer is unavailable.
+      }
 
       setMessages((current) => [
         ...current,
         {
           role: "assistant",
-          content: response.assistant_message
+          content: assistantMessage
         }
       ]);
       setConversationSummary(response.conversation_summary);

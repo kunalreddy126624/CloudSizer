@@ -96,11 +96,13 @@ export function NoodleDesignerWorkspace() {
 
   function openSoupSchedulerPage() {
     const currentDraft = typeof window === "undefined" ? null : loadNoodlePipelineDraft();
+    const pipelineReference = currentDraft ?? seedDocument;
     storePendingNoodleSchedulerSession({
       source: "designer",
       intent_name: intent.name,
+      pipeline_id: pipelineReference?.id ?? null,
+      pipeline_name: pipelineReference?.name ?? null,
       orchestrator_plan: plannedOrchestratorPlan,
-      document: currentDraft ?? seedDocument,
       opened_at: new Date().toISOString()
     });
     router.push("/noodle/scheduler");

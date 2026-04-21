@@ -449,6 +449,22 @@ class CatalogImportResponse(BaseModel):
     snapshot_path: str
 
 
+class ToonEncodeRequest(BaseModel):
+    value: Any
+
+
+class ToonEncodeResponse(BaseModel):
+    toon: str
+
+
+class ToonDecodeRequest(BaseModel):
+    toon: str = Field(min_length=5)
+
+
+class ToonDecodeResponse(BaseModel):
+    value: Any
+
+
 class DeploymentEnvironment(str, Enum):
     DEV = "dev"
     TEST = "test"

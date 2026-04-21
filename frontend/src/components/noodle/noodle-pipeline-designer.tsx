@@ -3,10 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import CloseFullscreenRoundedIcon from "@mui/icons-material/CloseFullscreenRounded";
+import CenterFocusStrongRoundedIcon from "@mui/icons-material/CenterFocusStrongRounded";
 import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import ExpandLessRoundedIcon from "@mui/icons-material/ExpandLessRounded";
 import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import OpenInFullRoundedIcon from "@mui/icons-material/OpenInFullRounded";
+import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
+import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
+import StopRoundedIcon from "@mui/icons-material/StopRounded";
 import {
   Alert,
   Box,
@@ -63,11 +67,19 @@ import {
   createNoodlePipelineRepairRun,
   createNoodlePipelineRun,
   listNoodlePipelines,
+  queryNoodleAgent,
   resumeNoodlePipelineBatchSession,
-  saveNoodlePipeline
+  saveNoodlePipeline,
+  stopNoodlePipelineRun
 } from "@/lib/api";
 import { providerColors } from "@/lib/architect-diagram";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import {
+  buildArchitectureContextFromSavedDraft,
+  buildMomoIntent,
+  buildPipelineContextBlocks
+} from "@/lib/noodle-agent";
+import { GlossyTransportButton } from "@/components/noodle/glossy-transport-button";
 import type {
   NoodleArchitectureOverview,
   NoodleArchitecturePrinciple,
@@ -2437,7 +2449,7 @@ function NoodlePipelineDesignerInner({
   architectureOverview,
   designPrinciples = [],
   savedArchitecture,
-  agentMomoBrief: _agentMomoBrief,
+  agentMomoBrief,
   deploymentSeed,
   seedDocument,
   plannedOrchestratorPlan
@@ -2468,6 +2480,7 @@ function NoodlePipelineDesignerInner({
   const [repositorySection, setRepositorySection] = useState<(typeof REPOSITORY_SECTIONS)[number]>("palette");
   const [logFilter, setLogFilter] = useState<NoodleDesignerLogLevel | "all">("all");
   const [momoPrompt, setMomoPrompt] = useState("");
+  const [momoBusy, setMomoBusy] = useState(false);
   const [momoSuggestion, setMomoSuggestion] = useState<MomoTransformationSuggestion | null>(null);
   const [rawSpecText, setRawSpecText] = useState("");
   const [rawSpecDirty, setRawSpecDirty] = useState(false);
@@ -2604,6 +2617,7 @@ function NoodlePipelineDesignerInner({
     [selectedRun]
   );
   const selectedRunRepairable = selectedRun ? selectedRun.status === "failed" || selectedRun.status === "cancelled" : false;
+  const selectedRunStoppable = selectedRun ? selectedRun.status === "running" || selectedRun.status === "queued" : false;
   const selectedRunBatchSessions = useMemo(
     () =>
       selectedRun
@@ -3156,9 +3170,9 @@ function NoodlePipelineDesignerInner({
     setMomoSuggestion(null);
   }, [momoSuggestion, updateDocument]);
 
-  const sendMomoMessage = useCallback(() => {
+  const sendMomoMessage = useCallback(async () => {
     const prompt = momoPrompt.trim();
-    if (!prompt) {
+    if (!prompt || momoBusy) {
       return;
     }
     const targetTransformNode =
@@ -3191,35 +3205,72 @@ function NoodlePipelineDesignerInner({
       setMomoSuggestion(null);
     }
     const userMessage: MomoMessage = { id: createId("momo"), role: "user", content: prompt };
-    const reply: MomoMessage = {
-      id: createId("momo"),
-      role: "assistant",
-      content:
-        buildMomoReply(
-          prompt,
-          document,
-          selectedNode,
-          selectedTransformation ?? selectedNodeTransformation ?? existingTransformationForNode,
-          architectureOverview,
-          designPrinciples,
-          validations,
-          savedArchitecture
-        ) +
-        (shouldStageTransformationSuggestion && targetTransformNode
-          ? ` A suggested transformation for ${targetTransformNode.label} is ready below. Review it and click Apply Suggestion to add it to the pipeline.`
-          : "")
-    };
-    setMomoMessages((current) => [...current, userMessage, reply]);
+    const suggestionSuffix =
+      shouldStageTransformationSuggestion && targetTransformNode
+        ? ` A suggested transformation for ${targetTransformNode.label} is ready below. Review it and click Apply Suggestion to add it to the pipeline.`
+        : "";
+    const fallbackReply =
+      buildMomoReply(
+        prompt,
+        document,
+        selectedNode,
+        selectedTransformation ?? selectedNodeTransformation ?? existingTransformationForNode,
+        architectureOverview,
+        designPrinciples,
+        validations,
+        savedArchitecture
+      ) + suggestionSuffix;
+    setMomoMessages((current) => [...current, userMessage]);
     setMomoPrompt("");
+    setMomoBusy(true);
+    try {
+      const response = await queryNoodleAgent({
+        agent: "momo",
+        user_turn: prompt,
+        conversation_history: [...momoMessages.map((message) => message.content).slice(-6), prompt],
+        context_blocks: [
+          ...buildPipelineContextBlocks(document),
+          ...(agentMomoBrief ? [agentMomoBrief] : []),
+          validations.length ? `Validation findings: ${validations.map((item) => item.message).slice(0, 4).join(" | ")}.` : ""
+        ].filter(Boolean),
+        architecture_context: buildArchitectureContextFromSavedDraft(savedArchitecture),
+        pipeline_document: document,
+        intent: buildMomoIntent(intentName, sources)
+      });
+      setMomoMessages((current) => [
+        ...current,
+        {
+          id: createId("momo"),
+          role: "assistant",
+          content: `${response.answer}${suggestionSuffix}`
+        }
+      ]);
+    } catch {
+      setMomoMessages((current) => [
+        ...current,
+        {
+          id: createId("momo"),
+          role: "assistant",
+          content: fallbackReply
+        }
+      ]);
+    } finally {
+      setMomoBusy(false);
+    }
   }, [
+    agentMomoBrief,
     architectureOverview,
     designPrinciples,
     document,
+    intentName,
+    momoBusy,
+    momoMessages,
     momoPrompt,
     savedArchitecture,
     selectedNode,
     selectedTransformation,
     selectedNodeTransformation,
+    sources,
     validations
   ]);
 
@@ -3313,6 +3364,138 @@ function NoodlePipelineDesignerInner({
       setRemoteBusy(false);
     }
   }, [deploymentSeed, document, intentName, plannedOrchestratorPlan, sources, updateDocument, validationErrors, workflowTemplate]);
+
+  const stopRun = useCallback(async () => {
+    if (!selectedRun) {
+      setNotice({
+        id: createId("notice"),
+        severity: "warning",
+        message: "Select an active run before stopping it."
+      });
+      return;
+    }
+    if (!selectedRunStoppable) {
+      setNotice({
+        id: createId("notice"),
+        severity: "warning",
+        message: "Only active runs can be stopped."
+      });
+      return;
+    }
+
+    setRemoteBusy(true);
+    try {
+      const response = await stopNoodlePipelineRun(document.id, selectedRun.id);
+      const persisted = normalizeDocument(response.pipeline, intentName, sources, workflowTemplate, deploymentSeed, plannedOrchestratorPlan);
+      setDocument(persisted);
+      setSavedDocuments((current) => {
+        const nextDocuments = mergeSavedNoodlePipelines(current, persisted);
+        storeSavedNoodlePipelines(nextDocuments);
+        return nextDocuments;
+      });
+      setSelectedRunId(response.run.id);
+      setActiveTab("runs");
+      setSyncError(null);
+      setNotice({
+        id: createId("notice"),
+        severity: "info",
+        message: `${response.run.label} was stopped.`
+      });
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Stop request failed.";
+      const isConnectivityError =
+        message.includes("Could not reach the local frontend API proxy") ||
+        message.includes("Could not reach the API at");
+      if (!isConnectivityError) {
+        setSyncError(message);
+        setNotice({
+          id: createId("notice"),
+          severity: "warning",
+          message
+        });
+        return;
+      }
+
+      const stoppedAt = new Date().toISOString();
+      updateDocument((current) => ({
+        ...current,
+        runs: current.runs.map((run) => {
+          if (run.id !== selectedRun.id) {
+            return run;
+          }
+
+          const cancelledTaskCount = run.task_runs.filter((task) =>
+            task.state === "pending" || task.state === "queued" || task.state === "running" || task.state === "retrying"
+          ).length;
+          return {
+            ...run,
+            status: "cancelled",
+            finished_at: stoppedAt,
+            task_runs: run.task_runs.map((task) =>
+              task.state === "pending" || task.state === "queued" || task.state === "running" || task.state === "retrying"
+                ? {
+                    ...task,
+                    state: "cancelled",
+                    finished_at: stoppedAt
+                  }
+                : task
+            ),
+            logs: [
+              ...run.logs,
+              createRunLogs("Run control", "warn", "Run was stopped manually before completion."),
+              createRunLogs("Run control", "info", `Cancelled ${cancelledTaskCount} active tasks while preserving completed work.`)
+            ]
+          };
+        }),
+        batch_sessions: (current.batch_sessions ?? []).map((session) => {
+          if (session.last_run_id !== selectedRun.id || (session.status !== "staging" && session.status !== "publishing")) {
+            return session;
+          }
+          return {
+            ...session,
+            status: "failed",
+            attempts:
+              session.attempts.length > 0 && session.attempts[session.attempts.length - 1]?.run_id === selectedRun.id
+                ? [
+                    ...session.attempts.slice(0, -1),
+                    {
+                      ...session.attempts[session.attempts.length - 1],
+                      status: "failed",
+                      finished_at: stoppedAt,
+                      reason: "Run was stopped manually before completion."
+                    }
+                  ]
+                : session.attempts
+          };
+        })
+      }));
+      setSelectedRunId(selectedRun.id);
+      setActiveTab("runs");
+      setSyncError(
+        error instanceof Error
+          ? `${error.message} Stop was simulated locally only.`
+          : "Run stop service unavailable; stop was simulated locally only."
+      );
+      setNotice({
+        id: createId("notice"),
+        severity: "info",
+        message: "Run service was unavailable, so stop was simulated locally."
+      });
+    } finally {
+      setRemoteBusy(false);
+    }
+  }, [
+    deploymentSeed,
+    document.id,
+    intentName,
+    plannedOrchestratorPlan,
+    selectedRun,
+    selectedRunStoppable,
+    sources,
+    updateDocument,
+    workflowTemplate
+  ]);
 
   const toggleRepairTask = useCallback((taskId: string) => {
     setSelectedRepairTaskIds((current) =>
@@ -3701,19 +3884,19 @@ function NoodlePipelineDesignerInner({
   const publishReadinessLabel = validationErrors.length
     ? `${validationErrors.length} blocking issue${validationErrors.length === 1 ? "" : "s"}`
     : "Ready to publish";
-  const repositoryCoverage = document.connection_refs.length + document.metadata_assets.length + document.schemas.length + document.transformations.length;
+  const repositoryAssetCount = document.connection_refs.length + document.metadata_assets.length + document.schemas.length + document.transformations.length;
   const graphDensityLabel = `${document.nodes.length} nodes / ${document.edges.length} edges`;
   const orchestrationScore = Math.max(
     18,
-    Math.min(100, Math.round(((document.nodes.length * 1.2 + document.edges.length + repositoryCoverage) / Math.max(3, document.nodes.length * 3.2)) * 100))
+    Math.min(100, Math.round(((document.nodes.length * 1.2 + document.edges.length + repositoryAssetCount) / Math.max(3, document.nodes.length * 3.2)) * 100))
   );
-  const repositoryDepth = Math.max(
-    12,
+  const repositoryAssetCoverage = Math.max(
+    18,
     Math.min(
       100,
       Math.round(
         ((document.connection_refs.length * 1.6 + document.metadata_assets.length + document.schemas.length + document.transformations.length * 1.2) /
-          Math.max(2, document.nodes.length * 2.4)) *
+          Math.max(2, document.nodes.length * 1.65)) *
           100
       )
     )
@@ -3854,23 +4037,6 @@ function NoodlePipelineDesignerInner({
                     {remoteBusy ? "Saving..." : "Save Draft"}
                   </Button>
                   <Button
-                    variant="outlined"
-                    onClick={() => void triggerRun()}
-                    sx={{
-                      ...noodleButtonSecondarySx,
-                      bgcolor: "rgba(255,255,255,0.1)",
-                      color: "#f8fbff",
-                      borderColor: "rgba(255,255,255,0.2)",
-                      "&:hover": {
-                        borderColor: "rgba(255,255,255,0.35)",
-                        bgcolor: "rgba(255,255,255,0.16)"
-                      }
-                    }}
-                    disabled={remoteBusy}
-                  >
-                    {remoteBusy ? "Working..." : "Run Pipeline"}
-                  </Button>
-                  <Button
                     variant="contained"
                     disabled={validationErrors.length > 0 || remoteBusy}
                     onClick={() => void handleSaveVersion("published")}
@@ -3910,7 +4076,7 @@ function NoodlePipelineDesignerInner({
                     </Box>
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ alignSelf: { md: "flex-start" } }}>
                       <Chip label={`${orchestrationScore}% orchestration`} sx={{ bgcolor: "rgba(111, 208, 255, 0.16)", color: "#b5f0ff", fontWeight: 800 }} />
-                      <Chip label={`${repositoryDepth}% repository depth`} sx={{ bgcolor: "rgba(255, 209, 102, 0.16)", color: "#ffe7a8", fontWeight: 800 }} />
+                      <Chip label={`${repositoryAssetCoverage}% asset coverage`} sx={{ bgcolor: "rgba(255, 209, 102, 0.16)", color: "#ffe7a8", fontWeight: 800 }} />
                       <Chip label={panelFocus ? `${titleize(panelFocus)} maximized` : "Balanced layout"} sx={{ bgcolor: "rgba(255,255,255,0.08)", color: "#eef6ff", fontWeight: 800 }} />
                     </Stack>
                   </Stack>
@@ -3938,19 +4104,19 @@ function NoodlePipelineDesignerInner({
               <Grid item xs={12} sm={6} xl={3}>
                 <Box sx={noodleMetricCardSx}>
                   <Typography variant="caption" sx={noodleSectionLabelSx}>
-                    Repository
+                    Repository Assets
                   </Typography>
                   <Typography variant="h4" sx={{ mt: 0.55, letterSpacing: "-0.05em" }}>
-                    {repositoryCoverage} contracts
+                    {repositoryAssetCount} assets
                   </Typography>
                     <Typography variant="body2" sx={{ mt: 0.55, color: "rgba(232, 241, 255, 0.76)" }}>
-                      Relative repository coverage for this DAG, based on connection refs, schemas, metadata assets, and transformations versus graph size.
+                      Coverage of repository-linked assets for this DAG, based on connection refs, schemas, metadata assets, and transformations versus graph size.
                     </Typography>
                     <Typography variant="body2" sx={{ mt: 1.05, color: "#ffe7a8", fontWeight: 800 }}>
                       {document.connection_refs.length} connections, {document.schemas.length} schemas, {document.metadata_assets.length} metadata assets, {document.transformations.length} transforms.
                     </Typography>
                     <Box sx={{ mt: 1.4, height: 6, borderRadius: 999, bgcolor: "rgba(255,255,255,0.14)" }}>
-                      <Box sx={{ width: `${repositoryDepth}%`, height: 1, borderRadius: 999, bgcolor: "#ffd166" }} />
+                      <Box sx={{ width: `${repositoryAssetCoverage}%`, height: 1, borderRadius: 999, bgcolor: "#ffd166" }} />
                     </Box>
                 </Box>
               </Grid>
@@ -4032,17 +4198,7 @@ function NoodlePipelineDesignerInner({
                         Drag stages from the repository, snap dependencies into place, and refine an orchestration-ready DAG without mixing runtime code into the portable spec.
                       </Typography>
                     </Box>
-                    <Stack direction="row" spacing={1}>
-                      <Button
-                        size="small"
-                        variant="contained"
-                        onClick={() => void triggerRun()}
-                        disabled={remoteBusy}
-                        sx={noodleButtonPrimarySx}
-                      >
-                        {remoteBusy ? "Working..." : "Run Pipeline"}
-                      </Button>
-                      <Button size="small" onClick={() => flowInstance?.fitView({ padding: 0.16 })}>Fit View</Button>
+                    <Stack direction="row" spacing={1} alignItems="flex-start">
                       <Tooltip title={canvasCollapsed ? "Expand canvas panel" : "Collapse canvas panel"}>
                         <IconButton
                           size="small"
@@ -4081,11 +4237,55 @@ function NoodlePipelineDesignerInner({
                       ) : null}
                     </Stack>
                   </Stack>
-                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                    <Chip label={focusTitle} sx={{ bgcolor: "#e9f5ff", color: "#0d4f8b", fontWeight: 800 }} />
-                    <Chip label={`${document.nodes.length} stages`} sx={{ bgcolor: "#fff7e6", color: "#8a5a00", fontWeight: 800 }} />
-                    <Chip label={`${document.edges.length} dependencies`} sx={{ bgcolor: "#edf8ef", color: "#22603d", fontWeight: 800 }} />
-                    <Chip label="Double-click a node to rename" sx={{ bgcolor: "#f3f4f6", color: "#475467", fontWeight: 700 }} />
+                  <Stack
+                    direction={{ xs: "column", lg: "row" }}
+                    spacing={1.1}
+                    justifyContent="flex-start"
+                    alignItems={{ xs: "stretch", lg: "center" }}
+                  >
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                      <Chip label={focusTitle} sx={{ bgcolor: "#e9f5ff", color: "#0d4f8b", fontWeight: 800 }} />
+                      <Chip label={`${document.nodes.length} stages`} sx={{ bgcolor: "#fff7e6", color: "#8a5a00", fontWeight: 800 }} />
+                      <Chip label={`${document.edges.length} dependencies`} sx={{ bgcolor: "#edf8ef", color: "#22603d", fontWeight: 800 }} />
+                      <Chip label="Double-click a node to rename" sx={{ bgcolor: "#f3f4f6", color: "#475467", fontWeight: 700 }} />
+                    </Stack>
+                    <Stack direction="row" spacing={1.1} sx={{ ml: { lg: 2.5 } }} justifyContent="flex-start">
+                      <GlossyTransportButton
+                        title="Save Draft"
+                        label="Save"
+                        variant="utility"
+                        size="compact"
+                        icon={<SaveRoundedIcon />}
+                        onClick={() => void handleSaveVersion("draft")}
+                        disabled={remoteBusy}
+                      />
+                      <GlossyTransportButton
+                        title="Run Pipeline"
+                        label={remoteBusy ? "Wait" : "Run"}
+                        variant="play"
+                        size="compact"
+                        icon={<PlayArrowRoundedIcon />}
+                        onClick={() => void triggerRun()}
+                        disabled={remoteBusy}
+                      />
+                      <GlossyTransportButton
+                        title={selectedRunStoppable ? "Stop Selected Run" : "Select an active run to stop"}
+                        label="Stop"
+                        variant="stop"
+                        size="compact"
+                        icon={<StopRoundedIcon />}
+                        onClick={() => void stopRun()}
+                        disabled={remoteBusy || !selectedRunStoppable}
+                      />
+                      <GlossyTransportButton
+                        title="Fit DAG Canvas To View"
+                        label="Focus"
+                        variant="utility"
+                        size="compact"
+                        icon={<CenterFocusStrongRoundedIcon />}
+                        onClick={() => flowInstance?.fitView({ padding: 0.16 })}
+                      />
+                    </Stack>
                   </Stack>
                   {!canvasCollapsed ? (
                     <Box
@@ -4451,6 +4651,14 @@ function NoodlePipelineDesignerInner({
                             {remoteBusy ? "Working..." : "Trigger Test Run"}
                           </Button>
                           <Button
+                            variant="outlined"
+                            onClick={() => void stopRun()}
+                            sx={noodleButtonSecondarySx}
+                            disabled={remoteBusy || !selectedRunStoppable}
+                          >
+                            {remoteBusy ? "Working..." : "Stop Selected Run"}
+                          </Button>
+                          <Button
                             variant="contained"
                             onClick={() => void repairRun()}
                             sx={noodleButtonPrimarySx}
@@ -4516,8 +4724,10 @@ function NoodlePipelineDesignerInner({
                         </Grid>
                       </Grid>
                       {selectedRun ? (
-                        <Alert severity={selectedRunRepairable ? "info" : "warning"}>
-                          {selectedRunRepairable
+                        <Alert severity={selectedRunStoppable || selectedRunRepairable ? "info" : "warning"}>
+                          {selectedRunStoppable
+                            ? "This run is still active. Stop it to freeze the current task state, or wait for the execution plane to finish."
+                            : selectedRunRepairable
                             ? repairMode === "exact"
                               ? "Exact repair validates sink contracts and lineage before execution. If any rerun task reaches a non-idempotent sink, the attempt is recorded but blocked."
                               : "Best-effort repair reruns the selected task set and preserves prior successful work without claiming exact external effects."
@@ -6094,8 +6304,8 @@ function NoodlePipelineDesignerInner({
                       }
                     }}
                   />
-                  <Button variant="contained" onClick={sendMomoMessage} sx={noodleButtonPrimarySx}>
-                    Send To Agent Momo
+                  <Button variant="contained" onClick={sendMomoMessage} disabled={momoBusy} sx={noodleButtonPrimarySx}>
+                    {momoBusy ? "Agent Momo Thinking..." : "Send To Agent Momo"}
                   </Button>
                     </>
                   ) : (

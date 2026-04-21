@@ -828,6 +828,7 @@ export interface NoodleSavedArchitectureContext {
   selected_providers: string[];
   diagram_style?: string | null;
   summary: string;
+  system_design: string;
   assumptions: string[];
   components: string[];
   cloud_services: string[];
@@ -892,6 +893,44 @@ export interface NoodlePipelinePlanResponse {
   architecture_alignment: NoodleArchitectureAlignmentItem[];
   agent_momo_brief: string;
   orchestrator_plan: NoodleOrchestratorPlan;
+}
+
+export type NoodleAgentKind = "estimator" | "architect" | "momo";
+export type NoodleAgentRecoveryStrategy =
+  | "direct"
+  | "query_rewrite"
+  | "fallback_context"
+  | "fallback_guidance";
+
+export interface NoodleAgentQueryRequest {
+  agent: NoodleAgentKind;
+  user_turn: string;
+  max_results?: number;
+  conversation_history?: string[];
+  context_blocks?: string[];
+  architecture_context?: NoodleSavedArchitectureContext | null;
+  pipeline_document?: NoodlePipelineDesignerDocument | null;
+  intent?: NoodlePipelineIntent | null;
+}
+
+export interface NoodleAgentQueryResponse {
+  assistant: string;
+  answer: string;
+  brief: string;
+  sources: NoodleRagSource[];
+  retrieval_backend: string;
+  recovered: boolean;
+  recovery_strategy: NoodleAgentRecoveryStrategy;
+  attempted_queries: string[];
+}
+
+export interface NoodleRagSource {
+  id: string;
+  title: string;
+  kind: string;
+  score: number;
+  snippet: string;
+  tags: string[];
 }
 
 export interface NoodleReferenceSpec {
@@ -1313,6 +1352,8 @@ export interface NoodleSchedulerPlan {
 export interface PendingNoodleSchedulerSession {
   source: "orchestrator" | "designer";
   intent_name?: string | null;
+  pipeline_id?: string | null;
+  pipeline_name?: string | null;
   orchestrator_plan?: NoodleOrchestratorPlan | null;
   document?: NoodlePipelineDesignerDocument | null;
   opened_at: string;

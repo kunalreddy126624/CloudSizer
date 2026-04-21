@@ -953,6 +953,32 @@ class NoodlePipelineControlPlaneService:
         saved = self.repository.save_pipeline(next_document)
         return NoodlePipelineRunResponse(pipeline=saved, run=run)
 
+    def _persist_updated_run(
+        self,
+        pipeline: NoodlePipelineDocument,
+        run: NoodleDesignerRun,
+        batch_sessions: list[NoodleDesignerBatchSession] | None = None,
+    ) -> NoodlePipelineRunResponse:
+        updated = False
+        next_runs: list[NoodleDesignerRun] = []
+        for current in pipeline.runs:
+            if current.id == run.id:
+                next_runs.append(run)
+                updated = True
+            else:
+                next_runs.append(current)
+        if not updated:
+            raise KeyError(run.id)
+        next_document = pipeline.model_copy(
+            update={
+                "runs": next_runs,
+                "batch_sessions": batch_sessions if batch_sessions is not None else pipeline.batch_sessions,
+                "saved_at": _utc_now(),
+            }
+        )
+        saved = self.repository.save_pipeline(next_document)
+        return NoodlePipelineRunResponse(pipeline=saved, run=run)
+
     def _materialize_batch_sessions_for_run(
         self,
         pipeline: NoodlePipelineDocument,
@@ -1210,6 +1236,75 @@ class NoodlePipelineControlPlaneService:
             lineage_records=lineage_records,
         )
         return self._persist_run(existing, run, batch_sessions)
+
+    def stop_run(self, pipeline_id: str, run_id: str) -> NoodlePipelineRunResponse:
+        pipeline = self.repository.get_pipeline(pipeline_id)
+        if pipeline is None:
+            raise KeyError(pipeline_id)
+        existing_run = next((run for run in pipeline.runs if run.id == run_id), None)
+        if existing_run is None:
+            raise KeyError(run_id)
+        if _is_terminal_run_status(existing_run.status):
+            raise ValueError("Only active runs can be stopped.")
+
+        stopped_at = _utc_now()
+        cancelled_task_count = 0
+        next_task_runs: list[NoodleDesignerRunTask] = []
+        for task in existing_run.task_runs:
+            if task.state in {"pending", "queued", "running", "retrying"}:
+                cancelled_task_count += 1
+                next_task_runs.append(
+                    task.model_copy(
+                        update={
+                            "state": "cancelled",
+                            "finished_at": stopped_at,
+                        }
+                    )
+                )
+                continue
+            next_task_runs.append(task)
+
+        updated_batch_sessions: list[NoodleDesignerBatchSession] = []
+        for session in pipeline.batch_sessions:
+            if (
+                session.last_run_id != run_id
+                or session.status not in {"staging", "publishing"}
+            ):
+                updated_batch_sessions.append(session)
+                continue
+
+            next_attempts = session.attempts[:]
+            if next_attempts and next_attempts[-1].run_id == run_id:
+                next_attempts[-1] = next_attempts[-1].model_copy(
+                    update={
+                        "status": "failed",
+                        "finished_at": stopped_at,
+                        "reason": "Run was stopped manually before completion.",
+                    }
+                )
+
+            updated_batch_sessions.append(
+                session.model_copy(
+                    update={
+                        "status": "failed",
+                        "attempts": next_attempts,
+                    }
+                )
+            )
+
+        stopped_run = existing_run.model_copy(
+            update={
+                "status": "cancelled",
+                "finished_at": stopped_at,
+                "task_runs": next_task_runs,
+                "logs": [
+                    *existing_run.logs,
+                    _run_log("warn", "Run was stopped manually before completion."),
+                    _run_log("info", f"Cancelled {cancelled_task_count} active tasks while preserving completed work."),
+                ],
+            }
+        )
+        return self._persist_updated_run(pipeline, stopped_run, updated_batch_sessions)
 
     def repair_run(
         self,

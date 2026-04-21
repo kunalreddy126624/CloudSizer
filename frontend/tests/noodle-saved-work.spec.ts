@@ -15,6 +15,22 @@ function buildPipeline(overrides: Partial<NoodlePipelineDesignerDocument> = {}):
     metadata_assets: overrides.metadata_assets ?? [],
     schemas: overrides.schemas ?? [],
     transformations: overrides.transformations ?? [],
+    deployment: overrides.deployment ?? {
+      enabled: false,
+      deploy_target: "local_docker",
+      repository: {
+        provider: "github",
+        connection_id: null,
+        repository: "",
+        branch: "main",
+        backend_path: "app",
+        workflow_ref: ".github/workflows/deploy.yml"
+      },
+      build_command: "docker build -t noodle-pipeline-backend .",
+      deploy_command: "docker compose up -d --build",
+      artifact_name: "noodle-pipeline-backend",
+      notes: ""
+    },
     orchestrator_plan: overrides.orchestrator_plan ?? {
       id: "plan-1",
       name: "Operational Pipeline orchestrator plan",

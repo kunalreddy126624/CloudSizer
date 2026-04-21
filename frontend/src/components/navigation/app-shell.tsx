@@ -49,9 +49,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Box
         component="header"
         sx={{
-          position: "sticky",
-          top: 0,
-          zIndex: 20,
           backdropFilter: "blur(18px)",
           background: "rgba(248, 251, 255, 0.88)",
           borderBottom: "1px solid var(--line)"

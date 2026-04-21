@@ -98,6 +98,8 @@ class ProvisioningResult(BaseModel):
     account_created: bool = False
     terraform_artifact_path: str | None = None
     execution_reference: str | None = None
+    execution_log_path: str | None = None
+    runner_mode: str | None = None
     message: str = ""
 
 

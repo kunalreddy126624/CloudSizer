@@ -17,12 +17,14 @@ class AllocatorAuthorizationApiTest(unittest.TestCase):
             "ALLOCATOR_DATABASE_URL": os.getenv("ALLOCATOR_DATABASE_URL"),
             "ALLOCATOR_TERRAFORM_ARTIFACT_DIR": os.getenv("ALLOCATOR_TERRAFORM_ARTIFACT_DIR"),
             "ALLOCATOR_MOCK_CLOUD_CONTROL_PLANE": os.getenv("ALLOCATOR_MOCK_CLOUD_CONTROL_PLANE"),
+            "ALLOCATOR_MOCK_TERRAFORM_APPLY": os.getenv("ALLOCATOR_MOCK_TERRAFORM_APPLY"),
         }
         os.environ["RBAC_DATABASE_URL"] = f"sqlite:///{Path(self.temp_dir.name) / 'rbac-test.db'}"
         os.environ["RBAC_JWT_SECRET"] = "rbac-test-secret-for-unit-tests-32bytes"
         os.environ["ALLOCATOR_DATABASE_URL"] = f"sqlite:///{Path(self.temp_dir.name) / 'allocator-test.db'}"
         os.environ["ALLOCATOR_TERRAFORM_ARTIFACT_DIR"] = str(Path(self.temp_dir.name) / "artifacts")
         os.environ["ALLOCATOR_MOCK_CLOUD_CONTROL_PLANE"] = "true"
+        os.environ["ALLOCATOR_MOCK_TERRAFORM_APPLY"] = "true"
 
         import app.allocator.control_plane as allocator_control_plane_module
         import app.allocator.api as allocator_api_module
