@@ -27,10 +27,11 @@ class AllocatorDatabase:
         if self.backend == "postgres":
             try:
                 import psycopg  # type: ignore
+                from psycopg.rows import dict_row  # type: ignore
             except ModuleNotFoundError as exc:
                 raise RuntimeError("psycopg is required for PostgreSQL allocator persistence.") from exc
 
-            connection = psycopg.connect(self.settings.database_url)
+            connection = psycopg.connect(self.settings.database_url, row_factory=dict_row)
             try:
                 yield connection
                 connection.commit()

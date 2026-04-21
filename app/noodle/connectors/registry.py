@@ -10,6 +10,7 @@ CONNECTOR_BY_SOURCE_KIND = {
     "file": ("batch-file-loader", "batch"),
     "iot": ("edge-telemetry-gateway", "stream"),
     "saas": ("saas-sync-connector", "batch"),
+    "github": ("github-sync-connector", "hybrid"),
 }
 
 
@@ -31,4 +32,3 @@ def build_connector_plans(intent: NoodlePipelineIntent) -> list[NoodleConnectorP
             )
         )
     return plans
-

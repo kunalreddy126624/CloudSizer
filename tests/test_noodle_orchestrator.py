@@ -4,6 +4,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.noodle.api import router
+from app.noodle.connectors.registry import CONNECTOR_BY_SOURCE_KIND
+from app.noodle.sample_specs import REFERENCE_SPECS
+from app.noodle.service import get_noodle_service
 
 
 class NoodleOrchestratorApiTest(unittest.TestCase):
@@ -64,13 +67,79 @@ class NoodleOrchestratorApiTest(unittest.TestCase):
         self.assertTrue(any(item["name"] == "nl-to-sql" for item in payload["ai_capabilities"]))
         self.assertTrue(any(control["name"] == "dynamic-data-masking" for control in payload["governance_controls"]))
 
+    def test_pipeline_plan_supports_github_source_kind(self) -> None:
+        response = self.client.post(
+            "/noodle/pipelines/plan",
+            json={
+                "name": "github-engineering-intelligence",
+                "business_goal": "Track GitHub repository activity, pull request flow, and deployment lead time in one governed pipeline.",
+                "deployment_scope": "multi_cloud",
+                "latency_slo": "minutes",
+                "requires_ml_features": False,
+                "requires_realtime_serving": False,
+                "contains_sensitive_data": False,
+                "target_consumers": ["bi", "engineering_ops"],
+                "sources": [
+                    {
+                        "name": "github_events",
+                        "kind": "github",
+                        "environment": "saas",
+                        "format_hint": "github webhooks",
+                        "change_pattern": "event",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["connectors"][0]["connector_type"], "github-sync-connector")
+        self.assertEqual(payload["connectors"][0]["ingestion_mode"], "hybrid")
+        self.assertEqual(payload["orchestrator_plan"]["tasks"][0]["plugin"], "github-sync-connector")
+
     def test_reference_specs_are_available(self) -> None:
         response = self.client.get("/noodle/reference-specs")
 
         self.assertEqual(response.status_code, 200)
         specs = response.json()
-        self.assertGreaterEqual(len(specs), 2)
+        self.assertGreaterEqual(len(specs), 10)
         self.assertEqual(specs[0]["id"], "hybrid-orders-analytics")
+
+    def test_pipeline_intent_catalog_is_available(self) -> None:
+        response = self.client.get("/noodle/pipeline-intents")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertGreaterEqual(len(payload["items"]), 10)
+        self.assertEqual(payload["items"][0]["id"], "hybrid-orders-analytics")
+        self.assertIn("recommended_workflow_template", payload["items"][0])
+
+    def test_reference_specs_cover_all_supported_source_kinds(self) -> None:
+        supported_source_kinds = set(CONNECTOR_BY_SOURCE_KIND)
+        referenced_source_kinds = {
+            source.kind
+            for spec in REFERENCE_SPECS
+            for source in spec.sample_intent.sources
+        }
+
+        self.assertEqual(referenced_source_kinds, supported_source_kinds)
+
+    def test_reference_specs_cover_all_workflow_template_variants(self) -> None:
+        workflow_service = get_noodle_service().workflow
+        templates = {
+            workflow_service.choose_template(spec.sample_intent)
+            for spec in REFERENCE_SPECS
+        }
+
+        self.assertEqual(
+            templates,
+            {
+                "temporal-standard-batch-orchestration",
+                "temporal-batch-plus-feature-materialization",
+                "temporal-hybrid-streaming",
+                "temporal-event-driven-realtime",
+            },
+        )
 
     def test_microservice_catalog_exposes_planner_and_governance_services(self) -> None:
         response = self.client.get("/noodle/microservices")
@@ -81,6 +150,15 @@ class NoodleOrchestratorApiTest(unittest.TestCase):
         self.assertIn("noodle-planner", service_names)
         self.assertIn("noodle-governance-service", service_names)
         self.assertIn("noodle-observability-service", service_names)
+
+    def test_connector_catalog_lists_github_connector(self) -> None:
+        response = self.client.get("/noodle/connectors")
+
+        self.assertEqual(response.status_code, 200)
+        connectors = response.json()
+        github_connector = next(item for item in connectors if item["source_kind"] == "github")
+        self.assertEqual(github_connector["connector_type"], "github-sync-connector")
+        self.assertEqual(github_connector["default_mode"], "hybrid")
 
     def test_workflow_scaffold_start_endpoint_accepts_run(self) -> None:
         response = self.client.post(

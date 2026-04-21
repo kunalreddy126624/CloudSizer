@@ -63,6 +63,29 @@ class RecommendationPricingSourceTest(unittest.TestCase):
         self.assertTrue(all(service.service_code for service in services))
         self.assertTrue(all(service.pricing_source == PricingSource.BENCHMARK_LIVE for service in services))
 
+    def test_decoupled_compute_respects_selective_provider_overrides(self) -> None:
+        decoupled_request = BASE_REQUEST.model_copy(
+            update={
+                "enable_decoupled_compute": True,
+                "selective_services": [
+                    {"service_family": "compute", "provider": "aws"},
+                    {"service_family": "database", "provider": "azure"},
+                    {"service_family": "edge", "provider": "gcp"},
+                ],
+                "preferred_providers": ["aws", "azure", "gcp"],
+            }
+        )
+
+        services = estimate_services(decoupled_request, CloudProvider.AWS)
+        providers = {service.provider for service in services if service.provider is not None}
+
+        self.assertIn(CloudProvider.AWS, providers)
+        self.assertIn(CloudProvider.AZURE, providers)
+        self.assertIn(CloudProvider.GCP, providers)
+        self.assertTrue(
+            any("cross-cloud control plane" in service.name.lower() for service in services)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

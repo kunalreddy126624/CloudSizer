@@ -2,9 +2,31 @@ import type { PipelineRecord, PipelineRun, Repo, RunLog, TreeNode, ValidationIss
 
 import { DataPlatformClient } from "@data-platform/sdk";
 
-import { mockPipeline, mockRepo, mockRuns, mockTree } from "@/lib/mock-data";
+import type { AgentMomoApiPayload, AgentMomoResponse, NoodlePipelineIntentCatalogResponse } from "@/lib/noodle-designer";
 
-const client = new DataPlatformClient(process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000");
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const client = new DataPlatformClient(apiBaseUrl);
+
+function formatApiError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {})
+    }
+  });
+  if (!response.ok) {
+    throw new Error((await response.text()) || `Request to ${path} failed.`);
+  }
+  return (await response.json()) as T;
+}
 
 function normalizeRepo(input: any): Repo {
   return {
@@ -58,11 +80,57 @@ function normalizeRun(input: any): PipelineRun {
   };
 }
 
+function normalizePipelineIntentCatalog(input: any): NoodlePipelineIntentCatalogResponse {
+  return {
+    items: (input.items ?? []).map((item: any) => ({
+      id: item.id,
+      name: item.name,
+      summary: item.summary,
+      tags: item.tags ?? [],
+      recommendedWorkflowTemplate: item.recommended_workflow_template ?? item.recommendedWorkflowTemplate,
+      intent: {
+        name: item.intent.name,
+        businessGoal: item.intent.business_goal ?? item.intent.businessGoal,
+        deploymentScope: item.intent.deployment_scope ?? item.intent.deploymentScope,
+        latencySlo: item.intent.latency_slo ?? item.intent.latencySlo,
+        requiresMlFeatures: item.intent.requires_ml_features ?? item.intent.requiresMlFeatures ?? false,
+        requiresRealtimeServing: item.intent.requires_realtime_serving ?? item.intent.requiresRealtimeServing ?? false,
+        containsSensitiveData: item.intent.contains_sensitive_data ?? item.intent.containsSensitiveData ?? false,
+        targetConsumers: item.intent.target_consumers ?? item.intent.targetConsumers ?? [],
+        sources: (item.intent.sources ?? []).map((source: any) => ({
+          name: source.name,
+          kind: source.kind,
+          environment: source.environment,
+          formatHint: source.format_hint ?? source.formatHint ?? "",
+          changePattern: source.change_pattern ?? source.changePattern ?? "snapshot"
+        }))
+      }
+    }))
+  };
+}
+
+function normalizeMomoResponse(input: any): AgentMomoResponse {
+  return {
+    assistant: input.assistant ?? "agent-momo",
+    answer: input.answer,
+    brief: input.brief ?? "",
+    retrievalBackend: input.retrieval_backend ?? input.retrievalBackend,
+    sources: (input.sources ?? []).map((source: any) => ({
+      id: source.id,
+      title: source.title,
+      kind: source.kind,
+      score: source.score,
+      snippet: source.snippet,
+      tags: source.tags ?? []
+    }))
+  };
+}
+
 export async function getRepos() {
   try {
     return (await client.listRepos()).map(normalizeRepo);
-  } catch {
-    return [mockRepo];
+  } catch (error) {
+    throw new Error(formatApiError(error, "Could not load repositories from the control plane."));
   }
 }
 
@@ -70,76 +138,73 @@ export async function getRepoTree(repoId: string) {
   try {
     const response = await client.getRepoTree(repoId);
     return normalizeTree(response.tree);
-  } catch {
-    return mockTree;
+  } catch (error) {
+    throw new Error(formatApiError(error, "Could not load the repository tree from the control plane."));
   }
 }
 
 export async function getPipelines() {
   try {
     return (await client.listPipelines()).map(normalizePipeline);
-  } catch {
-    return [mockPipeline];
+  } catch (error) {
+    throw new Error(formatApiError(error, "Could not load pipelines from the control plane."));
   }
 }
 
 export async function getPipeline(id: string) {
   try {
     return normalizePipeline(await client.getPipeline(id));
-  } catch {
-    return mockPipeline;
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not load pipeline ${id} from the control plane.`));
   }
 }
 
 export async function savePipeline(pipeline: PipelineRecord) {
   try {
-    const saved = pipeline.id === mockPipeline.id ? await client.updatePipeline(pipeline.id, pipeline) : await client.createPipeline(pipeline);
+    const saved = await client.updatePipeline(pipeline.id, pipeline);
     return normalizePipeline(saved);
-  } catch {
-    return {
-      ...pipeline,
-      updatedAt: new Date().toISOString()
-    };
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not save pipeline ${pipeline.id}.`));
   }
 }
 
 export async function validatePipeline(id: string) {
   try {
     return await client.validatePipeline(id);
-  } catch {
-    return [] as ValidationIssue[];
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not validate pipeline ${id}.`));
   }
 }
 
 export async function publishPipeline(id: string) {
   try {
     return normalizePipeline(await client.publishPipeline(id));
-  } catch {
-    return { ...mockPipeline, id, publishState: "published" as const, updatedAt: new Date().toISOString() };
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not publish pipeline ${id}.`));
   }
 }
 
 export async function runPipeline(id: string) {
   try {
     return normalizeRun(await client.runPipeline(id));
-  } catch {
-    return mockRuns[0];
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not create a run for pipeline ${id}.`));
   }
 }
 
 export async function getPipelineRuns(id: string) {
   try {
     return (await client.listPipelineRuns(id)).map(normalizeRun);
-  } catch {
-    return mockRuns;
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not load runs for pipeline ${id}.`));
   }
 }
 
 export async function getRun(id: string) {
   try {
     return normalizeRun(await client.getRun(id));
-  } catch {
-    return mockRuns.find((run) => run.id === id) ?? mockRuns[0];
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not load run ${id}.`));
   }
 }
 
@@ -153,32 +218,28 @@ export async function getRunLogs(id: string): Promise<RunLog[]> {
       message: log.message,
       timestamp: log.timestamp
     }));
-  } catch {
-    return [
-      {
-        id: `log_${id}_boot`,
-        runId: id,
-        taskRunId: null,
-        level: "info",
-        message: "Pipeline run initialized.",
-        timestamp: new Date().toISOString()
-      },
-      {
-        id: `log_${id}_task`,
-        runId: id,
-        taskRunId: null,
-        level: "log",
-        message: "source_postgres_1 extracted rows.",
-        timestamp: new Date().toISOString()
-      },
-      {
-        id: `log_${id}_warn`,
-        runId: id,
-        taskRunId: null,
-        level: "warn",
-        message: "Mock runner in use. Connect Airflow or Prefect later.",
-        timestamp: new Date().toISOString()
-      }
-    ];
+  } catch (error) {
+    throw new Error(formatApiError(error, `Could not load logs for run ${id}.`));
+  }
+}
+
+export async function getPipelineIntents(): Promise<NoodlePipelineIntentCatalogResponse> {
+  try {
+    return normalizePipelineIntentCatalog(await requestJson("/noodle/pipeline-intents"));
+  } catch (error) {
+    throw new Error(formatApiError(error, "Could not load pipeline intents for the designer."));
+  }
+}
+
+export async function queryDesignerMomo(payload: AgentMomoApiPayload): Promise<AgentMomoResponse> {
+  try {
+    return normalizeMomoResponse(
+      await requestJson("/noodle/designer/momo/query", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      })
+    );
+  } catch (error) {
+    throw new Error(formatApiError(error, "Agent Momo could not answer from the current pipeline context."));
   }
 }

@@ -25,6 +25,25 @@ class PolicyValidationService:
 
         if provider not in request.organization_context.allowed_clouds:
             violations.append(f"{provider.value} is not in the allowed cloud list.")
+        service_providers = sorted(
+            {
+                service.provider
+                for service in request.approved_estimation.approved_services
+                if service.provider is not None
+            },
+            key=lambda item: item.value,
+        )
+        disallowed_service_providers = [
+            service_provider.value
+            for service_provider in service_providers
+            if service_provider not in request.organization_context.allowed_clouds
+        ]
+        if disallowed_service_providers:
+            violations.append(
+                "Service providers are outside the allowed cloud list: "
+                + ", ".join(disallowed_service_providers)
+                + "."
+            )
 
         if not request.approved_estimation.approved:
             violations.append("Approved estimation is required before planning can proceed.")

@@ -19,6 +19,8 @@ PROVIDER_SCOPE_KIND: dict[CloudProvider, str] = {
     CloudProvider.AKAMAI: "linode_account",
     CloudProvider.OVHCLOUD: "project",
     CloudProvider.CLOUDFLARE: "account",
+    CloudProvider.SALESFORCE: "org",
+    CloudProvider.SNOWFLAKE: "account",
 }
 
 
@@ -27,7 +29,7 @@ class CloudControlPlaneService:
         self.settings = settings
 
     def plan_account(self, request: ResourceAllocatorRequest) -> CloudAccountPlan:
-        provider = request.approved_estimation.recommended_provider
+        provider = self._resolve_primary_provider(request)
         deployment = request.deployment_request
         default_name = deployment.account_name or f"{deployment.project}-{deployment.env.value}"
         scope = PROVIDER_SCOPE_KIND[provider]
@@ -105,3 +107,19 @@ class CloudControlPlaneService:
         owner_slug = re.sub(r"[^a-z0-9]+", ".", owner.lower()).strip(".") or "owner"
         project_slug = re.sub(r"[^a-z0-9]+", "-", project.lower()).strip("-") or "project"
         return f"{project_slug}-{env}-{owner_slug}@{self.settings.default_account_email_domain}"
+
+    def _resolve_primary_provider(self, request: ResourceAllocatorRequest) -> CloudProvider:
+        for service in request.approved_estimation.approved_services:
+            if service.provider and self._is_compute_service(service.name, service.purpose):
+                return service.provider
+        for service in request.approved_estimation.approved_services:
+            if service.provider:
+                return service.provider
+        return request.approved_estimation.recommended_provider
+
+    def _is_compute_service(self, name: str, purpose: str) -> bool:
+        label = f"{name} {purpose}".lower()
+        return any(
+            keyword in label
+            for keyword in ("compute", "container", "kubernetes", "runtime", "app", "workers", "vm", "instance")
+        )

@@ -52,9 +52,18 @@ import {
   type CloudProvider,
   type ProviderSummary,
   type RecommendationRequest,
-  type RecommendationResponse
+  type RecommendationResponse,
+  type SelectiveServicePreference
 } from "@/lib/types";
 import { formatWorkloadLabel } from "@/lib/workloads";
+
+const decoupledServiceFamilies: Array<{ key: string; label: string }> = [
+  { key: "compute", label: "Compute tier" },
+  { key: "database", label: "Database tier" },
+  { key: "storage", label: "Storage tier" },
+  { key: "edge", label: "Edge / network tier" },
+  { key: "web_application_firewall", label: "Security edge tier" }
+];
 
 function ProviderSummaryCard({ provider }: { provider: ProviderSummary }) {
   return (
@@ -76,18 +85,26 @@ function ProviderSummaryCard({ provider }: { provider: ProviderSummary }) {
 
 function RecommendationCard({
   recommendation,
-  detailHref
+  detailHref,
+  isSelected,
+  isRecommended,
+  onSelect
 }: {
   recommendation: ArchitectureRecommendation;
   detailHref: string;
+  isSelected: boolean;
+  isRecommended: boolean;
+  onSelect: () => void;
 }) {
   return (
     <Card
       sx={{
         borderRadius: 5,
-        border: "1px solid var(--line)",
+        border: isSelected ? "1px solid var(--line-strong)" : "1px solid var(--line)",
         boxShadow: "none",
-        background: "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,245,0.96))"
+        background: isSelected
+          ? "linear-gradient(180deg, rgba(236,243,255,0.98), rgba(248,250,245,0.96))"
+          : "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,245,0.96))"
       }}
     >
       <CardContent>
@@ -99,10 +116,18 @@ function RecommendationCard({
               </Typography>
               <Typography variant="h5">{recommendation.profile}</Typography>
             </Box>
-            <Chip
-              label={`Score ${recommendation.score}`}
-              sx={{ bgcolor: "var(--accent-soft)", color: "var(--accent)", fontWeight: 700 }}
-            />
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+              {isRecommended ? (
+                <Chip label="Recommended" sx={{ bgcolor: "rgba(12, 107, 88, 0.12)", color: "var(--success)", fontWeight: 700 }} />
+              ) : null}
+              {isSelected ? (
+                <Chip label="Selected" sx={{ bgcolor: "var(--accent-soft)", color: "var(--accent)", fontWeight: 700 }} />
+              ) : null}
+              <Chip
+                label={`Score ${recommendation.score}`}
+                sx={{ bgcolor: "var(--accent-soft)", color: "var(--accent)", fontWeight: 700 }}
+              />
+            </Stack>
           </Stack>
           <Typography variant="h3" sx={{ fontSize: { xs: "2rem", md: "2.6rem" } }}>
             ${recommendation.estimated_monthly_cost_usd.toFixed(2)}
@@ -118,8 +143,8 @@ function RecommendationCard({
                   primary={service.name}
                   secondary={
                     service.accuracy
-                      ? `${service.purpose} | ${service.accuracy.confidence_label} confidence ${service.accuracy.confidence_score}%`
-                      : service.purpose
+                      ? `${service.provider ? `${service.provider.toUpperCase()} | ` : ""}${service.purpose} | ${service.accuracy.confidence_label} confidence ${service.accuracy.confidence_score}%`
+                      : `${service.provider ? `${service.provider.toUpperCase()} | ` : ""}${service.purpose}`
                   }
                   primaryTypographyProps={{ fontWeight: 700 }}
                   secondaryTypographyProps={{ color: "var(--muted)" }}
@@ -160,14 +185,27 @@ function RecommendationCard({
               </Stack>
             </>
           ) : null}
-          <Button
-            component={Link}
-            href={detailHref}
-            variant="outlined"
-            sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
-          >
-            View Detail
-          </Button>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2}>
+            <Button
+              variant={isSelected ? "contained" : "outlined"}
+              onClick={onSelect}
+              sx={
+                isSelected
+                  ? { alignSelf: "flex-start", bgcolor: "var(--accent)", color: "#ffffff", "&:hover": { bgcolor: "#265db8" } }
+                  : { alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }
+              }
+            >
+              {isSelected ? "Selected Estimate" : "Select Estimate"}
+            </Button>
+            <Button
+              component={Link}
+              href={detailHref}
+              variant="outlined"
+              sx={{ alignSelf: "flex-start", borderColor: "var(--line)", color: "var(--text)" }}
+            >
+              View Detail
+            </Button>
+          </Stack>
         </Stack>
       </CardContent>
     </Card>
@@ -240,6 +278,14 @@ function validateRequest(request: RecommendationRequest) {
     return "Select at least one provider.";
   }
 
+  const selectiveServices = request.selective_services ?? [];
+  const hasInvalidSelectiveProvider = selectiveServices.some(
+    (selection) => !request.preferred_providers.includes(selection.provider)
+  );
+  if (hasInvalidSelectiveProvider) {
+    return "Each selective service provider must be included in preferred providers.";
+  }
+
   return null;
 }
 
@@ -249,6 +295,7 @@ export function EstimatorShell() {
   const [request, setRequest] = useState<RecommendationRequest>(DEFAULT_REQUEST);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [result, setResult] = useState<RecommendationResponse | null>(null);
+  const [selectedRecommendationProvider, setSelectedRecommendationProvider] = useState<CloudProvider | null>(null);
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -311,6 +358,28 @@ export function EstimatorShell() {
   }, []);
 
   const chartRecommendations = useMemo(() => result?.recommendations ?? [], [result]);
+  const selectedRecommendation = useMemo(
+    () =>
+      result?.recommendations.find((item) => item.provider === selectedRecommendationProvider) ??
+      result?.recommendations[0] ??
+      null,
+    [result, selectedRecommendationProvider]
+  );
+
+  useEffect(() => {
+    if (!result?.recommendations.length) {
+      setSelectedRecommendationProvider(null);
+      return;
+    }
+
+    setSelectedRecommendationProvider((current) => {
+      if (current && result.recommendations.some((item) => item.provider === current)) {
+        return current;
+      }
+
+      return result.recommendations[0]?.provider ?? null;
+    });
+  }, [result]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -375,6 +444,42 @@ export function EstimatorShell() {
     });
   }
 
+  function getSelectiveProvider(serviceFamily: string): CloudProvider | "" {
+    const match = (request.selective_services ?? []).find(
+      (selection) => selection.service_family === serviceFamily
+    );
+    return match?.provider ?? "";
+  }
+
+  function updateSelectiveService(serviceFamily: string, provider: CloudProvider | "") {
+    setRequest((current) => {
+      const existing = current.selective_services ?? [];
+      const nextSelections = existing.filter(
+        (selection) => selection.service_family !== serviceFamily
+      );
+      if (provider) {
+        const nextEntry: SelectiveServicePreference = {
+          service_family: serviceFamily,
+          provider,
+          required: true
+        };
+        nextSelections.push(nextEntry);
+      }
+
+      const nextPreferredProviders = provider
+        ? current.preferred_providers.includes(provider)
+          ? current.preferred_providers
+          : [...current.preferred_providers, provider]
+        : current.preferred_providers;
+
+      return {
+        ...current,
+        preferred_providers: nextPreferredProviders,
+        selective_services: nextSelections
+      };
+    });
+  }
+
   function saveScenario() {
     const validationError = validateRequest(request);
     if (validationError) {
@@ -417,7 +522,10 @@ export function EstimatorShell() {
 
   function handleOpenArchitect() {
     storePendingArchitectScenario({
-      name: scenarioName.trim() || buildScenarioLabel(request),
+      name:
+        selectedRecommendation?.provider != null
+          ? `${scenarioName.trim() || buildScenarioLabel(request)} | ${selectedRecommendation.provider.toUpperCase()}`
+          : scenarioName.trim() || buildScenarioLabel(request),
       request,
       source: "estimator",
       imported_at: new Date().toISOString()
@@ -540,12 +648,12 @@ export function EstimatorShell() {
 
           {importMessage ? <Alert severity="success">{importMessage}</Alert> : null}
           {error ? <Alert severity="error">{error}</Alert> : null}
-          {result?.recommendations[0]?.accuracy ? (
-            <Alert severity={result.recommendations[0].accuracy.confidence_score >= 70 ? "success" : "warning"}>
-              Top estimate confidence is {result.recommendations[0].accuracy.confidence_label} at{" "}
-              {result.recommendations[0].accuracy.confidence_score}%. Live pricing coverage is{" "}
-              {result.recommendations[0].accuracy.live_pricing_coverage_percent}% and billing backtests cover{" "}
-              {result.recommendations[0].accuracy.compared_actuals_count} prior actuals.
+          {selectedRecommendation?.accuracy ? (
+            <Alert severity={selectedRecommendation.accuracy.confidence_score >= 70 ? "success" : "warning"}>
+              Selected estimate confidence is {selectedRecommendation.accuracy.confidence_label} at{" "}
+              {selectedRecommendation.accuracy.confidence_score}%. Live pricing coverage is{" "}
+              {selectedRecommendation.accuracy.live_pricing_coverage_percent}% and billing backtests cover{" "}
+              {selectedRecommendation.accuracy.compared_actuals_count} prior actuals.
             </Alert>
           ) : null}
           {!isAuthenticated ? (
@@ -706,6 +814,43 @@ export function EstimatorShell() {
                           ))}
                         </Box>
                       </Stack>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={Boolean(request.enable_decoupled_compute)}
+                            onChange={(event) => updateField("enable_decoupled_compute", event.target.checked)}
+                          />
+                        }
+                        label="Enable decoupled compute and cross-cloud service selection"
+                      />
+                      {request.enable_decoupled_compute ? (
+                        <Stack spacing={1.5}>
+                          <Typography variant="subtitle2">Selective cloud per service tier</Typography>
+                          {decoupledServiceFamilies.map((family) => (
+                            <FormControl key={family.key} fullWidth size="small">
+                              <InputLabel id={`selective-${family.key}`}>{family.label}</InputLabel>
+                              <Select
+                                labelId={`selective-${family.key}`}
+                                value={getSelectiveProvider(family.key)}
+                                label={family.label}
+                                onChange={(event) =>
+                                  updateSelectiveService(
+                                    family.key,
+                                    (event.target.value as CloudProvider | "") || ""
+                                  )
+                                }
+                              >
+                                <MenuItem value="">Use recommendation default</MenuItem>
+                                {request.preferred_providers.map((provider) => (
+                                  <MenuItem key={`${family.key}-${provider}`} value={provider}>
+                                    {provider.toUpperCase()}
+                                  </MenuItem>
+                                ))}
+                              </Select>
+                            </FormControl>
+                          ))}
+                        </Stack>
+                      ) : null}
                       <FormControlLabel
                         control={
                           <Checkbox
@@ -895,6 +1040,9 @@ export function EstimatorShell() {
                         <RecommendationCard
                           recommendation={recommendation}
                           detailHref={buildRecommendationDetailHref(request, recommendation.provider)}
+                          isSelected={recommendation.provider === selectedRecommendationProvider}
+                          isRecommended={recommendation.provider === result.recommendations[0]?.provider}
+                          onSelect={() => setSelectedRecommendationProvider(recommendation.provider)}
                         />
                       </Grid>
                     ))}

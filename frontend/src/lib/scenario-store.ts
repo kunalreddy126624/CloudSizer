@@ -1,9 +1,12 @@
 import type {
   NoodleArchitectureOverview,
   NoodleArchitecturePrinciple,
+  NoodleDesignerDeployment,
+  NoodleSchedulerPlan,
   NoodlePipelineDesignerDocument,
   NoodleOrchestratorPlan,
   NoodlePipelineIntent,
+  PendingNoodleSchedulerSession,
   RecommendationRequest
 } from "@/lib/types";
 
@@ -65,6 +68,7 @@ export interface PendingNoodleDesignerSession {
   design_principles?: NoodleArchitecturePrinciple[];
   saved_architecture?: SavedArchitectureDraft | null;
   agent_momo_brief?: string | null;
+  deployment_seed?: NoodleDesignerDeployment | null;
   pipeline_document?: NoodlePipelineDesignerDocument | null;
   orchestrator_plan?: NoodleOrchestratorPlan | null;
   opened_at: string;
@@ -79,6 +83,8 @@ const SAVED_ARCHITECTURES_KEY = "cloudsizer.saved-architectures";
 const NOODLE_PIPELINE_DRAFT_KEY = "cloudsizer.noodle-pipeline-draft";
 const SAVED_NOODLE_PIPELINES_KEY = "cloudsizer.saved-noodle-pipelines";
 const PENDING_NOODLE_DESIGNER_SESSION_KEY = "cloudsizer.pending-noodle-designer-session";
+const SAVED_NOODLE_SCHEDULER_PLANS_KEY = "cloudsizer.saved-noodle-scheduler-plans";
+const PENDING_NOODLE_SCHEDULER_SESSION_KEY = "cloudsizer.pending-noodle-scheduler-session";
 
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) {
@@ -90,6 +96,10 @@ function parseJson<T>(value: string | null, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function isQuotaExceededError(error: unknown) {
+  return error instanceof DOMException && (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED");
 }
 
 export function loadSavedScenarios() {
@@ -235,4 +245,95 @@ export function storePendingNoodleDesignerSession(session: PendingNoodleDesigner
 
 export function clearPendingNoodleDesignerSession() {
   window.localStorage.removeItem(PENDING_NOODLE_DESIGNER_SESSION_KEY);
+}
+
+export function loadSavedNoodleSchedulerPlans() {
+  return parseJson<NoodleSchedulerPlan[]>(
+    window.localStorage.getItem(SAVED_NOODLE_SCHEDULER_PLANS_KEY),
+    []
+  );
+}
+
+export function storeSavedNoodleSchedulerPlans(plans: NoodleSchedulerPlan[]) {
+  window.localStorage.setItem(SAVED_NOODLE_SCHEDULER_PLANS_KEY, JSON.stringify(plans));
+}
+
+export function mergeSavedNoodleSchedulerPlans(
+  plans: NoodleSchedulerPlan[],
+  plan: NoodleSchedulerPlan
+) {
+  return [plan, ...plans.filter((entry) => entry.id !== plan.id)];
+}
+
+export function upsertSavedNoodleSchedulerPlan(plan: NoodleSchedulerPlan) {
+  const plans = loadSavedNoodleSchedulerPlans();
+  storeSavedNoodleSchedulerPlans(mergeSavedNoodleSchedulerPlans(plans, plan));
+}
+
+export function loadPendingNoodleSchedulerSession() {
+  const localSession = parseJson<PendingNoodleSchedulerSession | null>(
+    window.localStorage.getItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY),
+    null
+  );
+  if (localSession) {
+    return localSession;
+  }
+
+  return parseJson<PendingNoodleSchedulerSession | null>(
+    window.sessionStorage.getItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY),
+    null
+  );
+}
+
+export function storePendingNoodleSchedulerSession(session: PendingNoodleSchedulerSession) {
+  const compactSession: PendingNoodleSchedulerSession = {
+    source: session.source,
+    intent_name: session.intent_name ?? null,
+    pipeline_id: session.pipeline_id ?? session.document?.id ?? null,
+    pipeline_name: session.pipeline_name ?? session.document?.name ?? null,
+    orchestrator_plan: session.orchestrator_plan ?? null,
+    opened_at: session.opened_at
+  };
+  const minimalSession: PendingNoodleSchedulerSession = {
+    source: compactSession.source,
+    intent_name: compactSession.intent_name ?? null,
+    pipeline_id: compactSession.pipeline_id ?? null,
+    pipeline_name: compactSession.pipeline_name ?? null,
+    opened_at: compactSession.opened_at
+  };
+
+  try {
+    window.localStorage.setItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY, JSON.stringify(compactSession));
+    window.sessionStorage.removeItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY);
+  } catch (error) {
+    if (!isQuotaExceededError(error)) {
+      throw error;
+    }
+
+    try {
+      window.localStorage.setItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY, JSON.stringify(minimalSession));
+      window.sessionStorage.removeItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY);
+    } catch (minimalError) {
+      if (!isQuotaExceededError(minimalError)) {
+        throw minimalError;
+      }
+
+      window.localStorage.removeItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY);
+
+      try {
+        window.sessionStorage.setItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY, JSON.stringify(compactSession));
+      } catch (sessionError) {
+        if (!isQuotaExceededError(sessionError)) {
+          throw sessionError;
+        }
+
+        window.sessionStorage.setItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY, JSON.stringify(minimalSession));
+      }
+    }
+  }
+}
+
+export function clearPendingNoodleSchedulerSession() {
+  window.localStorage.removeItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY);
+  window.sessionStorage.removeItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY);
 }

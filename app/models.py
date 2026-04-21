@@ -41,6 +41,8 @@ class CloudProvider(str, Enum):
     AKAMAI = "akamai"
     OVHCLOUD = "ovhcloud"
     CLOUDFLARE = "cloudflare"
+    SALESFORCE = "salesforce"
+    SNOWFLAKE = "snowflake"
 
 
 class ServiceCategory(str, Enum):
@@ -67,6 +69,13 @@ class PricingSource(str, Enum):
     GENERATED = "generated"
 
 
+class SelectiveServicePreference(BaseModel):
+    service_family: str = Field(min_length=2)
+    provider: CloudProvider
+    region: str | None = None
+    required: bool = True
+
+
 class RecommendationRequest(BaseModel):
     workload_type: WorkloadType
     region: str = Field(..., examples=["ap-south-1", "centralindia"])
@@ -78,6 +87,8 @@ class RecommendationRequest(BaseModel):
     requires_managed_database: bool = True
     availability_tier: AvailabilityTier = AvailabilityTier.HIGH
     budget_preference: BudgetPreference = BudgetPreference.BALANCED
+    enable_decoupled_compute: bool = False
+    selective_services: list[SelectiveServicePreference] = Field(default_factory=list)
     preferred_providers: list[CloudProvider] = Field(
         default_factory=lambda: [
             CloudProvider.AWS,
@@ -91,11 +102,14 @@ class RecommendationRequest(BaseModel):
             CloudProvider.AKAMAI,
             CloudProvider.OVHCLOUD,
             CloudProvider.CLOUDFLARE,
+            CloudProvider.SALESFORCE,
+            CloudProvider.SNOWFLAKE,
         ]
     )
 
 
 class ServiceEstimate(BaseModel):
+    provider: CloudProvider | None = None
     service_code: str | None = None
     name: str
     purpose: str
@@ -232,6 +246,8 @@ class EstimationAdvisorRequest(BaseModel):
             CloudProvider.AKAMAI,
             CloudProvider.OVHCLOUD,
             CloudProvider.CLOUDFLARE,
+            CloudProvider.SALESFORCE,
+            CloudProvider.SNOWFLAKE,
         ]
     )
     monthly_budget_usd: float | None = Field(default=None, ge=0.0)
@@ -257,6 +273,8 @@ class EstimationAdvisorChatRequest(BaseModel):
             CloudProvider.AKAMAI,
             CloudProvider.OVHCLOUD,
             CloudProvider.CLOUDFLARE,
+            CloudProvider.SALESFORCE,
+            CloudProvider.SNOWFLAKE,
         ]
     )
     monthly_budget_usd: float | None = Field(default=None, ge=0.0)
@@ -370,6 +388,8 @@ class LivePricingRefreshRequest(BaseModel):
             CloudProvider.AKAMAI,
             CloudProvider.OVHCLOUD,
             CloudProvider.CLOUDFLARE,
+            CloudProvider.SALESFORCE,
+            CloudProvider.SNOWFLAKE,
         ]
     )
 
@@ -427,6 +447,22 @@ class CatalogImportResponse(BaseModel):
     status: str
     imported_services: int
     snapshot_path: str
+
+
+class ToonEncodeRequest(BaseModel):
+    value: Any
+
+
+class ToonEncodeResponse(BaseModel):
+    toon: str
+
+
+class ToonDecodeRequest(BaseModel):
+    toon: str = Field(min_length=5)
+
+
+class ToonDecodeResponse(BaseModel):
+    value: Any
 
 
 class DeploymentEnvironment(str, Enum):
@@ -514,6 +550,7 @@ class AllocatorAccountStrategy(BaseModel):
 
 
 class AllocatorPlannedService(BaseModel):
+    provider: CloudProvider | None = None
     service_code: str | None = None
     service_name: str
     purpose: str

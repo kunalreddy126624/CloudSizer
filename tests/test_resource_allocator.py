@@ -146,6 +146,58 @@ class ResourceAllocatorTest(unittest.TestCase):
             self.assertTrue((artifact_path / "main.tf").exists())
             self.assertTrue((artifact_path / "apply.manifest.json").exists())
 
+    def test_allocator_supports_decoupled_compute_with_multi_cloud_services(self) -> None:
+        request = build_request(
+            approved_estimation={
+                "approval_reference": "APR-2200",
+                "approved": True,
+                "baseline_request": {
+                    "workload_type": "application",
+                    "region": "us-east-1",
+                    "user_count": 260,
+                    "concurrent_users": 90,
+                    "storage_gb": 600,
+                    "monthly_requests_million": 6.0,
+                    "requires_disaster_recovery": True,
+                    "requires_managed_database": True,
+                    "availability_tier": "high",
+                    "budget_preference": "balanced",
+                    "enable_decoupled_compute": True,
+                    "selective_services": [
+                        {"service_family": "compute", "provider": "aws"},
+                        {"service_family": "database", "provider": "azure"},
+                        {"service_family": "edge", "provider": "gcp"},
+                    ],
+                    "preferred_providers": ["aws", "azure", "gcp"],
+                },
+                "recommended_provider": "aws",
+                "estimated_monthly_cost_usd": 940.0,
+                "approved_services": [],
+            },
+            organization_context={
+                "allowed_clouds": ["aws", "azure", "gcp"],
+                "approved_account_ids": ["aws-shared-prod"],
+                "billing_scope": "finops-prod",
+                "account_vending_enabled": True,
+                "default_parent_org_unit": "ou-production",
+                "tagging_policy": ["project", "env", "owner"],
+                "iam_boundary_name": "cloudsizer-boundary",
+                "private_network_required": True,
+                "network_guardrails": ["deny-public-db", "centralized-logging"],
+                "terraform_runner_enabled": False,
+            },
+            budget_constraints={"currency": "USD", "max_monthly_cost": 2600.0},
+        )
+
+        response = allocator_execute(request)
+
+        self.assertEqual(response.status.value, "needs_approval")
+        providers = {service.provider.value for service in response.infra_plan.services if service.provider}
+        self.assertIn("aws", providers)
+        self.assertIn("azure", providers)
+        self.assertIn("gcp", providers)
+        self.assertTrue(response.policy_validation.passed)
+
 
 if __name__ == "__main__":
     unittest.main()

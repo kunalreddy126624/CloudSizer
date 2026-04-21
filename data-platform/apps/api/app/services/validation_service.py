@@ -13,6 +13,7 @@ VALID_NODE_TYPES = {
     "transform.sql": {"dialect", "sql"},
     "sink.snowflake": {"connectionId", "database", "schema", "table"},
     "sink.bigquery": {"connectionId", "dataset", "table"},
+    "sink.cache_log": {"connectionId", "cacheKey", "format"},
 }
 
 

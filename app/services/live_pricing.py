@@ -1,7 +1,11 @@
 import json
 import os
+from base64 import b64encode
 from datetime import UTC, datetime
 from functools import lru_cache
+import hashlib
+import hmac
+from uuid import uuid4
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -42,6 +46,14 @@ def refresh_live_pricing(request: LivePricingRefreshRequest) -> LivePricingRefre
             direct_result = _refresh_aws_prices()
         elif provider == CloudProvider.GCP:
             direct_result = _refresh_gcp_prices()
+        elif provider == CloudProvider.DIGITALOCEAN:
+            direct_result = _refresh_digitalocean_prices()
+        elif provider == CloudProvider.AKAMAI:
+            direct_result = _refresh_akamai_prices()
+        elif provider == CloudProvider.ALIBABA:
+            direct_result = _refresh_alibaba_prices()
+        elif provider == CloudProvider.TENCENT:
+            direct_result = _refresh_tencent_prices()
         else:
             direct_result = LivePricingRefreshResult(
                 provider=provider,
@@ -93,6 +105,101 @@ def _refresh_gcp_prices() -> LivePricingRefreshResult:
         CloudProvider.GCP,
         services,
         lambda service: _refresh_single_gcp_service(service, api_key),
+    )
+
+
+def _refresh_digitalocean_prices() -> LivePricingRefreshResult:
+    services = {
+        service.service_code: service
+        for service in get_catalog_services(provider=CloudProvider.DIGITALOCEAN)
+        if service.service_code in {"digitalocean.virtual_machine"}
+    }
+    token = os.getenv("DIGITALOCEAN_API_TOKEN")
+    if not token:
+        return LivePricingRefreshResult(
+            provider=CloudProvider.DIGITALOCEAN,
+            skipped_services=len(services),
+            warnings=["Set DIGITALOCEAN_API_TOKEN to enable DigitalOcean live pricing refresh."],
+        )
+    return _refresh_services(
+        CloudProvider.DIGITALOCEAN,
+        services,
+        lambda service: _refresh_single_digitalocean_service(service, token),
+    )
+
+
+def _refresh_akamai_prices() -> LivePricingRefreshResult:
+    services = {
+        service.service_code: service
+        for service in get_catalog_services(provider=CloudProvider.AKAMAI)
+        if service.service_code
+        in {
+            "akamai.virtual_machine",
+            "akamai.containers_managed",
+            "akamai.object_storage",
+            "akamai.block_storage",
+            "akamai.relational_database",
+            "akamai.load_balancer",
+        }
+    }
+    token = os.getenv("AKAMAI_LINODE_API_TOKEN")
+    if not token:
+        return LivePricingRefreshResult(
+            provider=CloudProvider.AKAMAI,
+            skipped_services=len(services),
+            warnings=["Set AKAMAI_LINODE_API_TOKEN to enable Akamai Linode live pricing refresh."],
+        )
+    return _refresh_services(
+        CloudProvider.AKAMAI,
+        services,
+        lambda service: _refresh_single_akamai_service(service, token),
+    )
+
+
+def _refresh_alibaba_prices() -> LivePricingRefreshResult:
+    services = {
+        service.service_code: service
+        for service in get_catalog_services(provider=CloudProvider.ALIBABA)
+        if service.service_code in {"alibaba.virtual_machine"}
+    }
+    access_key_id = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID")
+    access_key_secret = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
+    if not access_key_id or not access_key_secret:
+        return LivePricingRefreshResult(
+            provider=CloudProvider.ALIBABA,
+            skipped_services=len(services),
+            warnings=["Set ALIBABA_CLOUD_ACCESS_KEY_ID and ALIBABA_CLOUD_ACCESS_KEY_SECRET to enable Alibaba Cloud live pricing refresh."],
+        )
+    return _refresh_services(
+        CloudProvider.ALIBABA,
+        services,
+        lambda service: _refresh_single_alibaba_service(service, access_key_id, access_key_secret),
+    )
+
+
+def _refresh_tencent_prices() -> LivePricingRefreshResult:
+    services = {
+        service.service_code: service
+        for service in get_catalog_services(provider=CloudProvider.TENCENT)
+        if service.service_code in {"tencent.virtual_machine"}
+    }
+    secret_id = os.getenv("TENCENTCLOUD_SECRET_ID")
+    secret_key = os.getenv("TENCENTCLOUD_SECRET_KEY")
+    image_id = os.getenv("TENCENTCLOUD_IMAGE_ID")
+    zone = os.getenv("TENCENTCLOUD_ZONE")
+    region = os.getenv("TENCENTCLOUD_REGION")
+    if not secret_id or not secret_key or not image_id or not zone or not region:
+        return LivePricingRefreshResult(
+            provider=CloudProvider.TENCENT,
+            skipped_services=len(services),
+            warnings=[
+                "Set TENCENTCLOUD_SECRET_ID, TENCENTCLOUD_SECRET_KEY, TENCENTCLOUD_REGION, TENCENTCLOUD_ZONE, and TENCENTCLOUD_IMAGE_ID to enable Tencent Cloud live pricing refresh."
+            ],
+        )
+    return _refresh_services(
+        CloudProvider.TENCENT,
+        services,
+        lambda service: _refresh_single_tencent_service(service, secret_id, secret_key, region, zone, image_id),
     )
 
 
@@ -296,14 +403,189 @@ def _refresh_single_gcp_service(service: CatalogService, api_key: str) -> bool:
     return True
 
 
-def _persist_live_price_override(service: CatalogService, dimensions: list[PricingDimension]) -> None:
+def _refresh_single_digitalocean_service(service: CatalogService, token: str) -> bool:
+    if service.service_code != "digitalocean.virtual_machine":
+        return False
+
+    payload = _fetch_json(
+        "https://api.digitalocean.com/v2/sizes",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    sizes = payload.get("sizes", [])
+    if not isinstance(sizes, list):
+        raise ValueError("DigitalOcean sizes payload did not include a sizes list.")
+
+    target_price = _select_shape_based_monthly_price(
+        sizes,
+        target_vcpus=_service_dimension_value(service, "vcpu_count", 2.0),
+        target_memory_gb=_service_dimension_value(service, "memory_gb", 4.0),
+        memory_field="memory",
+        monthly_field_path=("price_monthly",),
+        allowed_predicate=lambda item: item.get("available") is not False,
+    )
+    _persist_scaled_live_price_override(service, target_price)
+    return True
+
+
+def _refresh_single_akamai_service(service: CatalogService, token: str) -> bool:
+    service_endpoint_map = {
+        "akamai.virtual_machine": "https://api.linode.com/v4/linode/types",
+        "akamai.containers_managed": "https://api.linode.com/v4/lke/types",
+        "akamai.object_storage": "https://api.linode.com/v4/object-storage/types",
+        "akamai.block_storage": "https://api.linode.com/v4/volumes/types",
+        "akamai.relational_database": "https://api.linode.com/v4/databases/types",
+        "akamai.load_balancer": "https://api.linode.com/v4/nodebalancers/types",
+    }
+    endpoint = service_endpoint_map.get(service.service_code)
+    if endpoint is None:
+        return False
+
+    payload = _fetch_json(
+        endpoint,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    entries = payload.get("data", [])
+    if not isinstance(entries, list):
+        raise ValueError("Akamai Linode pricing payload did not include a data list.")
+
+    if service.service_code in {"akamai.virtual_machine", "akamai.containers_managed"}:
+        target_price = _select_shape_based_monthly_price(
+            entries,
+            target_vcpus=_service_dimension_value(service, "vcpu_count", 2.0),
+            target_memory_gb=_service_dimension_value(service, "memory_gb", 4.0),
+            monthly_field_path=("price", "monthly"),
+            memory_field="memory",
+            vcpu_field="vcpus",
+        )
+    else:
+        target_price = _select_lowest_monthly_price(entries, monthly_field_path=("price", "monthly"))
+
+    _persist_scaled_live_price_override(service, target_price)
+    return True
+
+
+def _refresh_single_alibaba_service(
+    service: CatalogService,
+    access_key_id: str,
+    access_key_secret: str,
+) -> bool:
+    if service.service_code != "alibaba.virtual_machine":
+        return False
+
+    region = os.getenv("ALIBABA_CLOUD_REGION", service.default_region)
+    instance_type = os.getenv("ALIBABA_CLOUD_INSTANCE_TYPE", "ecs.g6.large")
+    payload = _fetch_alibaba_ecs_rpc(
+        "DescribePrice",
+        {
+            "RegionId": region,
+            "PriceUnit": "Hour",
+            "ResourceType": "instance",
+            "InstanceType": instance_type,
+            "Amount": "1",
+            "InstanceChargeType": "PostPaid",
+        },
+        access_key_id,
+        access_key_secret,
+    )
+    target_price = _extract_first_numeric(
+        payload,
+        [
+            ("PriceInfo", "Price", "TradePrice"),
+            ("PriceInfo", "Price", "OriginalPrice"),
+            ("PriceInfo", "Rules", "Rule", 0, "Price"),
+        ],
+    )
+    if target_price is None:
+        raise ValueError("Alibaba Cloud DescribePrice did not return a usable instance price.")
+
+    _persist_scaled_live_price_override(service, float(target_price) * 730.0)
+    return True
+
+
+def _refresh_single_tencent_service(
+    service: CatalogService,
+    secret_id: str,
+    secret_key: str,
+    region: str,
+    zone: str,
+    image_id: str,
+) -> bool:
+    if service.service_code != "tencent.virtual_machine":
+        return False
+
+    instance_type = os.getenv("TENCENTCLOUD_INSTANCE_TYPE", "SA2.MEDIUM4")
+    payload = _fetch_tencent_api_json(
+        host="cvm.tencentcloudapi.com",
+        service="cvm",
+        action="InquiryPriceRunInstances",
+        version="2017-03-12",
+        region=region,
+        secret_id=secret_id,
+        secret_key=secret_key,
+        body={
+            "Placement": {"Zone": zone},
+            "ImageId": image_id,
+            "InstanceType": instance_type,
+            "InstanceCount": 1,
+            "InstanceChargeType": "POSTPAID_BY_HOUR",
+            "SystemDisk": {"DiskType": "CLOUD_PREMIUM", "DiskSize": 50},
+        },
+    )
+    target_price = _extract_first_numeric(
+        payload,
+        [
+            ("Response", "Price", "InstancePrice", "UnitPrice"),
+            ("Response", "Price", "UnitPrice"),
+            ("Response", "Price", "OriginalUnitPrice"),
+        ],
+    )
+    if target_price is None:
+        raise ValueError("Tencent Cloud InquiryPriceRunInstances did not return a usable unit price.")
+
+    _persist_scaled_live_price_override(service, float(target_price) * 730.0)
+    return True
+
+
+def _persist_live_price_override(
+    service: CatalogService,
+    dimensions: list[PricingDimension],
+    base_monthly_cost_usd: float | None = None,
+) -> None:
     upsert_catalog_price_override(
         provider=service.provider,
         service_code=service.service_code,
-        base_monthly_cost_usd=service.base_monthly_cost_usd,
+        base_monthly_cost_usd=service.base_monthly_cost_usd if base_monthly_cost_usd is None else base_monthly_cost_usd,
         dimensions=dimensions,
         pricing_source=PricingSource.LIVE_API,
     )
+
+
+def _persist_scaled_live_price_override(service: CatalogService, target_monthly_cost_usd: float) -> None:
+    current_monthly_cost = _service_suggested_monthly_cost(service)
+    if current_monthly_cost <= 0:
+        raise ValueError(f"Catalog baseline for {service.service_code} has no positive suggested monthly cost.")
+
+    ratio = target_monthly_cost_usd / current_monthly_cost
+    updated_dimensions = [
+        dimension.model_copy(update={"rate_per_unit_usd": round(dimension.rate_per_unit_usd * ratio, 6)})
+        for dimension in service.dimensions
+    ]
+    _persist_live_price_override(
+        service,
+        updated_dimensions,
+        base_monthly_cost_usd=round(service.base_monthly_cost_usd * ratio, 4),
+    )
+
+
+def _service_suggested_monthly_cost(service: CatalogService) -> float:
+    return service.base_monthly_cost_usd + sum(
+        dimension.suggested_value * dimension.rate_per_unit_usd for dimension in service.dimensions
+    )
+
+
+def _service_dimension_value(service: CatalogService, key: str, default: float) -> float:
+    dimension = next((item for item in service.dimensions if item.key == key), None)
+    return float(dimension.suggested_value) if dimension is not None else default
 
 
 def _update_dimension_rate(dimensions: list[PricingDimension], key: str, rate_per_unit_usd: float) -> None:
@@ -546,7 +828,7 @@ def _load_benchmark_family_ratios() -> dict[str, float]:
     raw_catalog = _load_raw_catalog_by_code()
     family_ratios: dict[str, float] = {}
 
-    for provider in (CloudProvider.AWS, CloudProvider.AZURE, CloudProvider.GCP):
+    for provider in CloudProvider:
         for service in get_catalog_services(provider=provider):
             if service.pricing_source != PricingSource.LIVE_API:
                 continue
@@ -585,7 +867,191 @@ def _fetch_azure_retail_items(url: str) -> list[dict[str, object]]:
     return items
 
 
-def _fetch_json(url: str) -> dict[str, object]:
-    request = Request(url, headers={"User-Agent": "CloudSizer/0.1"})
+def _fetch_json(
+    url: str,
+    headers: dict[str, str] | None = None,
+    method: str = "GET",
+    body: bytes | None = None,
+) -> dict[str, object]:
+    request_headers = {"User-Agent": "CloudSizer/0.1", **(headers or {})}
+    request = Request(url, headers=request_headers, method=method, data=body)
     with urlopen(request, timeout=25) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _select_shape_based_monthly_price(
+    entries: list[dict[str, object]],
+    target_vcpus: float,
+    target_memory_gb: float,
+    monthly_field_path: tuple[str | int, ...],
+    vcpu_field: str = "vcpus",
+    memory_field: str = "memory",
+    allowed_predicate=None,
+) -> float:
+    candidate_entry = None
+    candidate_score = None
+    for entry in entries:
+        if allowed_predicate and not allowed_predicate(entry):
+            continue
+        monthly_price = _extract_numeric_value(entry, monthly_field_path)
+        vcpus = _extract_numeric_value(entry, (vcpu_field,))
+        memory = _extract_numeric_value(entry, (memory_field,))
+        if monthly_price is None or vcpus is None or memory is None:
+            continue
+        memory_gb = memory / 1024 if memory > 64 else memory
+        score = abs(vcpus - target_vcpus) + abs(memory_gb - target_memory_gb)
+        if candidate_score is None or score < candidate_score or (score == candidate_score and monthly_price < _extract_numeric_value(candidate_entry, monthly_field_path)):  # type: ignore[arg-type]
+            candidate_entry = entry
+            candidate_score = score
+
+    if candidate_entry is None:
+        raise ValueError("No matching live pricing plan was found for the requested shape.")
+
+    monthly_price = _extract_numeric_value(candidate_entry, monthly_field_path)
+    if monthly_price is None:
+        raise ValueError("Matching live pricing plan did not expose a monthly price.")
+    return float(monthly_price)
+
+
+def _select_lowest_monthly_price(
+    entries: list[dict[str, object]],
+    monthly_field_path: tuple[str | int, ...],
+) -> float:
+    prices = [
+        price
+        for price in (_extract_numeric_value(entry, monthly_field_path) for entry in entries)
+        if price is not None
+    ]
+    if not prices:
+        raise ValueError("No live monthly prices were available in the provider response.")
+    return float(min(prices))
+
+
+def _extract_first_numeric(payload: dict[str, object], paths: list[tuple[str | int, ...]]) -> float | None:
+    for path in paths:
+        value = _extract_numeric_value(payload, path)
+        if value is not None:
+            return value
+    return None
+
+
+def _extract_numeric_value(payload: object, path: tuple[str | int, ...]) -> float | None:
+    current = payload
+    for key in path:
+        if isinstance(key, int):
+            if not isinstance(current, list) or key >= len(current):
+                return None
+            current = current[key]
+        else:
+            if not isinstance(current, dict) or key not in current:
+                return None
+            current = current[key]
+    try:
+        return float(current)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _fetch_alibaba_ecs_rpc(
+    action: str,
+    parameters: dict[str, str],
+    access_key_id: str,
+    access_key_secret: str,
+) -> dict[str, object]:
+    query_params = {
+        "AccessKeyId": access_key_id,
+        "Action": action,
+        "Format": "JSON",
+        "SignatureMethod": "HMAC-SHA1",
+        "SignatureNonce": str(uuid4()),
+        "SignatureVersion": "1.0",
+        "Timestamp": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "Version": "2014-05-26",
+        **parameters,
+    }
+    canonicalized = "&".join(
+        f"{_aliyun_percent_encode(key)}={_aliyun_percent_encode(value)}"
+        for key, value in sorted(query_params.items())
+    )
+    string_to_sign = f"GET&%2F&{_aliyun_percent_encode(canonicalized)}"
+    signature = b64encode(
+        hmac.new(
+            f"{access_key_secret}&".encode("utf-8"),
+            string_to_sign.encode("utf-8"),
+            hashlib.sha1,
+        ).digest()
+    ).decode("utf-8")
+    query_params["Signature"] = signature
+    signed_query = "&".join(
+        f"{_aliyun_percent_encode(key)}={_aliyun_percent_encode(value)}"
+        for key, value in sorted(query_params.items())
+    )
+    return _fetch_json(f"https://ecs.aliyuncs.com/?{signed_query}")
+
+
+def _aliyun_percent_encode(value: str) -> str:
+    return quote(str(value), safe="~")
+
+
+def _fetch_tencent_api_json(
+    host: str,
+    service: str,
+    action: str,
+    version: str,
+    region: str,
+    secret_id: str,
+    secret_key: str,
+    body: dict[str, object],
+) -> dict[str, object]:
+    timestamp = int(datetime.now(UTC).timestamp())
+    date_value = datetime.now(UTC).strftime("%Y-%m-%d")
+    payload = json.dumps(body, separators=(",", ":"))
+    canonical_headers = f"content-type:application/json; charset=utf-8\nhost:{host}\n"
+    signed_headers = "content-type;host"
+    hashed_payload = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    canonical_request = "\n".join(
+        [
+            "POST",
+            "/",
+            "",
+            canonical_headers,
+            signed_headers,
+            hashed_payload,
+        ]
+    )
+    credential_scope = f"{date_value}/{service}/tc3_request"
+    string_to_sign = "\n".join(
+        [
+            "TC3-HMAC-SHA256",
+            str(timestamp),
+            credential_scope,
+            hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+        ]
+    )
+    secret_date = hmac.new(
+        f"TC3{secret_key}".encode("utf-8"),
+        date_value.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    secret_service = hmac.new(secret_date, service.encode("utf-8"), hashlib.sha256).digest()
+    secret_signing = hmac.new(secret_service, b"tc3_request", hashlib.sha256).digest()
+    signature = hmac.new(secret_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    authorization = (
+        "TC3-HMAC-SHA256 "
+        f"Credential={secret_id}/{credential_scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+    return _fetch_json(
+        f"https://{host}",
+        headers={
+            "Authorization": authorization,
+            "Content-Type": "application/json; charset=utf-8",
+            "Host": host,
+            "X-TC-Action": action,
+            "X-TC-Region": region,
+            "X-TC-Timestamp": str(timestamp),
+            "X-TC-Version": version,
+        },
+        method="POST",
+        body=payload.encode("utf-8"),
+    )

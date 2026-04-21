@@ -4,6 +4,7 @@ from functools import lru_cache
 import re
 
 from app.noodle.ai.planner import NoodleAiPlannerService
+from app.noodle.ai.rag import NoodleRagService
 from app.noodle.config import get_noodle_settings
 from app.noodle.connectors.registry import build_connector_plans
 from app.noodle.governance.policies import GovernancePolicyService
@@ -13,6 +14,10 @@ from app.noodle.orchestrator.workflow import WorkflowTemplateService
 from app.noodle.processing.contracts import build_processing_stages
 from app.noodle.sample_specs import REFERENCE_SPECS
 from app.noodle.schemas import (
+    NoodleAgentQueryRequest,
+    NoodleAgentQueryResponse,
+    NoodleDesignerMomoQueryRequest,
+    NoodleDesignerMomoResponse,
     NoodleArchitectureAlignmentItem,
     NoodleArchitecturePrinciple,
     NoodleArchitectureOverview,
@@ -22,10 +27,14 @@ from app.noodle.schemas import (
     NoodleOrchestratorPlan,
     NoodleOrchestratorTaskPlan,
     NoodlePipelineIntent,
+    NoodlePipelineIntentCatalogItem,
+    NoodlePipelineIntentCatalogResponse,
     NoodlePipelinePlanningRequest,
     NoodlePipelinePlanResponse,
     NoodlePlatformBlueprint,
     NoodlePlatformPlane,
+    NoodleRagQueryRequest,
+    NoodleRagQueryResponse,
     NoodleRecommendedStackItem,
     NoodleRepositorySection,
     NoodleScalabilityConcern,
@@ -73,6 +82,7 @@ class NoodleOrchestratorService:
         settings = get_noodle_settings()
         self.settings = settings
         self.ai = NoodleAiPlannerService(settings)
+        self.rag = NoodleRagService(settings)
         self.workflow = WorkflowTemplateService(settings)
         self.governance = GovernancePolicyService()
         self.metadata = MetadataCatalogService(settings)
@@ -121,6 +131,21 @@ class NoodleOrchestratorService:
     def list_reference_specs(self):
         return REFERENCE_SPECS
 
+    def list_pipeline_intents(self) -> NoodlePipelineIntentCatalogResponse:
+        return NoodlePipelineIntentCatalogResponse(
+            items=[
+                NoodlePipelineIntentCatalogItem(
+                    id=spec.id,
+                    name=spec.name,
+                    summary=spec.summary,
+                    tags=spec.tags,
+                    intent=spec.sample_intent,
+                    recommended_workflow_template=self.workflow.choose_template(spec.sample_intent),
+                )
+                for spec in REFERENCE_SPECS
+            ]
+        )
+
     def _workflow_template_for_request(self, request: NoodlePipelinePlanningRequest) -> str:
         template = self.workflow.choose_template(request.intent)
         architecture = request.architecture_context
@@ -131,6 +156,7 @@ class NoodleOrchestratorService:
             [
                 architecture.prompt,
                 architecture.summary,
+                architecture.system_design,
                 " ".join(architecture.data_flow),
                 " ".join(architecture.components),
             ]
@@ -209,12 +235,18 @@ class NoodleOrchestratorService:
         )
         principle_text = ", ".join(principle.title for principle in practice_principles[:5]) or "portable JSON specs, plugins, versioning, and observability"
         alignment_text = " | ".join(item.guidance for item in architecture_alignment[:4])
+        system_design_text = (
+            f" System design anchor: {architecture.system_design[:300]}."
+            if architecture and architecture.system_design
+            else ""
+        )
         return (
             f"{architecture_text} "
             f"Apply these practice principles: {principle_text}. "
             f"Guide the user toward plugin-backed nodes, versioned configs and schedules, control-plane metadata ownership, and execution-plane worker orchestration. "
             f"Current workflow template recommendation: {workflow_template}. "
             f"Architecture alignment: {alignment_text}"
+            f"{system_design_text}"
         )
 
     def _build_orchestrator_plan(
@@ -315,6 +347,62 @@ class NoodleOrchestratorService:
                 connectors,
                 processing_stages,
             ),
+        )
+
+    def query_knowledge(self, request: NoodleRagQueryRequest) -> NoodleRagQueryResponse:
+        return self.rag.query(request)
+
+    def query_agent(self, request: NoodleAgentQueryRequest) -> NoodleAgentQueryResponse:
+        response = self.rag.query_agent(request)
+
+        if request.agent == "momo" and request.intent is not None:
+            planning_request = NoodlePipelinePlanningRequest(
+                intent=request.intent,
+                architecture_context=request.architecture_context,
+            )
+            workflow_template = self._workflow_template_for_request(planning_request)
+            practice_principles = self.get_blueprint().design_principles
+            architecture_alignment = self._build_architecture_alignment(
+                planning_request,
+                workflow_template,
+                practice_principles,
+            )
+            brief = self._build_agent_momo_brief(
+                planning_request,
+                workflow_template,
+                practice_principles,
+                architecture_alignment,
+            )
+            answer = f"{brief} {response.answer}".strip()
+            return response.model_copy(update={"brief": brief, "answer": answer})
+
+        if request.agent == "architect" and request.architecture_context is not None:
+            system_design = request.architecture_context.system_design
+            if system_design:
+                answer = f"System design anchor: {system_design[:320]}. {response.answer}".strip()
+                return response.model_copy(update={"answer": answer})
+
+        return response
+
+    def query_designer_momo(self, request: NoodleDesignerMomoQueryRequest) -> NoodleDesignerMomoResponse:
+        agent_response = self.query_agent(
+            NoodleAgentQueryRequest(
+                agent="momo",
+                user_turn=request.user_turn,
+                max_results=request.max_results,
+                architecture_context=request.architecture_context,
+                pipeline_document=request.pipeline_document,
+                intent=request.intent,
+            )
+        )
+        return NoodleDesignerMomoResponse(
+            answer=agent_response.answer,
+            brief=agent_response.brief,
+            sources=agent_response.sources,
+            retrieval_backend=agent_response.retrieval_backend,
+            recovered=agent_response.recovered,
+            recovery_strategy=agent_response.recovery_strategy,
+            attempted_queries=agent_response.attempted_queries,
         )
 
     def get_blueprint(self) -> NoodlePlatformBlueprint:

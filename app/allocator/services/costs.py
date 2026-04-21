@@ -21,6 +21,7 @@ class CostEstimationService:
         estimated = round(scaled_total, 2)
         line_items = [
             {
+                "provider": service.provider.value if service.provider is not None else request.approved_estimation.recommended_provider.value,
                 "name": service.name,
                 "service_code": service.service_code,
                 "estimated_monthly_cost_usd": service.estimated_monthly_cost_usd,

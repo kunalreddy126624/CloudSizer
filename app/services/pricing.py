@@ -7,6 +7,7 @@ from app.models import (
     PricingDimension,
     PricingSource,
     RecommendationRequest,
+    SelectiveServicePreference,
     ServiceEstimate,
     WorkloadType,
 )
@@ -208,6 +209,40 @@ PROVIDER_SERVICES: dict[
             ("Cloudflare R2", "Attachment storage and exports", 18.0),
         ],
     },
+    CloudProvider.SALESFORCE: {
+        WorkloadType.ERP: [
+            ("Salesforce Platform", "Run ERP process extensions and workflows", 168.0),
+            ("Salesforce Data Cloud", "Primary transactional database", 236.0),
+            ("Salesforce Files", "Backups and document storage", 36.0),
+        ],
+        WorkloadType.APPLICATION: [
+            ("Heroku Runtime", "Run stateless application services", 116.0),
+            ("Salesforce Data Cloud", "Managed application database", 192.0),
+            ("Salesforce Edge Network", "Traffic acceleration and caching", 28.0),
+        ],
+        WorkloadType.CRM: [
+            ("Sales Cloud", "Run CRM application services", 198.0),
+            ("Salesforce Data Cloud", "Managed CRM database", 248.0),
+            ("Salesforce Files", "Attachment storage and exports", 42.0),
+        ],
+    },
+    CloudProvider.SNOWFLAKE: {
+        WorkloadType.ERP: [
+            ("Snowpark Container Services", "Run ERP data processing services", 182.0),
+            ("Snowflake Hybrid Tables", "Primary transactional database", 244.0),
+            ("Snowflake Stages", "Backups and document storage", 34.0),
+        ],
+        WorkloadType.APPLICATION: [
+            ("Snowpark Container Services", "Run stateless application services", 124.0),
+            ("Snowflake Hybrid Tables", "Managed application database", 208.0),
+            ("Snowflake Secure Data Sharing", "Traffic acceleration and data delivery", 30.0),
+        ],
+        WorkloadType.CRM: [
+            ("Snowflake Native App Framework", "Run CRM application services", 176.0),
+            ("Snowflake Data Cloud", "Managed CRM database", 232.0),
+            ("Snowflake Stages", "Attachment storage and exports", 31.0),
+        ],
+    },
 }
 
 
@@ -223,6 +258,8 @@ PROVIDER_WEIGHT: dict[CloudProvider, dict[WorkloadType, float]] = {
     CloudProvider.AKAMAI: {WorkloadType.ERP: 0.86, WorkloadType.APPLICATION: 1.0, WorkloadType.CRM: 0.89},
     CloudProvider.OVHCLOUD: {WorkloadType.ERP: 0.83, WorkloadType.APPLICATION: 0.97, WorkloadType.CRM: 0.87},
     CloudProvider.CLOUDFLARE: {WorkloadType.ERP: 0.8, WorkloadType.APPLICATION: 1.06, WorkloadType.CRM: 0.85},
+    CloudProvider.SALESFORCE: {WorkloadType.ERP: 0.94, WorkloadType.APPLICATION: 1.04, WorkloadType.CRM: 1.16},
+    CloudProvider.SNOWFLAKE: {WorkloadType.ERP: 1.07, WorkloadType.APPLICATION: 1.1, WorkloadType.CRM: 0.99},
 }
 
 WORKLOAD_ARCHETYPE: dict[WorkloadType, WorkloadType] = {
@@ -284,10 +321,30 @@ def estimate_services(
     request: RecommendationRequest, provider: CloudProvider
 ) -> list[ServiceEstimate]:
     archetype = resolve_workload_archetype(request.workload_type)
+    if request.enable_decoupled_compute and request.selective_services:
+        decoupled_services = _estimate_decoupled_services(request, provider, archetype)
+        if decoupled_services:
+            return decoupled_services
+
+    return _estimate_single_provider_services(request, provider, archetype)
+
+
+def _estimate_single_provider_services(
+    request: RecommendationRequest,
+    provider: CloudProvider,
+    archetype: WorkloadType,
+) -> list[ServiceEstimate]:
     catalog_services = _estimate_catalog_services(request, provider, archetype)
     if catalog_services:
         return catalog_services
+    return _estimate_profile_services(request, provider, archetype)
 
+
+def _estimate_profile_services(
+    request: RecommendationRequest,
+    provider: CloudProvider,
+    archetype: WorkloadType,
+) -> list[ServiceEstimate]:
     base_services = PROVIDER_SERVICES[provider][archetype]
     scaled_services: list[ServiceEstimate] = []
 
@@ -318,6 +375,7 @@ def estimate_services(
 
         scaled_services.append(
             ServiceEstimate(
+                provider=provider,
                 service_code=None,
                 name=name,
                 purpose=purpose,
@@ -326,6 +384,122 @@ def estimate_services(
         )
 
     return scaled_services
+
+
+def _estimate_decoupled_services(
+    request: RecommendationRequest,
+    default_provider: CloudProvider,
+    archetype: WorkloadType,
+) -> list[ServiceEstimate]:
+    service_families = WORKLOAD_SERVICE_FAMILIES.get(archetype, [])
+    if not service_families:
+        return []
+
+    family_overrides = _build_family_provider_overrides(
+        request.selective_services,
+        archetype,
+    )
+    selected_services: list[ServiceEstimate] = []
+
+    for family in service_families:
+        target_provider = family_overrides.get(family, default_provider)
+        service = _estimate_service_for_family(request, target_provider, archetype, family)
+        if service is None:
+            continue
+        selected_services.append(service)
+
+    active_providers = {service.provider for service in selected_services if service.provider is not None}
+    if len(active_providers) > 1:
+        coordination_cost = round(sum(service.estimated_monthly_cost_usd for service in selected_services) * 0.04, 2)
+        selected_services.append(
+            ServiceEstimate(
+                provider=default_provider,
+                service_code=None,
+                name="Cross-cloud control plane",
+                purpose="Coordinates decoupled compute and shared observability across selected clouds.",
+                estimated_monthly_cost_usd=coordination_cost,
+                pricing_source=PricingSource.GENERATED,
+            )
+        )
+
+    return selected_services
+
+
+def _build_family_provider_overrides(
+    selective_services: list[SelectiveServicePreference],
+    archetype: WorkloadType,
+) -> dict[str, CloudProvider]:
+    service_families = set(WORKLOAD_SERVICE_FAMILIES.get(archetype, []))
+    alias_map: dict[str, set[str]] = {
+        "compute": {"compute", "containers_managed", "serverless_runtime", "virtual_machine"},
+        "database": {"database", "relational_database", "nosql_database"},
+        "storage": {"storage", "object_storage", "block_storage"},
+        "edge": {"edge", "content_delivery", "load_balancer", "web_application_firewall"},
+    }
+    overrides: dict[str, CloudProvider] = {}
+    for selection in selective_services:
+        if isinstance(selection, dict):
+            raw_provider = selection.get("provider")
+            raw_family = selection.get("service_family")
+            if not isinstance(raw_provider, CloudProvider):
+                try:
+                    provider = CloudProvider(str(raw_provider))
+                except ValueError:
+                    continue
+            else:
+                provider = raw_provider
+            if not isinstance(raw_family, str):
+                continue
+            family = raw_family
+        else:
+            provider = selection.provider
+            family = selection.service_family
+
+        family = family.strip().lower()
+        expanded_families = {family}
+        for candidates in alias_map.values():
+            if family in candidates:
+                expanded_families = expanded_families.union(candidates)
+                break
+
+        for expanded in expanded_families:
+            if not service_families or expanded in service_families:
+                overrides[expanded] = provider
+    return overrides
+
+
+def _estimate_service_for_family(
+    request: RecommendationRequest,
+    provider: CloudProvider,
+    archetype: WorkloadType,
+    service_family: str,
+) -> ServiceEstimate | None:
+    catalog = get_catalog_services(provider=provider)
+    catalog_service = next((service for service in catalog if service.service_family == service_family), None)
+    if catalog_service and catalog_service.pricing_source != PricingSource.GENERATED:
+        return ServiceEstimate(
+            provider=provider,
+            service_code=catalog_service.service_code,
+            name=catalog_service.name,
+            purpose=FAMILY_PURPOSE_OVERRIDES.get(catalog_service.service_family, catalog_service.summary),
+            estimated_monthly_cost_usd=round(
+                _estimate_catalog_service_monthly_cost(request, catalog_service),
+                2,
+            ),
+            pricing_source=catalog_service.pricing_source,
+            last_validated_at=catalog_service.last_validated_at,
+        )
+
+    fallback_services = _estimate_profile_services(request, provider, archetype)
+    archetype_families = WORKLOAD_SERVICE_FAMILIES.get(archetype, [])
+    if service_family in archetype_families:
+        index = archetype_families.index(service_family)
+        if index < len(fallback_services):
+            return fallback_services[index].model_copy(update={"provider": provider})
+
+    if fallback_services:
+        return fallback_services[0].model_copy(update={"provider": provider})
+    return None
 
 
 def profile_name(preference: BudgetPreference) -> str:
@@ -362,7 +536,13 @@ def build_architecture(
     services = estimate_services(request, provider)
     services = [
         service.model_copy(
-            update={"accuracy": build_service_accuracy(provider, request.workload_type, service)}
+            update={
+                "accuracy": build_service_accuracy(
+                    service.provider or provider,
+                    request.workload_type,
+                    service,
+                )
+            }
         )
         for service in services
     ]
@@ -383,6 +563,13 @@ def build_architecture(
         rationale.append("Pricing includes a disaster recovery overhead.")
     if request.requires_managed_database:
         rationale.append("Recommendation prefers managed database services to reduce operations.")
+    providers_in_plan = sorted({service.provider for service in services if service.provider is not None}, key=lambda item: item.value)
+    if request.enable_decoupled_compute and len(providers_in_plan) > 1:
+        rationale.append(
+            "Decoupled compute mode is active with selective services across "
+            + ", ".join(item.value.upper() for item in providers_in_plan)
+            + "."
+        )
 
     return ArchitectureRecommendation(
         provider=provider,
@@ -421,6 +608,7 @@ def _estimate_catalog_services(
 
     return [
         ServiceEstimate(
+            provider=provider,
             service_code=service.service_code,
             name=service.name,
             purpose=FAMILY_PURPOSE_OVERRIDES.get(service.service_family, service.summary),

@@ -103,7 +103,10 @@ class AllocatorWorkflow:
         )
 
     def _generate_terraform(self, state: WorkflowState) -> WorkflowState:
-        bundle = self.terraform_engine.build_bundle(state["request"])
+        bundle = self.terraform_engine.build_bundle(
+            state["request"],
+            state.get("account_plan"),
+        )
         return self._merge_state(
             state,
             terraform_bundle=bundle,
@@ -188,22 +191,39 @@ class AllocatorWorkflow:
         )
 
     def _apply_terraform(self, run_id: int, state: WorkflowState) -> WorkflowState:
-        artifact_path = self.terraform_engine.stage_bundle(run_id, state["terraform_bundle"])
+        bundle = self.terraform_engine.build_bundle(
+            state["request"],
+            state.get("account_plan"),
+        )
+        execution_result = self.terraform_engine.apply_bundle(
+            run_id,
+            bundle,
+            runner_enabled=state["request"].organization_context.terraform_runner_enabled,
+        )
+        tool_status = "completed" if execution_result.applied else "failed"
+        summary = (
+            "Allocator run completed and Terraform apply succeeded."
+            if execution_result.applied
+            else "Allocator provisioning failed during Terraform execution."
+        )
         return self._merge_state(
             state,
+            terraform_bundle=bundle,
             provisioning_result=ProvisioningResult(
-                applied=True,
+                applied=execution_result.applied,
                 account_created=bool(state.get("provisioning_result") and state["provisioning_result"].account_created),
-                terraform_artifact_path=str(artifact_path),
-                execution_reference=f"run-{run_id}",
-                message=f"Terraform bundle staged at {artifact_path}.",
+                terraform_artifact_path=str(execution_result.artifact_path),
+                execution_reference=execution_result.execution_reference,
+                execution_log_path=str(execution_result.log_path) if execution_result.log_path else None,
+                runner_mode=execution_result.runner_mode,
+                message=execution_result.message,
             ),
-            summary="Allocator run approved and staged for provisioning.",
-            trace=f"Terraform bundle staged at {artifact_path}.",
+            summary=summary,
+            trace=execution_result.message,
             tool=ToolExecutionSnapshot(
                 name="apply_terraform",
-                status="completed",
-                message=f"Terraform bundle staged at {artifact_path}.",
+                status=tool_status,
+                message=execution_result.message,
             ),
         )
 

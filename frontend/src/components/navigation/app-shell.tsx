@@ -9,22 +9,28 @@ import { Alert, Box, Button, Chip, Container, Stack, Typography } from "@mui/mat
 import { useAuth } from "@/components/auth/auth-provider";
 import type { PermissionName } from "@/lib/types";
 
-const navItems = [
+type NavItem = {
+  href: string;
+  label: string;
+  requiredAnyPermission?: PermissionName[];
+};
+
+const navItems: NavItem[] = [
   { href: "/workspace", label: "Workspace" },
-  { href: "/rbac", label: "RBAC", requiredAnyPermission: ["manage_users"] as PermissionName[] },
-  { href: "/advisor", label: "Agent Estimator", requiredAnyPermission: ["create_estimation", "view_estimation"] as PermissionName[] },
+  { href: "/rbac", label: "RBAC", requiredAnyPermission: ["manage_users"] },
+  { href: "/advisor", label: "Agent Estimator", requiredAnyPermission: ["create_estimation", "view_estimation"] },
   {
     href: "/allocator",
     label: "Agent Allocator",
-    requiredAnyPermission: ["create_estimation", "approve_request", "reject_request", "view_cost", "allocate_resources"] as PermissionName[]
+    requiredAnyPermission: ["create_estimation", "approve_request", "reject_request", "view_cost", "allocate_resources"]
   },
   { href: "/noodle", label: "Noodle" },
-  { href: "/estimator", label: "Form Estimator", requiredAnyPermission: ["create_estimation", "view_estimation"] as PermissionName[] },
-  { href: "/pricing", label: "Pricing", requiredAnyPermission: ["view_cost"] as PermissionName[] },
-  { href: "/architect", label: "Architect", requiredAnyPermission: ["create_estimation", "view_estimation"] as PermissionName[] },
+  { href: "/estimator", label: "Form Estimator", requiredAnyPermission: ["create_estimation", "view_estimation"] },
+  { href: "/pricing", label: "Pricing", requiredAnyPermission: ["view_cost"] },
+  { href: "/architect", label: "Architect", requiredAnyPermission: ["create_estimation", "view_estimation"] },
   { href: "/catalog", label: "Catalog" },
-  { href: "/estimates", label: "Saved Work", requiredAnyPermission: ["view_estimation", "create_estimation"] as PermissionName[] }
-] as const;
+  { href: "/estimates", label: "Saved Work", requiredAnyPermission: ["view_estimation", "create_estimation"] }
+];
 
 function isRouteActive(pathname: string, href: string) {
   if (href === "/workspace") {
@@ -43,9 +49,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Box
         component="header"
         sx={{
-          position: "sticky",
-          top: 0,
-          zIndex: 20,
           backdropFilter: "blur(18px)",
           background: "rgba(248, 251, 255, 0.88)",
           borderBottom: "1px solid var(--line)"

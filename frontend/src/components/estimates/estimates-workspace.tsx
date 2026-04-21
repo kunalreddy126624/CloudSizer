@@ -73,7 +73,9 @@ const providers = new Set<RecommendationRequest["preferred_providers"][number]>(
   "digitalocean",
   "akamai",
   "ovhcloud",
-  "cloudflare"
+  "cloudflare",
+  "salesforce",
+  "snowflake"
 ]);
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -96,6 +98,8 @@ function parseRecommendationRequest(value: unknown): RecommendationRequest | nul
     requires_managed_database,
     availability_tier,
     budget_preference,
+    enable_decoupled_compute,
+    selective_services,
     preferred_providers
   } = value;
 
@@ -116,6 +120,18 @@ function parseRecommendationRequest(value: unknown): RecommendationRequest | nul
     return null;
   }
 
+  const parsedSelectiveServices = Array.isArray(selective_services)
+    ? selective_services.filter((item): item is NonNullable<RecommendationRequest["selective_services"]>[number] => {
+        if (!isObjectRecord(item)) {
+          return false;
+        }
+        return (
+          typeof item.service_family === "string" &&
+          providers.has(item.provider as RecommendationRequest["preferred_providers"][number])
+        );
+      })
+    : [];
+
   return {
     workload_type: workload_type as RecommendationRequest["workload_type"],
     region,
@@ -127,6 +143,8 @@ function parseRecommendationRequest(value: unknown): RecommendationRequest | nul
     requires_managed_database,
     availability_tier: availability_tier as RecommendationRequest["availability_tier"],
     budget_preference: budget_preference as RecommendationRequest["budget_preference"],
+    enable_decoupled_compute: enable_decoupled_compute === true,
+    selective_services: parsedSelectiveServices,
     preferred_providers:
       preferred_providers as RecommendationRequest["preferred_providers"]
   };

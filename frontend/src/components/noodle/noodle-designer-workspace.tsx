@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Alert, Box, Button, Chip, Container, Stack, Typography } from "@mui/material";
 
 import { NoodlePipelineDesigner } from "@/components/noodle/noodle-pipeline-designer";
-import { loadPendingNoodleDesignerSession } from "@/lib/scenario-store";
+import { loadNoodlePipelineDraft, loadPendingNoodleDesignerSession, storePendingNoodleSchedulerSession } from "@/lib/scenario-store";
 import type {
   NoodleArchitectureOverview,
   NoodleArchitecturePrinciple,
+  NoodleDesignerDeployment,
   NoodleOrchestratorPlan,
   NoodlePipelineDesignerDocument,
   NoodlePipelineIntent
@@ -62,6 +64,7 @@ function buildEmptyIntent(): NoodlePipelineIntent {
 }
 
 export function NoodleDesignerWorkspace() {
+  const router = useRouter();
   const [intent, setIntent] = useState<NoodlePipelineIntent>(buildEmptyIntent);
   const [workflowTemplate, setWorkflowTemplate] = useState<string | null>(null);
   const [seededFromWorkspace, setSeededFromWorkspace] = useState(false);
@@ -69,6 +72,7 @@ export function NoodleDesignerWorkspace() {
   const [designPrinciples, setDesignPrinciples] = useState<NoodleArchitecturePrinciple[]>([]);
   const [savedArchitecture, setSavedArchitecture] = useState<SavedArchitectureDraft | null>(null);
   const [agentMomoBrief, setAgentMomoBrief] = useState<string | null>(null);
+  const [deploymentSeed, setDeploymentSeed] = useState<NoodleDesignerDeployment | null>(null);
   const [seedDocument, setSeedDocument] = useState<NoodlePipelineDesignerDocument | null>(null);
   const [plannedOrchestratorPlan, setPlannedOrchestratorPlan] = useState<NoodleOrchestratorPlan | null>(null);
 
@@ -84,10 +88,25 @@ export function NoodleDesignerWorkspace() {
     setDesignPrinciples(session.design_principles ?? []);
     setSavedArchitecture(session.saved_architecture ?? null);
     setAgentMomoBrief(session.agent_momo_brief ?? null);
+    setDeploymentSeed(session.deployment_seed ?? null);
     setSeedDocument(session.pipeline_document ?? null);
     setPlannedOrchestratorPlan(session.orchestrator_plan ?? null);
     setSeededFromWorkspace(true);
   }, []);
+
+  function openSoupSchedulerPage() {
+    const currentDraft = typeof window === "undefined" ? null : loadNoodlePipelineDraft();
+    const pipelineReference = currentDraft ?? seedDocument;
+    storePendingNoodleSchedulerSession({
+      source: "designer",
+      intent_name: intent.name,
+      pipeline_id: pipelineReference?.id ?? null,
+      pipeline_name: pipelineReference?.name ?? null,
+      orchestrator_plan: plannedOrchestratorPlan,
+      opened_at: new Date().toISOString()
+    });
+    router.push("/noodle/scheduler");
+  }
 
   return (
     <Box
@@ -114,6 +133,9 @@ export function NoodleDesignerWorkspace() {
               <Button component={Link} href="/noodle" variant="outlined" sx={noodleSecondaryButtonSx}>
                 Back To Noodle
               </Button>
+              <Button onClick={openSoupSchedulerPage} variant="outlined" sx={noodleSecondaryButtonSx}>
+                Soup Scheduler
+              </Button>
               <Button component={Link} href="/workspace" variant="outlined" sx={noodleSecondaryButtonSx}>
                 Back To Workspace
               </Button>
@@ -139,6 +161,7 @@ export function NoodleDesignerWorkspace() {
             designPrinciples={designPrinciples}
             savedArchitecture={savedArchitecture}
             agentMomoBrief={agentMomoBrief}
+            deploymentSeed={deploymentSeed}
             seedDocument={seedDocument}
             plannedOrchestratorPlan={plannedOrchestratorPlan}
           />

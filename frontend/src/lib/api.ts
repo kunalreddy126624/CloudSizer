@@ -21,11 +21,16 @@ import type {
   LivePricingRefreshRequest,
   LivePricingRefreshResponse,
   NoodleArchitectureOverview,
+  NoodleAgentQueryRequest,
+  NoodleAgentQueryResponse,
+  NoodlePipelineBatchResumeRequest,
+  NoodlePipelineBatchResumeResponse,
   NoodlePipelineDesignerDocument,
   NoodlePipelineIntent,
   NoodlePipelinePlanningRequest,
   NoodlePipelinePlanResponse,
   NoodlePlatformBlueprint,
+  NoodlePipelineRepairRunRequest,
   NoodlePipelineRunCreateRequest,
   NoodlePipelineRunResponse,
   NoodleReferenceSpec,
@@ -118,6 +123,13 @@ export function listNoodleReferenceSpecs() {
   return apiRequest<NoodleReferenceSpec[]>("/noodle/reference-specs");
 }
 
+export function queryNoodleAgent(request: NoodleAgentQueryRequest) {
+  return apiRequest<NoodleAgentQueryResponse>("/noodle/agents/query", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
 export function planNoodlePipeline(request: NoodlePipelinePlanningRequest) {
   return apiRequest<NoodlePipelinePlanResponse>("/noodle/pipelines/plan", {
     method: "POST",
@@ -142,6 +154,34 @@ export function saveNoodlePipeline(request: NoodlePipelineDesignerDocument) {
 
 export function createNoodlePipelineRun(pipelineId: string, request: NoodlePipelineRunCreateRequest) {
   return apiRequest<NoodlePipelineRunResponse>(`/noodle/pipelines/${pipelineId}/runs`, {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function stopNoodlePipelineRun(pipelineId: string, runId: string) {
+  return apiRequest<NoodlePipelineRunResponse>(`/noodle/pipelines/${pipelineId}/runs/${runId}/stop`, {
+    method: "POST"
+  });
+}
+
+export function createNoodlePipelineRepairRun(
+  pipelineId: string,
+  runId: string,
+  request: NoodlePipelineRepairRunRequest
+) {
+  return apiRequest<NoodlePipelineRunResponse>(`/noodle/pipelines/${pipelineId}/runs/${runId}/repair`, {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function resumeNoodlePipelineBatchSession(
+  pipelineId: string,
+  batchSessionId: string,
+  request: NoodlePipelineBatchResumeRequest
+) {
+  return apiRequest<NoodlePipelineBatchResumeResponse>(`/noodle/pipelines/${pipelineId}/batch-sessions/${batchSessionId}/resume`, {
     method: "POST",
     body: JSON.stringify(request)
   });

@@ -7,6 +7,8 @@ services:
       dockerfile: Dockerfile
     environment:
       ALLOCATOR_DATABASE_URL: postgresql://cloudsizer:cloudsizer@postgres:5432/cloudsizer
+      NOODLE_DATABASE_URL: postgresql://cloudsizer:cloudsizer@postgres:5432/cloudsizer
+      NOODLE_ALLOW_SQLITE_FALLBACK: "false"
       ALLOCATOR_TERRAFORM_ARTIFACT_DIR: /app/app/data/allocator_artifacts
       ALLOCATOR_MOCK_CLOUD_CONTROL_PLANE: "true"
       REDIS_URL: redis://redis:6379/0

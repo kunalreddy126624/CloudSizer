@@ -211,12 +211,41 @@ class AllocatorControlPlane:
             budget_validated_at=run.budget_validated_at,
             budget_validation_comment=run.budget_validation_comment,
         )
-        state = self.workflow.provision(run_id, run.payload, self._state_from_run(provisioning_run))
+        try:
+            state = self.workflow.provision(run_id, run.payload, self._state_from_run(provisioning_run))
+        except Exception as exc:
+            failed = self.repository.update_run(
+                run_id,
+                status=AllocatorRunStatus.FAILED,
+                approval_status=provisioning_run.approval_status,
+                budget_validation_status=provisioning_run.budget_validation_status,
+                summary="Allocator provisioning failed unexpectedly.",
+                account_plan=provisioning_run.account_plan,
+                terraform_bundle=provisioning_run.terraform_bundle,
+                cost_result=provisioning_run.cost_result,
+                policy_result=provisioning_run.policy_result,
+                provisioning_result=provisioning_run.provisioning_result,
+                workflow_trace=[*provisioning_run.workflow_trace, f"Provisioning failed unexpectedly: {exc}"],
+                error_message=str(exc),
+                reviewed_by=provisioning_run.reviewed_by,
+                reviewed_at=provisioning_run.reviewed_at,
+                review_comment=provisioning_run.review_comment,
+                budget_validated_by=provisioning_run.budget_validated_by,
+                budget_validated_at=provisioning_run.budget_validated_at,
+                budget_validation_comment=provisioning_run.budget_validation_comment,
+            )
+            self.audit.record(
+                run_id=run_id,
+                actor=principal.email,
+                action="allocator.run_allocation_failed",
+                detail={"comment": request.comment, "error": str(exc)},
+            )
+            return AllocatorRunResponse(run=failed, tools=[])
         updated = self.repository.update_run(
             run_id,
             status=AllocatorRunStatus.COMPLETED if state["provisioning_result"].applied else AllocatorRunStatus.FAILED,
-            approval_status=run.approval_status,
-            budget_validation_status=run.budget_validation_status,
+            approval_status=provisioning_run.approval_status,
+            budget_validation_status=provisioning_run.budget_validation_status,
             summary=state.get("summary", "Allocator provisioning finished."),
             account_plan=state.get("account_plan"),
             terraform_bundle=state.get("terraform_bundle"),
@@ -225,20 +254,22 @@ class AllocatorControlPlane:
             provisioning_result=state.get("provisioning_result"),
             workflow_trace=state.get("workflow_trace"),
             error_message=None if state["provisioning_result"].applied else state["provisioning_result"].message,
-            reviewed_by=run.reviewed_by,
-            reviewed_at=run.reviewed_at,
-            review_comment=run.review_comment,
-            budget_validated_by=run.budget_validated_by,
-            budget_validated_at=run.budget_validated_at,
-            budget_validation_comment=run.budget_validation_comment,
+            reviewed_by=provisioning_run.reviewed_by,
+            reviewed_at=provisioning_run.reviewed_at,
+            review_comment=provisioning_run.review_comment,
+            budget_validated_by=provisioning_run.budget_validated_by,
+            budget_validated_at=provisioning_run.budget_validated_at,
+            budget_validation_comment=provisioning_run.budget_validation_comment,
         )
         self.audit.record(
             run_id=run_id,
             actor=principal.email,
-            action="allocator.run_allocated",
+            action="allocator.run_allocated" if updated.provisioning_result and updated.provisioning_result.applied else "allocator.run_allocation_failed",
             detail={
                 "comment": request.comment,
                 "execution_reference": updated.provisioning_result.execution_reference if updated.provisioning_result else None,
+                "runner_mode": updated.provisioning_result.runner_mode if updated.provisioning_result else None,
+                "execution_log_path": updated.provisioning_result.execution_log_path if updated.provisioning_result else None,
             },
         )
         return AllocatorRunResponse(run=updated, tools=state.get("tools", []))
