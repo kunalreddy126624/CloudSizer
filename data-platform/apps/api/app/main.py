@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import artifact_router, health_router, pipelines_router, repos_router, runs_router
+from app.api.routers import artifact_router, health_router, pipelines_router, repos_router, runs_router, toon_router
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine
@@ -27,3 +27,4 @@ app.include_router(repos_router)
 app.include_router(artifact_router)
 app.include_router(pipelines_router)
 app.include_router(runs_router)
+app.include_router(toon_router)

@@ -30,6 +30,7 @@ SINK_CONNECTION_PARAM_KEYS = {
     "destination_connection_ref",
 }
 SNOWFLAKE_PLUGIN_NAMES = {"snowflake-plugin", "snowflake-sink-plugin", "snowflake"}
+RUNTIME_DUMP_NODE_KINDS = {"cache", "sink"}
 
 
 @dataclass(frozen=True)
@@ -184,7 +185,7 @@ class NoodlePipelineRuntimeService:
         upstream_map: dict[str, list[str]],
         test_node_id: str | None,
     ) -> list[NoodleDesignerNode]:
-        dump_nodes = [node for node in document.nodes if node.kind == "cache"]
+        dump_nodes = [node for node in document.nodes if node.kind in RUNTIME_DUMP_NODE_KINDS]
         if not test_node_id:
             return dump_nodes
         selected_node = next((node for node in document.nodes if node.id == test_node_id), None)

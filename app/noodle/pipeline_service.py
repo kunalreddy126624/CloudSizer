@@ -42,6 +42,7 @@ from app.noodle.schemas import (
 CACHE_CAPTURE_LIMIT_BYTES = 30 * 1024 * 1024
 CACHE_PREVIEW_LIMIT_BYTES = 256 * 1024
 CACHE_OBSERVABLE_UPSTREAM_KINDS = {"transform", "quality", "feature", "serve"}
+RUNTIME_SINK_NODE_KINDS = {"cache", "sink"}
 EXACT_WRITE_HINTS = {"transactional", "idempotent", "merge", "upsert", "overwrite_idempotent"}
 BEST_EFFORT_WRITE_HINTS = {"append", "overwrite", "truncate_insert", "replace"}
 UNSAFE_WRITE_HINTS = {"external_side_effect", "api_call", "email", "webhook"}
@@ -423,7 +424,7 @@ def _reachable_sink_nodes(
     sinks = [
         node_by_id[node_id]
         for node_id in reachable
-        if node_id in node_by_id and node_by_id[node_id].kind == "cache"
+        if node_id in node_by_id and node_by_id[node_id].kind in RUNTIME_SINK_NODE_KINDS
     ]
     return sinks
 

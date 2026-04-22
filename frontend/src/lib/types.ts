@@ -997,7 +997,8 @@ export type NoodleDesignerNodeKind =
   | "cache"
   | "quality"
   | "feature"
-  | "serve";
+  | "serve"
+  | "sink";
 
 export interface NoodleDesignerParam {
   key: string;

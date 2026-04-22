@@ -158,6 +158,7 @@ def _build_runtime_document(
     connection_ref_params: list[dict[str, str]] | None = None,
     dump_params: list[dict[str, str]] | None = None,
     extra_connections: list[dict[str, object]] | None = None,
+    dump_kind: str = "cache",
 ) -> NoodlePipelineDocument:
     source_param_values = list(source_params or [])
     if not any(param["key"].strip().lower() == "connection_ref" for param in source_param_values):
@@ -211,8 +212,8 @@ def _build_runtime_document(
                 },
                 {
                     "id": "node-cache",
-                    "label": "Dump Orders",
-                    "kind": "cache",
+                    "label": "Dump Orders" if dump_kind == "cache" else "Sink Orders",
+                    "kind": dump_kind,
                     "position": {"x": 200, "y": 0},
                     "params": dump_param_values,
                 },
@@ -678,6 +679,49 @@ class NoodlePipelineControlPlaneTests(unittest.TestCase):
         self.assertEqual(len(response.run.cached_outputs), 1)
         self.assertIn(dump_path.as_posix(), response.run.cached_outputs[0].summary)
         self.assertTrue(any("Dumped 2 records" in log.message for log in response.run.logs))
+
+    def test_runtime_execution_writes_using_first_class_sink_node(self) -> None:
+        source_path = Path(self.temp_dir.name) / "orders_sink.jsonl"
+        dump_path = Path(self.temp_dir.name) / "artifacts" / "orders_sink_output.jsonl"
+        source_records = [
+            {"order_id": "SINK-100", "amount": 77.5},
+            {"order_id": "SINK-101", "amount": 88.0},
+        ]
+        source_path.write_text(
+            "\n".join(json.dumps(record) for record in source_records) + "\n",
+            encoding="utf-8",
+        )
+        runtime_document = self.service.save_pipeline(
+            _build_runtime_document(
+                source_path,
+                dump_path,
+                dump_kind="sink",
+                dump_params=[
+                    {"key": "target_path", "value": dump_path.as_posix()},
+                    {"key": "format", "value": "jsonl"},
+                ],
+            )
+        )
+
+        response = self.service.create_run(
+            runtime_document.id,
+            NoodlePipelineRunCreateRequest(
+                trigger="manual",
+                orchestration_mode="tasks",
+            ),
+        )
+
+        self.assertEqual(response.run.status, "success")
+        self.assertTrue(dump_path.exists())
+        dumped_records = [
+            json.loads(line)
+            for line in dump_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(dumped_records, source_records)
+        self.assertEqual(len(response.run.cached_outputs), 1)
+        self.assertEqual(response.run.cached_outputs[0].node_label, "Sink Orders")
+        self.assertIn(dump_path.as_posix(), response.run.cached_outputs[0].summary)
 
     def test_runtime_execution_reads_github_connector_adapter(self) -> None:
         source_path = Path(self.temp_dir.name) / "github_events.jsonl"

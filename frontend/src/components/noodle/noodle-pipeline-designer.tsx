@@ -158,7 +158,8 @@ const NODE_LIBRARY: Array<{ kind: NoodleDesignerNodeKind; label: string; descrip
   { kind: "cache", label: "Cache", description: "Buffer transformed output so operators can inspect large intermediate payloads safely." },
   { kind: "quality", label: "Quality", description: "Enforce contracts, schema rules, tests, and observability gates." },
   { kind: "feature", label: "Feature", description: "Materialize reusable ML and agent-ready feature outputs." },
-  { kind: "serve", label: "Serve", description: "Publish governed outputs to analytics, APIs, and downstream consumers." }
+  { kind: "serve", label: "Serve", description: "Publish governed outputs to analytics, APIs, and downstream consumers." },
+  { kind: "sink", label: "Sink", description: "Write final pipeline output to a configured target connection or local artifact path." }
 ];
 
 const NODE_COLORS: Record<NoodleDesignerNodeKind, { fill: string; stroke: string; accent: string }> = {
@@ -168,7 +169,8 @@ const NODE_COLORS: Record<NoodleDesignerNodeKind, { fill: string; stroke: string
   cache: { fill: providerColors.alibaba.fill, stroke: providerColors.alibaba.stroke, accent: providerColors.alibaba.text },
   quality: { fill: providerColors.gcp.fill, stroke: providerColors.gcp.stroke, accent: providerColors.gcp.text },
   feature: { fill: providerColors.ibm.fill, stroke: providerColors.ibm.stroke, accent: providerColors.ibm.text },
-  serve: { fill: providerColors.oracle.fill, stroke: providerColors.oracle.stroke, accent: providerColors.oracle.text }
+  serve: { fill: providerColors.oracle.fill, stroke: providerColors.oracle.stroke, accent: providerColors.oracle.text },
+  sink: { fill: providerColors.snowflake.fill, stroke: providerColors.snowflake.stroke, accent: providerColors.snowflake.text }
 };
 const NODE_CONNECTOR_POSITIONS = [20, 40, 60, 80] as const;
 const CACHE_CAPTURE_LIMIT_BYTES = 30 * 1024 * 1024;
@@ -586,6 +588,13 @@ function defaultParamsForKind(kind: NoodleDesignerNodeKind): NoodleDesignerParam
       return [
         { key: "surface", value: "api" },
         { key: "artifact_sink", value: "serving" }
+      ];
+    case "sink":
+      return [
+        { key: "target_connection_ref", value: "target-connection" },
+        { key: "target_table", value: "TARGET_TABLE" },
+        { key: "format", value: "jsonl" },
+        { key: "write_semantics", value: "idempotent" }
       ];
   }
 }
@@ -1101,6 +1110,8 @@ function defaultPluginForKind(kind: NoodleDesignerNodeKind) {
       return "feature-plugin";
     case "serve":
       return "serving-plugin";
+    case "sink":
+      return "sink-plugin";
   }
 }
 
@@ -1115,6 +1126,8 @@ function defaultExecutionPlaneForKind(kind: NoodleDesignerNodeKind): NoodleOrche
     case "quality":
       return "quality";
     case "serve":
+      return "serving";
+    case "sink":
       return "serving";
     case "transform":
     case "feature":
@@ -1138,6 +1151,8 @@ function stageNameForKind(kind: NoodleDesignerNodeKind) {
       return "feature-materialization";
     case "serve":
       return "serving";
+    case "sink":
+      return "sink-write";
   }
 }
 
@@ -1157,6 +1172,8 @@ function createTaskPlanForNode(node: NoodleDesignerNode): NoodleOrchestratorTask
           ? "quality-report"
           : node.kind === "cache"
             ? "cached-preview"
+            : node.kind === "sink"
+              ? "sink-write"
             : `${node.kind}-output`
     ],
     notes: `Version and execute ${node.label} through the portable JSON spec.`
@@ -1674,6 +1691,26 @@ function validateDocument(document: NoodlePipelineDesignerDocument): NoodleDesig
         });
       }
     }
+    if (node.kind === "sink") {
+      const sinkParams = nodeParamsToMap(node);
+      const hasConnectionRef = Boolean(
+        sinkParams.target_connection_ref ||
+        sinkParams.target_connection_id ||
+        sinkParams.sink_connection_ref ||
+        sinkParams.sink_connection_id ||
+        sinkParams.destination_connection_ref ||
+        sinkParams.target_path ||
+        sinkParams.output_path ||
+        sinkParams.dump_path
+      );
+      if (!hasConnectionRef) {
+        validations.push({
+          id: `sink-target-${node.id}`,
+          level: "warning",
+          message: `${node.label} should declare a target connection ref or an explicit output path.`
+        });
+      }
+    }
   }
 
   const queue = document.nodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id);
@@ -2089,6 +2126,8 @@ function buildNodeKindGuidance(
       return `${node.label} is a feature materialization stage. Keep reusable feature outputs and ML-ready payloads here, after quality validation and before serving surfaces. It currently has ${upstreamCount} upstream dependencies. ${architectureSummary}`;
     case "serve":
       return `${node.label} is a serving stage. It should depend only on validated outputs and publish versioned datasets, APIs, or downstream artifacts instead of re-running business logic. It currently depends on ${upstreamCount} upstream stage${upstreamCount === 1 ? "" : "s"}. ${architectureSummary}`;
+    case "sink":
+      return `${node.label} is a sink stage. Configure the target connection or output path on this node, keep write semantics explicit, and use it as the terminal destination for durable pipeline output. It currently depends on ${upstreamCount} upstream stage${upstreamCount === 1 ? "" : "s"}. ${architectureSummary}`;
     default:
       return `${node.label} should stay aligned with the control-plane blueprint and use portable JSON plus plugin-backed behavior. ${architectureSummary}`;
   }
@@ -2322,7 +2361,7 @@ function buildMomoReply(
 
 const DesignerNodeCard = ({ data }: NodeProps<DesignerNodeData>) => {
   const colors = NODE_COLORS[data.kind];
-  const nodeLabel = data.kind === "cache" ? "Cache Node" : titleize(data.kind);
+  const nodeLabel = data.kind === "cache" ? "Cache Node" : data.kind === "sink" ? "Sink Node" : titleize(data.kind);
 
   return (
     <>
@@ -2420,6 +2459,12 @@ const DesignerNodeCard = ({ data }: NodeProps<DesignerNodeData>) => {
                 size="small"
                 label="30 MB preview"
                 sx={{ height: 24, bgcolor: alpha("#ed6c02", 0.12), color: "#8a4700", fontWeight: 700 }}
+              />
+            ) : data.kind === "sink" ? (
+              <Chip
+                size="small"
+                label="Target write"
+                sx={{ height: 24, bgcolor: alpha("#2e75b5", 0.12), color: "#0d4f89", fontWeight: 700 }}
               />
             ) : null}
           </Stack>
@@ -2633,8 +2678,8 @@ function NoodlePipelineDesignerInner({
   const selectedRunCachedOutputs = useMemo(
     () =>
       selectedRun
-        ? selectedNode?.kind === "cache"
-        ? selectedRun.cached_outputs.filter((item) => item.node_id === selectedNode.id)
+        ? selectedNode?.kind === "cache" || selectedNode?.kind === "sink"
+          ? selectedRun.cached_outputs.filter((item) => item.node_id === selectedNode.id)
           : selectedRun.cached_outputs
         : [],
     [selectedNode, selectedRun]
@@ -4579,6 +4624,14 @@ function NoodlePipelineDesignerInner({
                           ) : null}
                         </>
                       ) : null}
+                      {selectedNode.kind === "sink" ? (
+                        <Alert severity="info">
+                          Configure the destination on this node with keys like <strong>target_connection_ref</strong>,
+                          <strong> target_table</strong>, <strong>target_database</strong>, <strong>target_schema</strong>,
+                          or a local file path via <strong>target_path</strong>. This is the durable write target, unlike
+                          cache nodes which exist for preview and inspection.
+                        </Alert>
+                      ) : null}
                       <Typography variant="body2" sx={{ fontWeight: 700 }}>Params</Typography>
                       {selectedNode.params.map((param, index) => (
                         <Stack key={`${selectedNode.id}-${index}`} direction={{ xs: "column", sm: "row" }} spacing={1}>
@@ -5022,11 +5075,11 @@ function NoodlePipelineDesignerInner({
                         <Box>
                           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Cached Outputs</Typography>
                           <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                            Cache nodes buffer transformed payloads with a 30 MB ceiling and expose a bounded preview for inspection.
+                            Cache nodes expose bounded previews, and sink nodes record the final written output location plus a preview of what was emitted.
                           </Typography>
                         </Box>
                         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                          {selectedNode?.kind === "cache" ? (
+                          {selectedNode?.kind === "cache" || selectedNode?.kind === "sink" ? (
                             <Chip label={`Filtered to ${selectedNode.label}`} sx={{ alignSelf: "flex-start" }} />
                           ) : null}
                           <Button
@@ -5125,7 +5178,9 @@ function NoodlePipelineDesignerInner({
                           <Alert severity="info">
                             {selectedNode?.kind === "cache"
                               ? "This cache node has not buffered output in the selected run yet."
-                              : "No cache node outputs were produced for the selected run."}
+                              : selectedNode?.kind === "sink"
+                                ? "This sink node has not produced a recorded target write in the selected run yet."
+                                : "No cache or sink outputs were produced for the selected run."}
                           </Alert>
                         )
                       ) : (

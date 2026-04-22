@@ -493,7 +493,7 @@ class NoodlePipelineObservability(BaseModel):
     quality_score: float
 
 
-DesignerNodeKind = Literal["source", "ingest", "transform", "cache", "quality", "feature", "serve"]
+DesignerNodeKind = Literal["source", "ingest", "transform", "cache", "quality", "feature", "serve", "sink"]
 DesignerDocumentStatus = Literal["draft", "published"]
 DesignerTargetZone = Literal["bronze", "silver", "gold", "feature_store", "serving", "control_plane"]
 DesignerTransformationMode = Literal["python", "sql", "dbt", "spark_sql", "custom"]
