@@ -99,6 +99,28 @@ class NoodleRagApiTest(unittest.TestCase):
         self.assertTrue(payload["recovered"])
         self.assertGreaterEqual(len(payload["attempted_queries"]), 2)
         self.assertIn("System design anchor", payload["answer"])
+        self.assertIn(payload["recovery_strategy"], {"query_rewrite", "fallback_context", "web_search", "regenerate"})
+        stage_names = [step["stage"] for step in payload["workflow_trace"]]
+        self.assertIn("retrieval", stage_names)
+        self.assertIn("retrieval_grader", stage_names)
+        self.assertIn("generation", stage_names)
+        self.assertIn("answer_quality_check", stage_names)
+
+    def test_agent_query_workflow_trace_includes_final_stage(self) -> None:
+        response = self.client.post(
+            "/noodle/agents/query",
+            json={
+                "agent": "estimator",
+                "user_turn": "Need sizing guidance for API workload with managed database and storage.",
+                "context_blocks": ["Estimate cost and service families for multi-cloud setup."],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertGreaterEqual(len(payload["workflow_trace"]), 1)
+        self.assertEqual(payload["workflow_trace"][-1]["stage"], "final")
+        self.assertIn(payload["workflow_trace"][-1]["status"], {"success", "failed"})
 
     def test_agent_momo_query_returns_designer_guidance(self) -> None:
         response = self.client.post(

@@ -86,7 +86,34 @@ class NoodleRagQueryResponse(BaseModel):
 
 
 NoodleAgentKind = Literal["estimator", "architect", "momo"]
-NoodleAgentRecoveryStrategy = Literal["direct", "query_rewrite", "fallback_context", "fallback_guidance"]
+NoodleAgentRecoveryStrategy = Literal[
+    "direct",
+    "query_rewrite",
+    "fallback_context",
+    "web_search",
+    "regenerate",
+    "fallback_guidance",
+]
+
+NoodleAgentWorkflowStage = Literal[
+    "retrieval",
+    "retrieval_grader",
+    "query_rewriter",
+    "generation",
+    "hallucination_checker",
+    "web_search",
+    "answer_quality_check",
+    "regenerate",
+    "final",
+]
+
+NoodleAgentWorkflowStatus = Literal["success", "retry", "failed", "skipped"]
+
+
+class NoodleAgentWorkflowStep(BaseModel):
+    stage: NoodleAgentWorkflowStage
+    status: NoodleAgentWorkflowStatus
+    detail: str
 
 
 class NoodleAgentQueryRequest(BaseModel):
@@ -109,6 +136,7 @@ class NoodleAgentQueryResponse(BaseModel):
     recovered: bool = False
     recovery_strategy: NoodleAgentRecoveryStrategy = "direct"
     attempted_queries: list[str] = Field(default_factory=list)
+    workflow_trace: list[NoodleAgentWorkflowStep] = Field(default_factory=list)
 
 
 class NoodleObservabilityCapability(BaseModel):

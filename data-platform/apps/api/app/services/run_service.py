@@ -46,6 +46,8 @@ class RunService:
         return _run_to_read(run)
 
     def list_runs(self, pipeline_id: str) -> list[PipelineRunRead]:
+        if self.pipeline_repository.get_pipeline(pipeline_id) is None:
+            raise ValueError("Pipeline not found")
         return [_run_to_read(run) for run in self.run_repository.list_runs_for_pipeline(pipeline_id)]
 
     def get_run(self, run_id: str) -> PipelineRunRead:

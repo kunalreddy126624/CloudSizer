@@ -47,3 +47,10 @@ def test_validate_pipeline_endpoint_returns_issues_for_invalid_pipeline() -> Non
     validate_response = client.post(f"/pipelines/{pipeline_id}/validate")
     assert validate_response.status_code == 200
     assert any(issue["code"] == "missing_required_config" for issue in validate_response.json())
+
+
+def test_list_pipeline_runs_returns_404_for_unknown_pipeline() -> None:
+    client = TestClient(app)
+    response = client.get("/pipelines/pl_missing/runs")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Pipeline not found"

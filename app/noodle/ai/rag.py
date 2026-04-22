@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 
 from app.noodle.config import NoodleSettings
@@ -11,6 +11,10 @@ from app.noodle.schemas import (
     NoodleAgentKind,
     NoodleAgentQueryRequest,
     NoodleAgentQueryResponse,
+    NoodleAgentRecoveryStrategy,
+    NoodleAgentWorkflowStage,
+    NoodleAgentWorkflowStatus,
+    NoodleAgentWorkflowStep,
     NoodleDesignerConnectionRef,
     NoodleDesignerEdge,
     NoodleDesignerNode,
@@ -29,6 +33,17 @@ class _KnowledgeDocument:
     kind: str
     content: str
     tags: tuple[str, ...]
+
+
+@dataclass
+class _AgentWorkflowContext:
+    attempted_queries: list[str]
+    ranked_sources: list[NoodleRagSource]
+    recovered: bool
+    recovery_strategy: NoodleAgentRecoveryStrategy
+    workflow_trace: list[NoodleAgentWorkflowStep] = field(default_factory=list)
+    latest_query: str = ""
+    response_answer: str = ""
 
 
 _AGENT_ASSISTANT_NAMES: dict[NoodleAgentKind, str] = {
@@ -63,6 +78,7 @@ class NoodleRagService:
     def __init__(self, settings: NoodleSettings) -> None:
         self.settings = settings
         self._documents = self._build_documents()
+        self._web_documents = self._build_web_documents()
 
     def query(self, request: NoodleRagQueryRequest) -> NoodleRagQueryResponse:
         documents = self._documents + self._build_context_documents(
@@ -103,50 +119,147 @@ class NoodleRagService:
             request.architecture_context,
             request.pipeline_document,
         )
-        attempted_queries = [request.user_turn]
-        ranked_sources = self._rank_sources(documents, request.user_turn, request.max_results)
-        recovered = False
-        recovery_strategy = "direct"
+        workflow = _AgentWorkflowContext(
+            attempted_queries=[request.user_turn],
+            ranked_sources=[],
+            recovered=False,
+            recovery_strategy="direct",
+            latest_query=request.user_turn,
+        )
 
-        if not self._is_sufficient_match(ranked_sources):
-            repaired_query = self._repair_query(request)
-            if repaired_query and repaired_query != request.user_turn:
-                attempted_queries.append(repaired_query)
-                ranked_sources = self._rank_sources(documents, repaired_query, request.max_results)
-                recovered = bool(ranked_sources)
-                recovery_strategy = "query_rewrite"
+        workflow.ranked_sources = self._rank_sources(documents, request.user_turn, request.max_results)
+        self._add_trace(
+            workflow,
+            stage="retrieval",
+            status="success" if workflow.ranked_sources else "retry",
+            detail=f"Retrieved {len(workflow.ranked_sources)} sources for initial query.",
+        )
 
-        if not self._is_sufficient_match(ranked_sources):
+        retrieval_passed = self._grade_retrieval(workflow.ranked_sources)
+        self._add_trace(
+            workflow,
+            stage="retrieval_grader",
+            status="success" if retrieval_passed else "retry",
+            detail=(
+                "Retrieved chunks are relevant to the user query."
+                if retrieval_passed
+                else "Retrieved chunks are weak or missing; retry with rewritten query."
+            ),
+        )
+
+        if not retrieval_passed:
+            rewritten_query = self._repair_query(request)
+            if rewritten_query and rewritten_query not in workflow.attempted_queries:
+                workflow.attempted_queries.append(rewritten_query)
+                workflow.latest_query = rewritten_query
+                self._add_trace(
+                    workflow,
+                    stage="query_rewriter",
+                    status="success",
+                    detail="Expanded the query for better recall.",
+                )
+                workflow.ranked_sources = self._rank_sources(documents, rewritten_query, request.max_results)
+                workflow.recovered = bool(workflow.ranked_sources)
+                workflow.recovery_strategy = "query_rewrite"
+                self._add_trace(
+                    workflow,
+                    stage="retrieval",
+                    status="success" if workflow.ranked_sources else "retry",
+                    detail=f"Retrieved {len(workflow.ranked_sources)} sources after query rewrite.",
+                )
+                retrieval_passed = self._grade_retrieval(workflow.ranked_sources)
+                self._add_trace(
+                    workflow,
+                    stage="retrieval_grader",
+                    status="success" if retrieval_passed else "retry",
+                    detail=(
+                        "Rewritten query produced relevant chunks."
+                        if retrieval_passed
+                        else "Rewritten query is still weak; trying fallback context query."
+                    ),
+                )
+            else:
+                self._add_trace(
+                    workflow,
+                    stage="query_rewriter",
+                    status="failed",
+                    detail="Could not build a rewritten query.",
+                )
+
+        if not retrieval_passed:
             fallback_query = self._fallback_query(request)
-            if fallback_query and fallback_query not in attempted_queries:
-                attempted_queries.append(fallback_query)
-                ranked_sources = self._rank_sources(documents, fallback_query, request.max_results)
-                recovered = bool(ranked_sources)
-                recovery_strategy = "fallback_context"
+            if fallback_query and fallback_query not in workflow.attempted_queries:
+                workflow.attempted_queries.append(fallback_query)
+                workflow.latest_query = fallback_query
+                workflow.ranked_sources = self._rank_sources(documents, fallback_query, request.max_results)
+                workflow.recovered = bool(workflow.ranked_sources)
+                workflow.recovery_strategy = "fallback_context"
+                self._add_trace(
+                    workflow,
+                    stage="query_rewriter",
+                    status="success",
+                    detail="Built a fallback query from architecture and pipeline context.",
+                )
+                self._add_trace(
+                    workflow,
+                    stage="retrieval",
+                    status="success" if workflow.ranked_sources else "failed",
+                    detail=f"Retrieved {len(workflow.ranked_sources)} sources after fallback query.",
+                )
+                retrieval_passed = self._grade_retrieval(workflow.ranked_sources)
+                self._add_trace(
+                    workflow,
+                    stage="retrieval_grader",
+                    status="success" if retrieval_passed else "failed",
+                    detail=(
+                        "Fallback context query produced relevant chunks."
+                        if retrieval_passed
+                        else "Fallback context query still did not produce sufficiently relevant chunks."
+                    ),
+                )
 
         brief = _AGENT_DEFAULT_GUIDANCE[request.agent]
-        if ranked_sources:
-            answer = self._agent_answer(request.agent, ranked_sources, recovered, recovery_strategy)
+        if workflow.ranked_sources:
+            answer, workflow = self._run_generation_workflow(
+                request=request,
+                workflow=workflow,
+                base_sources=workflow.ranked_sources,
+                documents=documents,
+            )
             return NoodleAgentQueryResponse(
                 assistant=_AGENT_ASSISTANT_NAMES[request.agent],
                 answer=answer,
                 brief=brief,
-                sources=ranked_sources,
-                retrieval_backend="in-memory-keyword-index+self-healing",
-                recovered=recovered,
-                recovery_strategy=recovery_strategy,
-                attempted_queries=attempted_queries,
+                sources=workflow.ranked_sources,
+                retrieval_backend="in-memory-keyword-index+self-healing-workflow",
+                recovered=workflow.recovered,
+                recovery_strategy=workflow.recovery_strategy,
+                attempted_queries=workflow.attempted_queries,
+                workflow_trace=workflow.workflow_trace,
             )
 
+        self._add_trace(
+            workflow,
+            stage="generation",
+            status="skipped",
+            detail="Skipping generation because no relevant chunks were found.",
+        )
+        self._add_trace(
+            workflow,
+            stage="final",
+            status="success",
+            detail="Returning fallback guidance.",
+        )
         return NoodleAgentQueryResponse(
             assistant=_AGENT_ASSISTANT_NAMES[request.agent],
             answer=self._fallback_guidance(request),
             brief=brief,
             sources=[],
-            retrieval_backend="in-memory-keyword-index+self-healing",
+            retrieval_backend="in-memory-keyword-index+self-healing-workflow",
             recovered=True,
             recovery_strategy="fallback_guidance",
-            attempted_queries=attempted_queries,
+            attempted_queries=workflow.attempted_queries,
+            workflow_trace=workflow.workflow_trace,
         )
 
     def _build_context_documents(
@@ -256,6 +369,176 @@ class NoodleRagService:
             )
         return documents
 
+    def _build_web_documents(self) -> list[_KnowledgeDocument]:
+        # Lightweight external corpus used by the self-healing "web search" stage.
+        return [
+            _KnowledgeDocument(
+                id="web-rag-pattern-retrieval-grading",
+                title="Web: Retrieval grading best practice",
+                kind="web_search",
+                content=(
+                    "Robust RAG systems grade retrieval relevance before generation. "
+                    "When retrieval is weak, rewrite the query and retry retrieval with higher recall terms."
+                ),
+                tags=("web", "rag", "retrieval-grader", "query-rewrite"),
+            ),
+            _KnowledgeDocument(
+                id="web-rag-pattern-grounding",
+                title="Web: Hallucination checking with grounding",
+                kind="web_search",
+                content=(
+                    "Ground generation in retrieved chunks and reject responses with weak evidence overlap. "
+                    "When grounding fails, fetch external context and regenerate the answer."
+                ),
+                tags=("web", "rag", "hallucination-checker", "grounding"),
+            ),
+            _KnowledgeDocument(
+                id="web-rag-pattern-quality-loop",
+                title="Web: Answer quality retry loop",
+                kind="web_search",
+                content=(
+                    "After grounding passes, run an answer-quality check to verify the response addresses the user query. "
+                    "If quality is low, regenerate with a tighter prompt and explicit question constraints."
+                ),
+                tags=("web", "rag", "quality-check", "regenerate"),
+            ),
+            _KnowledgeDocument(
+                id="web-noodle-control-execution-separation",
+                title="Web: Control plane and execution plane separation",
+                kind="web_search",
+                content=(
+                    "Control plane services handle authoring, metadata, scheduling, and governance while execution plane "
+                    "services run workers, retries, transforms, and serving tasks with isolated scaling boundaries."
+                ),
+                tags=("web", "control-plane", "execution-plane", "workers"),
+            ),
+        ]
+
+    def _run_generation_workflow(
+        self,
+        request: NoodleAgentQueryRequest,
+        workflow: _AgentWorkflowContext,
+        base_sources: list[NoodleRagSource],
+        documents: list[_KnowledgeDocument],
+    ) -> tuple[str, _AgentWorkflowContext]:
+        ranked_sources = list(base_sources)
+        answer = ""
+        regeneration_attempted = False
+
+        for generation_attempt in range(1, 4):
+            answer = self._agent_answer(
+                request.agent,
+                ranked_sources,
+                workflow.recovered,
+                workflow.recovery_strategy,
+            )
+            workflow.response_answer = answer
+            self._add_trace(
+                workflow,
+                stage="generation",
+                status="success",
+                detail=f"Generated draft answer (attempt {generation_attempt}).",
+            )
+
+            grounded = self._is_answer_grounded(answer, ranked_sources, workflow.latest_query)
+            if grounded:
+                self._add_trace(
+                    workflow,
+                    stage="hallucination_checker",
+                    status="success",
+                    detail="Answer is grounded in retrieved context.",
+                )
+            else:
+                self._add_trace(
+                    workflow,
+                    stage="hallucination_checker",
+                    status="retry",
+                    detail="Answer grounding is weak; fetching web context and retrying.",
+                )
+                web_sources = self._web_search_sources(request, workflow.latest_query, documents, request.max_results)
+                if web_sources:
+                    ranked_sources = self._merge_ranked_sources(ranked_sources, web_sources, request.max_results)
+                    workflow.ranked_sources = ranked_sources
+                    workflow.recovered = True
+                    workflow.recovery_strategy = "web_search"
+                    self._add_trace(
+                        workflow,
+                        stage="web_search",
+                        status="success",
+                        detail=f"Fetched {len(web_sources)} external context snippets.",
+                    )
+                    continue
+                self._add_trace(
+                    workflow,
+                    stage="web_search",
+                    status="failed",
+                    detail="No external context found; continuing with current evidence.",
+                )
+
+            quality_passed = self._passes_answer_quality(answer, request.user_turn)
+            if quality_passed:
+                self._add_trace(
+                    workflow,
+                    stage="answer_quality_check",
+                    status="success",
+                    detail="Answer directly addresses the user query.",
+                )
+                self._add_trace(
+                    workflow,
+                    stage="final",
+                    status="success",
+                    detail="Returning validated answer.",
+                )
+                workflow.ranked_sources = ranked_sources
+                return answer, workflow
+
+            self._add_trace(
+                workflow,
+                stage="answer_quality_check",
+                status="retry",
+                detail="Answer does not fully address the query; regenerating with tighter prompt.",
+            )
+
+            if regeneration_attempted:
+                break
+
+            refined_query = self._regenerate_query(request, answer)
+            if refined_query and refined_query not in workflow.attempted_queries:
+                workflow.attempted_queries.append(refined_query)
+                workflow.latest_query = refined_query
+                workflow.recovered = True
+                workflow.recovery_strategy = "regenerate"
+                regeneration_attempted = True
+                self._add_trace(
+                    workflow,
+                    stage="regenerate",
+                    status="success",
+                    detail="Reframed query constraints for a better final answer.",
+                )
+
+                refined_sources = self._rank_sources(documents, refined_query, request.max_results)
+                if refined_sources:
+                    ranked_sources = self._merge_ranked_sources(ranked_sources, refined_sources, request.max_results)
+                    workflow.ranked_sources = ranked_sources
+                continue
+
+            self._add_trace(
+                workflow,
+                stage="regenerate",
+                status="failed",
+                detail="Could not regenerate with improved constraints.",
+            )
+            break
+
+        self._add_trace(
+            workflow,
+            stage="final",
+            status="success",
+            detail="Returning best-effort answer after self-healing retries.",
+        )
+        workflow.ranked_sources = ranked_sources
+        return answer or self._fallback_guidance(request), workflow
+
     def _architecture_documents(self, architecture_context: NoodleSavedArchitectureContext) -> list[_KnowledgeDocument]:
         documents = [
             _KnowledgeDocument(
@@ -350,6 +633,94 @@ class NoodleRagService:
         )[:max_results]
 
     @staticmethod
+    def _add_trace(
+        workflow: _AgentWorkflowContext,
+        stage: NoodleAgentWorkflowStage,
+        status: NoodleAgentWorkflowStatus,
+        detail: str,
+    ) -> None:
+        workflow.workflow_trace.append(
+            NoodleAgentWorkflowStep(
+                stage=stage,
+                status=status,
+                detail=detail,
+            )
+        )
+
+    @staticmethod
+    def _grade_retrieval(ranked_sources: list[NoodleRagSource]) -> bool:
+        if not ranked_sources:
+            return False
+        top_score = ranked_sources[0].score
+        mean_score = sum(item.score for item in ranked_sources) / len(ranked_sources)
+        return top_score >= 0.32 or mean_score >= 0.24
+
+    def _is_answer_grounded(
+        self,
+        answer: str,
+        ranked_sources: list[NoodleRagSource],
+        query: str,
+    ) -> bool:
+        if not ranked_sources:
+            return False
+        answer_tokens = self._tokenize(answer)
+        if not answer_tokens:
+            return False
+        context_tokens = set()
+        for source in ranked_sources:
+            context_tokens |= self._tokenize(f"{source.title} {source.snippet} {' '.join(source.tags)}")
+        query_tokens = self._tokenize(query)
+        supported_tokens = answer_tokens & (context_tokens | query_tokens)
+        return len(supported_tokens) / max(len(answer_tokens), 1) >= 0.28
+
+    def _passes_answer_quality(self, answer: str, user_query: str) -> bool:
+        answer_tokens = self._tokenize(answer)
+        query_tokens = self._tokenize(user_query)
+        if not answer_tokens or not query_tokens:
+            return False
+        overlap = answer_tokens & query_tokens
+        coverage = len(overlap) / len(query_tokens)
+        return coverage >= 0.22 and len(answer.strip()) >= 48
+
+    def _web_search_sources(
+        self,
+        request: NoodleAgentQueryRequest,
+        query: str,
+        documents: list[_KnowledgeDocument],
+        max_results: int,
+    ) -> list[NoodleRagSource]:
+        web_query_parts = [query]
+        web_query_parts.extend(_AGENT_EXPANSION_TERMS[request.agent][:5])
+        if request.architecture_context is not None:
+            web_query_parts.append(request.architecture_context.system_design or request.architecture_context.summary)
+        if request.pipeline_document is not None:
+            web_query_parts.append(
+                " ".join(node.label for node in request.pipeline_document.nodes[:5])
+            )
+        web_query = " ".join(part for part in web_query_parts if part).strip()
+
+        web_documents = [*self._web_documents, *documents]
+        web_sources = self._rank_sources(web_documents, web_query, max_results)
+        for source in web_sources:
+            if source.kind != "web_search":
+                source.kind = "web_search"
+        return web_sources
+
+    @staticmethod
+    def _merge_ranked_sources(
+        ranked_sources: list[NoodleRagSource],
+        new_sources: list[NoodleRagSource],
+        max_results: int,
+    ) -> list[NoodleRagSource]:
+        deduped: dict[str, NoodleRagSource] = {}
+        for source in [*ranked_sources, *new_sources]:
+            current = deduped.get(source.id)
+            if current is None or source.score > current.score:
+                deduped[source.id] = source
+        merged = sorted(deduped.values(), key=lambda item: item.score, reverse=True)
+        return merged[:max_results]
+
+    @staticmethod
     def _is_sufficient_match(ranked_sources: list[NoodleRagSource]) -> bool:
         if not ranked_sources:
             return False
@@ -411,6 +782,21 @@ class NoodleRagService:
         if request.context_blocks:
             fallback_parts.append(" ".join(request.context_blocks[:2]))
         return " ".join(part for part in fallback_parts if part).strip()
+
+    def _regenerate_query(self, request: NoodleAgentQueryRequest, answer: str) -> str:
+        focus_parts = [
+            request.user_turn,
+            "answer quality",
+            "direct response",
+            "grounded context",
+            " ".join(_AGENT_EXPANSION_TERMS[request.agent][:4]),
+        ]
+        answer_tokens = list(self._tokenize(answer))
+        if answer_tokens:
+            focus_parts.append(" ".join(answer_tokens[:8]))
+        if request.context_blocks:
+            focus_parts.append(" ".join(request.context_blocks[:2]))
+        return " ".join(part for part in focus_parts if part).strip()
 
     def _agent_answer(
         self,

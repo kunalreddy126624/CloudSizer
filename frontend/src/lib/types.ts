@@ -900,7 +900,28 @@ export type NoodleAgentRecoveryStrategy =
   | "direct"
   | "query_rewrite"
   | "fallback_context"
+  | "web_search"
+  | "regenerate"
   | "fallback_guidance";
+
+export type NoodleAgentWorkflowStage =
+  | "retrieval"
+  | "retrieval_grader"
+  | "query_rewriter"
+  | "generation"
+  | "hallucination_checker"
+  | "web_search"
+  | "answer_quality_check"
+  | "regenerate"
+  | "final";
+
+export type NoodleAgentWorkflowStatus = "success" | "retry" | "failed" | "skipped";
+
+export interface NoodleAgentWorkflowStep {
+  stage: NoodleAgentWorkflowStage;
+  status: NoodleAgentWorkflowStatus;
+  detail: string;
+}
 
 export interface NoodleAgentQueryRequest {
   agent: NoodleAgentKind;
@@ -922,6 +943,7 @@ export interface NoodleAgentQueryResponse {
   recovered: boolean;
   recovery_strategy: NoodleAgentRecoveryStrategy;
   attempted_queries: string[];
+  workflow_trace: NoodleAgentWorkflowStep[];
 }
 
 export interface NoodleRagSource {
