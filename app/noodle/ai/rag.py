@@ -62,8 +62,9 @@ _AGENT_DEFAULT_GUIDANCE: dict[NoodleAgentKind, str] = {
         "If the prompt is underspecified, recover from the saved architecture and current diagram state."
     ),
     "momo": (
-        "Focus on pipeline structure, plugin-backed sources, orchestration, retries, schedules, transformations, lineage, and deployment wiring. "
-        "If the user prompt is narrow, recover from the current pipeline document and architect system design."
+        "Respond like a pragmatic coding agent. Be direct, technical, and implementation-oriented. "
+        "Focus on pipeline structure, plugin-backed sources, orchestration, retries, schedules, transformations, lineage, deployment wiring, and concrete next changes. "
+        "If the prompt is underspecified, infer from the current pipeline document and architecture context, then state the missing constraint plainly."
     ),
 }
 
@@ -315,9 +316,10 @@ class NoodleRagService:
                 title="Agent Momo Playbook",
                 kind="agent_playbook",
                 content=(
-                    "Agent Momo guides pipeline design. "
+                    "Agent Momo guides pipeline design like a pragmatic coding assistant. "
                     "It should understand nodes, edges, plugins, schedules, retries, lineage, transformations, deployment, "
-                    "and how the current pipeline document fits the architect system design."
+                    "and how the current pipeline document fits the architect system design. "
+                    "It should answer directly, avoid marketing language, call out constraints, and suggest the next concrete change."
                 ),
                 tags=("agent", "momo", "pipeline", "orchestration", "lineage"),
             ),
@@ -805,16 +807,42 @@ class NoodleRagService:
         recovered: bool,
         recovery_strategy: str,
     ) -> str:
+        if agent == "momo":
+            return self._momo_answer(ranked_sources, recovered, recovery_strategy)
+
         lead = {
             "estimator": "Agent Estimator guidance:",
             "architect": "Agent Architect guidance:",
-            "momo": "Agent Momo guidance:",
         }[agent]
         recovery_text = ""
         if recovered and recovery_strategy != "direct":
             recovery_text = " I recovered the query context before answering."
         snippet_text = " ".join(f"{source.title}: {source.snippet}" for source in ranked_sources)
         return f"{lead}{recovery_text} {snippet_text}".strip()
+
+    def _momo_answer(
+        self,
+        ranked_sources: list[NoodleRagSource],
+        recovered: bool,
+        recovery_strategy: str,
+    ) -> str:
+        opening = "Pipeline read:"
+        if recovered and recovery_strategy != "direct":
+            opening = f"Pipeline read after {recovery_strategy.replace('_', ' ')}:"
+
+        source_lines = [
+            f"{source.title}: {source.snippet}"
+            for source in ranked_sources[:3]
+        ]
+        answer_parts = [opening, " ".join(source_lines)]
+
+        if ranked_sources:
+            top_tags = [tag for tag in ranked_sources[0].tags if tag][:3]
+            if top_tags:
+                answer_parts.append(f"Focus areas: {', '.join(top_tags)}.")
+
+        answer_parts.append("Next step: make the smallest pipeline or config change that removes the current constraint.")
+        return " ".join(part for part in answer_parts if part).strip()
 
     def _fallback_guidance(self, request: NoodleAgentQueryRequest) -> str:
         context_fragments = [block for block in request.context_blocks[:2] if block]

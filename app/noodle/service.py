@@ -228,25 +228,12 @@ class NoodleOrchestratorService:
         architecture_alignment: list[NoodleArchitectureAlignmentItem],
     ) -> str:
         architecture = request.architecture_context
-        architecture_text = (
-            f'Use saved architecture "{architecture.name}" as the design anchor.'
-            if architecture
-            else "Use the default Noodle control-plane architecture as the design anchor."
-        )
-        principle_text = ", ".join(principle.title for principle in practice_principles[:5]) or "portable JSON specs, plugins, versioning, and observability"
-        alignment_text = " | ".join(item.guidance for item in architecture_alignment[:4])
-        system_design_text = (
-            f" System design anchor: {architecture.system_design[:300]}."
-            if architecture and architecture.system_design
-            else ""
-        )
+        anchor = architecture.name if architecture else "default Noodle control-plane architecture"
+        principle_text = ", ".join(principle.title for principle in practice_principles[:3]) or "portable JSON specs, plugins, versioning"
         return (
-            f"{architecture_text} "
-            f"Apply these practice principles: {principle_text}. "
-            f"Guide the user toward plugin-backed nodes, versioned configs and schedules, control-plane metadata ownership, and execution-plane worker orchestration. "
-            f"Current workflow template recommendation: {workflow_template}. "
-            f"Architecture alignment: {alignment_text}"
-            f"{system_design_text}"
+            f'Anchor: {anchor}. '
+            f"Template: {workflow_template}. "
+            f"Priorities: {principle_text}."
         )
 
     def _build_orchestrator_plan(
@@ -373,8 +360,7 @@ class NoodleOrchestratorService:
                 practice_principles,
                 architecture_alignment,
             )
-            answer = f"{brief} {response.answer}".strip()
-            return response.model_copy(update={"brief": brief, "answer": answer})
+            return response.model_copy(update={"brief": brief})
 
         if request.agent == "architect" and request.architecture_context is not None:
             system_design = request.architecture_context.system_design

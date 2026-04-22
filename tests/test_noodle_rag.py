@@ -221,9 +221,100 @@ class NoodleRagApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["assistant"], "agent-momo")
-        self.assertIn("System design anchor", payload["answer"])
+        self.assertTrue(payload["answer"].startswith("Pipeline read"))
+        self.assertIn("Next step:", payload["answer"])
         self.assertGreaterEqual(len(payload["sources"]), 1)
         self.assertIn("recovered", payload)
+
+    def test_agent_momo_uses_direct_engineering_style(self) -> None:
+        response = self.client.post(
+            "/noodle/designer/momo/query",
+            json={
+                "user_turn": "How should I wire the sink target and retries for this pipeline?",
+                "intent": {
+                    "name": "ops-pipeline",
+                    "business_goal": "Build an operational data pipeline with explicit orchestration and governed output.",
+                    "deployment_scope": "multi_cloud",
+                    "latency_slo": "minutes",
+                    "requires_ml_features": False,
+                    "requires_realtime_serving": False,
+                    "contains_sensitive_data": False,
+                    "target_consumers": ["ops_api"],
+                    "sources": [
+                        {
+                            "name": "orders_api",
+                            "kind": "api",
+                            "environment": "aws",
+                            "format_hint": "json",
+                            "change_pattern": "append",
+                        }
+                    ],
+                },
+                "pipeline_document": {
+                    "id": "pipe-2",
+                    "name": "ops-pipeline",
+                    "status": "draft",
+                    "version": 1,
+                    "nodes": [
+                        {
+                            "id": "source-1",
+                            "label": "Orders API",
+                            "kind": "source",
+                            "position": {"x": 10, "y": 20},
+                            "params": [],
+                        },
+                        {
+                            "id": "sink-1",
+                            "label": "Orders Sink",
+                            "kind": "sink",
+                            "position": {"x": 120, "y": 20},
+                            "params": [],
+                        },
+                    ],
+                    "edges": [{"id": "edge-1", "source": "source-1", "target": "sink-1"}],
+                    "connection_refs": [],
+                    "metadata_assets": [],
+                    "schemas": [],
+                    "transformations": [],
+                    "deployment": {
+                        "enabled": False,
+                        "deploy_target": "local_docker",
+                        "repository": {
+                            "provider": "github",
+                            "connection_id": None,
+                            "repository": "",
+                            "branch": "main",
+                            "backend_path": "app",
+                            "workflow_ref": ".github/workflows/deploy.yml",
+                        },
+                        "build_command": "docker build -t noodle-pipeline-backend .",
+                        "deploy_command": "docker compose up -d --build",
+                        "artifact_name": "noodle-pipeline-backend",
+                        "notes": "",
+                    },
+                    "orchestrator_plan": None,
+                    "schedule": {
+                        "trigger": "manual",
+                        "cron": "",
+                        "timezone": "UTC",
+                        "enabled": False,
+                        "concurrency_policy": "forbid",
+                        "orchestration_mode": "tasks",
+                        "if_condition": "",
+                    },
+                    "batch_sessions": [],
+                    "runs": [],
+                    "saved_at": "2026-04-21T00:00:00Z",
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["brief"].startswith("Anchor:"))
+        self.assertTrue(payload["answer"].startswith("Pipeline read"))
+        self.assertIn("Next step:", payload["answer"])
+        self.assertNotIn("Apply these practice principles", payload["answer"])
 
 
 if __name__ == "__main__":
