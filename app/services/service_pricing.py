@@ -45,6 +45,7 @@ def calculate_service_pricing(
             estimated_monthly_cost_usd=round(estimated_monthly_cost, 2),
             pricing_source=service.pricing_source,
             last_validated_at=service.last_validated_at,
+            verified_live_price=service.verified_live_price,
         )
         service_accuracy = build_service_accuracy(
             request.provider,
@@ -63,6 +64,7 @@ def calculate_service_pricing(
                 estimated_monthly_cost_usd=round(estimated_monthly_cost, 2),
                 pricing_source=service.pricing_source,
                 last_validated_at=service.last_validated_at,
+                verified_live_price=service.verified_live_price,
                 accuracy=service_accuracy,
             )
         )

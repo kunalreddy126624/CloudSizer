@@ -1,0 +1,9 @@
+dq_rules:
+  - type: "null"
+    column: "amount"
+  - type: "range"
+    column: "amount"
+    min: 0
+    max: 1000
+  - type: "unique"
+    column: "id"

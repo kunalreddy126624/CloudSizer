@@ -1,5 +1,6 @@
 import unittest
 
+from app.agents.live_price_verification import verify_live_prices
 from app.db import get_connection, init_db
 from app.models import CloudProvider, RecommendationRequest
 from app.models import PricingSource
@@ -31,11 +32,11 @@ class RecommendationPricingSourceTest(unittest.TestCase):
             connection.execute("DELETE FROM catalog_price_overrides")
         reload_catalog()
 
-    def test_hyperscaler_recommendations_use_catalog_services(self) -> None:
+    def test_hyperscaler_recommendations_fall_back_when_live_prices_are_not_verified(self) -> None:
         services = estimate_services(BASE_REQUEST, CloudProvider.AWS)
 
-        self.assertTrue(all(service.service_code for service in services))
-        self.assertTrue(all(service.pricing_source.value != "generated" for service in services))
+        self.assertTrue(services)
+        self.assertTrue(all(service.service_code is None for service in services))
 
     def test_generated_catalog_providers_fall_back_to_explicit_profiles(self) -> None:
         services = estimate_services(BASE_REQUEST, CloudProvider.ORACLE)
@@ -44,7 +45,7 @@ class RecommendationPricingSourceTest(unittest.TestCase):
         self.assertTrue(all(service.service_code is None for service in services))
         self.assertTrue(all(service.pricing_source.value == "catalog_snapshot" for service in services))
 
-    def test_generated_catalog_providers_use_benchmark_live_services_after_reference_refresh(self) -> None:
+    def test_verified_live_prices_are_used_for_estimation(self) -> None:
         erp_request = BASE_REQUEST.model_copy(update={"workload_type": "erp"})
         for service_code in ("aws.ecs.fargate", "aws.rds.postgres", "aws.s3.standard"):
             service = get_catalog_service(CloudProvider.AWS, service_code)
@@ -56,12 +57,14 @@ class RecommendationPricingSourceTest(unittest.TestCase):
                 pricing_source=PricingSource.LIVE_API,
             )
 
+        verify_live_prices(CloudProvider.AWS)
         reload_catalog()
-        services = estimate_services(erp_request, CloudProvider.ORACLE)
+        services = estimate_services(erp_request, CloudProvider.AWS)
 
         self.assertTrue(services)
         self.assertTrue(all(service.service_code for service in services))
-        self.assertTrue(all(service.pricing_source == PricingSource.BENCHMARK_LIVE for service in services))
+        self.assertTrue(all(service.pricing_source == PricingSource.LIVE_API for service in services))
+        self.assertTrue(all(service.verified_live_price for service in services))
 
     def test_decoupled_compute_respects_selective_provider_overrides(self) -> None:
         decoupled_request = BASE_REQUEST.model_copy(

@@ -19,6 +19,7 @@ from app.models import (
     PricingDimension,
     PricingSource,
 )
+from app.agents.live_price_verification import verify_live_prices
 from app.services.catalog import CATALOG_PATH, get_catalog_services, upsert_catalog_price_override
 
 
@@ -62,7 +63,8 @@ def refresh_live_pricing(request: LivePricingRefreshRequest) -> LivePricingRefre
             )
 
         benchmark_result = _refresh_benchmark_prices(provider)
-        results.append(_combine_results(provider, direct_result, benchmark_result))
+        verification_result = verify_live_prices(provider)
+        results.append(_combine_results(provider, direct_result, benchmark_result, verification_result))
 
     return LivePricingRefreshResponse(
         refreshed_at=datetime.now(UTC).isoformat(),
@@ -764,12 +766,14 @@ def _combine_results(
     provider: CloudProvider,
     direct_result: LivePricingRefreshResult,
     benchmark_result: LivePricingRefreshResult,
+    verification_result: LivePricingRefreshResult,
 ) -> LivePricingRefreshResult:
     return LivePricingRefreshResult(
         provider=provider,
         updated_services=direct_result.updated_services + benchmark_result.updated_services,
+        verified_services=verification_result.verified_services,
         skipped_services=direct_result.skipped_services + benchmark_result.skipped_services,
-        warnings=[*direct_result.warnings, *benchmark_result.warnings],
+        warnings=[*direct_result.warnings, *benchmark_result.warnings, *verification_result.warnings],
     )
 
 

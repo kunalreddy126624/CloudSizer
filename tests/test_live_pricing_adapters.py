@@ -1,6 +1,7 @@
 import unittest
 
 from app.db import get_connection, init_db
+from app.agents.live_price_verification import verify_live_prices
 from app.models import CloudProvider, PricingSource
 from app.services.catalog import get_catalog_service, get_catalog_services, reload_catalog
 from app.services.live_pricing import (
@@ -75,6 +76,22 @@ class LivePricingAdapterHelpersTest(unittest.TestCase):
 
         self.assertEqual(refreshed.pricing_source, PricingSource.LIVE_API)
         self.assertGreater(refreshed_monthly_cost, original_monthly_cost)
+        self.assertFalse(refreshed.verified_live_price)
+
+    def test_live_price_verification_marks_cross_checked_live_service(self) -> None:
+        service = get_catalog_service(CloudProvider.DIGITALOCEAN, "digitalocean.virtual_machine")
+        original_monthly_cost = service.base_monthly_cost_usd + sum(
+            dimension.suggested_value * dimension.rate_per_unit_usd for dimension in service.dimensions
+        )
+
+        _persist_scaled_live_price_override(service, original_monthly_cost * 1.1)
+        verification = verify_live_prices(CloudProvider.DIGITALOCEAN)
+        reload_catalog()
+
+        refreshed = get_catalog_service(CloudProvider.DIGITALOCEAN, "digitalocean.virtual_machine")
+
+        self.assertEqual(verification.verified_services, 1)
+        self.assertTrue(refreshed.verified_live_price)
 
 
 if __name__ == "__main__":

@@ -48,6 +48,8 @@ def build_accuracy_summary(
         caveats.append("Some services are priced from benchmark-live family ratios derived from the freshest available live provider feeds.")
     if any(source == PricingSource.GENERATED for source in pricing_sources):
         caveats.append("Some services still rely on generated comparison pricing rather than provider-published rates.")
+    if any(service.pricing_source == PricingSource.LIVE_API and not service.verified_live_price for service in services):
+        caveats.append("Some live provider prices have not yet passed the platform cross-check and should not be treated as verified.")
 
     return EstimateAccuracy(
         confidence_score=confidence_score,
@@ -81,6 +83,8 @@ def build_service_accuracy(
         caveats.append("This service uses benchmark-live pricing derived from a live provider family reference.")
     elif service.pricing_source != PricingSource.LIVE_API:
         caveats.append("This service is not currently backed by a live provider pricing feed.")
+    if service.pricing_source == PricingSource.LIVE_API and not service.verified_live_price:
+        caveats.append("This live provider price has not yet passed the platform cross-check.")
     if service.pricing_source == PricingSource.GENERATED:
         caveats.append("This service still uses generated comparison pricing.")
 
@@ -91,6 +95,7 @@ def build_service_accuracy(
         mean_absolute_percentage_error=mean_error,
         pricing_source=service.pricing_source,
         live_pricing_available=service.pricing_source == PricingSource.LIVE_API,
+        verified_live_price=service.verified_live_price,
         caveats=caveats,
     )
 

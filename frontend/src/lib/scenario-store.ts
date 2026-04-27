@@ -85,6 +85,7 @@ const SAVED_NOODLE_PIPELINES_KEY = "cloudsizer.saved-noodle-pipelines";
 const PENDING_NOODLE_DESIGNER_SESSION_KEY = "cloudsizer.pending-noodle-designer-session";
 const SAVED_NOODLE_SCHEDULER_PLANS_KEY = "cloudsizer.saved-noodle-scheduler-plans";
 const PENDING_NOODLE_SCHEDULER_SESSION_KEY = "cloudsizer.pending-noodle-scheduler-session";
+const MAX_SAVED_NOODLE_PIPELINES = 8;
 
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) {
@@ -100,6 +101,71 @@ function parseJson<T>(value: string | null, fallback: T): T {
 
 function isQuotaExceededError(error: unknown) {
   return error instanceof DOMException && (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED");
+}
+
+function readStorageValue(key: string) {
+  return window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key);
+}
+
+function removeStorageValue(key: string) {
+  window.localStorage.removeItem(key);
+  window.sessionStorage.removeItem(key);
+}
+
+function setStorageWithQuotaFallback(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+    window.sessionStorage.removeItem(key);
+  } catch (error) {
+    if (!isQuotaExceededError(error)) {
+      throw error;
+    }
+
+    window.localStorage.removeItem(key);
+    window.sessionStorage.setItem(key, value);
+  }
+}
+
+function compactNoodleRun(run: NoodlePipelineDesignerDocument["runs"][number]) {
+  return {
+    ...run,
+    logs: [],
+    repaired_task_ids: [],
+    reused_task_ids: [],
+    batch_session_ids: [],
+    cached_outputs: [],
+    sink_bindings: [],
+    lineage_records: [],
+    repair_plan: run.repair_plan
+      ? {
+          ...run.repair_plan,
+          rerun_task_ids: [],
+          reused_task_ids: [],
+          downstream_task_ids: [],
+          validation_issues: []
+        }
+      : null
+  };
+}
+
+function compactNoodleBatchSession(session: NonNullable<NoodlePipelineDesignerDocument["batch_sessions"]>[number]) {
+  return {
+    ...session,
+    related_run_ids: [],
+    attempts: []
+  };
+}
+
+function compactNoodlePipelineDocument(document: NoodlePipelineDesignerDocument): NoodlePipelineDesignerDocument {
+  return {
+    ...document,
+    runs: (document.runs ?? []).map(compactNoodleRun),
+    batch_sessions: (document.batch_sessions ?? []).map(compactNoodleBatchSession)
+  };
+}
+
+function compactSavedNoodlePipelines(documents: NoodlePipelineDesignerDocument[]) {
+  return documents.slice(0, MAX_SAVED_NOODLE_PIPELINES).map(compactNoodlePipelineDocument);
 }
 
 export function loadSavedScenarios() {
@@ -150,25 +216,25 @@ export function clearPendingArchitectScenario() {
 
 export function loadArchitectCanvasDraft() {
   return parseJson<ArchitectCanvasDraft | null>(
-    window.localStorage.getItem(ARCHITECT_CANVAS_DRAFT_KEY),
+    readStorageValue(ARCHITECT_CANVAS_DRAFT_KEY),
     null
   );
 }
 
 export function storeArchitectCanvasDraft(draft: ArchitectCanvasDraft) {
-  window.localStorage.setItem(ARCHITECT_CANVAS_DRAFT_KEY, JSON.stringify(draft));
+  setStorageWithQuotaFallback(ARCHITECT_CANVAS_DRAFT_KEY, JSON.stringify(draft));
 }
 
 export function clearArchitectCanvasDraft() {
-  window.localStorage.removeItem(ARCHITECT_CANVAS_DRAFT_KEY);
+  removeStorageValue(ARCHITECT_CANVAS_DRAFT_KEY);
 }
 
 export function loadSavedArchitectureDrafts() {
-  return parseJson<SavedArchitectureDraft[]>(window.localStorage.getItem(SAVED_ARCHITECTURES_KEY), []);
+  return parseJson<SavedArchitectureDraft[]>(readStorageValue(SAVED_ARCHITECTURES_KEY), []);
 }
 
 export function storeSavedArchitectureDrafts(drafts: SavedArchitectureDraft[]) {
-  window.localStorage.setItem(SAVED_ARCHITECTURES_KEY, JSON.stringify(drafts));
+  setStorageWithQuotaFallback(SAVED_ARCHITECTURES_KEY, JSON.stringify(drafts));
 }
 
 export function mergeSavedArchitectureDrafts(
@@ -191,35 +257,38 @@ export function deleteSavedArchitectureDraft(draftId: string) {
 
 export function loadNoodlePipelineDraft() {
   return parseJson<NoodlePipelineDesignerDocument | null>(
-    window.localStorage.getItem(NOODLE_PIPELINE_DRAFT_KEY),
+    readStorageValue(NOODLE_PIPELINE_DRAFT_KEY),
     null
   );
 }
 
 export function storeNoodlePipelineDraft(draft: NoodlePipelineDesignerDocument) {
-  window.localStorage.setItem(NOODLE_PIPELINE_DRAFT_KEY, JSON.stringify(draft));
+  setStorageWithQuotaFallback(NOODLE_PIPELINE_DRAFT_KEY, JSON.stringify(compactNoodlePipelineDocument(draft)));
 }
 
 export function clearNoodlePipelineDraft() {
-  window.localStorage.removeItem(NOODLE_PIPELINE_DRAFT_KEY);
+  removeStorageValue(NOODLE_PIPELINE_DRAFT_KEY);
 }
 
 export function loadSavedNoodlePipelines() {
   return parseJson<NoodlePipelineDesignerDocument[]>(
-    window.localStorage.getItem(SAVED_NOODLE_PIPELINES_KEY),
+    readStorageValue(SAVED_NOODLE_PIPELINES_KEY),
     []
   );
 }
 
 export function storeSavedNoodlePipelines(documents: NoodlePipelineDesignerDocument[]) {
-  window.localStorage.setItem(SAVED_NOODLE_PIPELINES_KEY, JSON.stringify(documents));
+  setStorageWithQuotaFallback(
+    SAVED_NOODLE_PIPELINES_KEY,
+    JSON.stringify(compactSavedNoodlePipelines(documents))
+  );
 }
 
 export function mergeSavedNoodlePipelines(
   documents: NoodlePipelineDesignerDocument[],
   document: NoodlePipelineDesignerDocument
 ) {
-  return [document, ...documents.filter((entry) => entry.id !== document.id)];
+  return [document, ...documents.filter((entry) => entry.id !== document.id)].slice(0, MAX_SAVED_NOODLE_PIPELINES);
 }
 
 export function upsertSavedNoodlePipeline(document: NoodlePipelineDesignerDocument) {
@@ -234,28 +303,32 @@ export function appendSavedNoodlePipeline(document: NoodlePipelineDesignerDocume
 
 export function loadPendingNoodleDesignerSession() {
   return parseJson<PendingNoodleDesignerSession | null>(
-    window.localStorage.getItem(PENDING_NOODLE_DESIGNER_SESSION_KEY),
+    readStorageValue(PENDING_NOODLE_DESIGNER_SESSION_KEY),
     null
   );
 }
 
 export function storePendingNoodleDesignerSession(session: PendingNoodleDesignerSession) {
-  window.localStorage.setItem(PENDING_NOODLE_DESIGNER_SESSION_KEY, JSON.stringify(session));
+  const compactSession: PendingNoodleDesignerSession = {
+    ...session,
+    pipeline_document: session.pipeline_document ? compactNoodlePipelineDocument(session.pipeline_document) : null
+  };
+  setStorageWithQuotaFallback(PENDING_NOODLE_DESIGNER_SESSION_KEY, JSON.stringify(compactSession));
 }
 
 export function clearPendingNoodleDesignerSession() {
-  window.localStorage.removeItem(PENDING_NOODLE_DESIGNER_SESSION_KEY);
+  removeStorageValue(PENDING_NOODLE_DESIGNER_SESSION_KEY);
 }
 
 export function loadSavedNoodleSchedulerPlans() {
   return parseJson<NoodleSchedulerPlan[]>(
-    window.localStorage.getItem(SAVED_NOODLE_SCHEDULER_PLANS_KEY),
+    readStorageValue(SAVED_NOODLE_SCHEDULER_PLANS_KEY),
     []
   );
 }
 
 export function storeSavedNoodleSchedulerPlans(plans: NoodleSchedulerPlan[]) {
-  window.localStorage.setItem(SAVED_NOODLE_SCHEDULER_PLANS_KEY, JSON.stringify(plans));
+  setStorageWithQuotaFallback(SAVED_NOODLE_SCHEDULER_PLANS_KEY, JSON.stringify(plans));
 }
 
 export function mergeSavedNoodleSchedulerPlans(
@@ -272,7 +345,7 @@ export function upsertSavedNoodleSchedulerPlan(plan: NoodleSchedulerPlan) {
 
 export function loadPendingNoodleSchedulerSession() {
   const localSession = parseJson<PendingNoodleSchedulerSession | null>(
-    window.localStorage.getItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY),
+    readStorageValue(PENDING_NOODLE_SCHEDULER_SESSION_KEY),
     null
   );
   if (localSession) {
@@ -334,6 +407,5 @@ export function storePendingNoodleSchedulerSession(session: PendingNoodleSchedul
 }
 
 export function clearPendingNoodleSchedulerSession() {
-  window.localStorage.removeItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY);
-  window.sessionStorage.removeItem(PENDING_NOODLE_SCHEDULER_SESSION_KEY);
+  removeStorageValue(PENDING_NOODLE_SCHEDULER_SESSION_KEY);
 }

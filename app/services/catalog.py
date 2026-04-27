@@ -364,6 +364,7 @@ def _build_generated_services(
                         else PricingSource.GENERATED
                     ),
                     "last_validated_at": None,
+                    "verified_live_price": False,
                 }
             )
         )
@@ -382,7 +383,8 @@ def _load_overrides() -> dict[str, dict[str, object]]:
                     base_monthly_cost_usd,
                     dimensions_json,
                     pricing_source,
-                    last_validated_at
+                    last_validated_at,
+                    detail_json
                 FROM catalog_price_overrides
                 """
             ).fetchall()
@@ -400,6 +402,7 @@ def _load_overrides() -> dict[str, dict[str, object]]:
             ],
             "pricing_source": row["pricing_source"],
             "last_validated_at": row["last_validated_at"],
+            "detail_json": json.loads(row["detail_json"] or "{}"),
         }
     return overrides
 
@@ -415,6 +418,7 @@ def _apply_override(service: CatalogService, overrides: dict[str, dict[str, obje
             "dimensions": override["dimensions"],
             "pricing_source": PricingSource(str(override["pricing_source"])),
             "last_validated_at": str(override["last_validated_at"]),
+            "verified_live_price": bool(override.get("detail_json", {}).get("verified_live_price", False)),
         }
     )
 
@@ -462,8 +466,11 @@ def upsert_catalog_price_override(
     base_monthly_cost_usd: float,
     dimensions: list[PricingDimension],
     pricing_source: PricingSource,
+    detail_json: dict[str, object] | None = None,
+    validated_at: str | None = None,
 ) -> None:
-    timestamp = datetime.now(UTC).isoformat()
+    timestamp = validated_at or datetime.now(UTC).isoformat()
+    serialized_detail = json.dumps(detail_json or {})
     with get_connection() as connection:
         connection.execute(
             """
@@ -481,7 +488,8 @@ def upsert_catalog_price_override(
                 base_monthly_cost_usd = excluded.base_monthly_cost_usd,
                 dimensions_json = excluded.dimensions_json,
                 pricing_source = excluded.pricing_source,
-                last_validated_at = excluded.last_validated_at
+                last_validated_at = excluded.last_validated_at,
+                detail_json = excluded.detail_json
             """,
             (
                 provider.value,
@@ -490,10 +498,42 @@ def upsert_catalog_price_override(
                 json.dumps([dimension.model_dump(mode="json") for dimension in dimensions]),
                 pricing_source.value,
                 timestamp,
-                "{}",
+                serialized_detail,
             ),
         )
     reload_catalog()
+
+
+def update_catalog_price_override_detail(
+    provider: CloudProvider,
+    service_code: str,
+    detail_json: dict[str, object],
+) -> None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT base_monthly_cost_usd, dimensions_json, pricing_source, last_validated_at
+            FROM catalog_price_overrides
+            WHERE service_code = ?
+            """,
+            (service_code,),
+        ).fetchone()
+
+    if row is None:
+        raise KeyError(service_code)
+
+    upsert_catalog_price_override(
+        provider=provider,
+        service_code=service_code,
+        base_monthly_cost_usd=float(row["base_monthly_cost_usd"]),
+        dimensions=[
+            PricingDimension.model_validate(item)
+            for item in json.loads(row["dimensions_json"])
+        ],
+        pricing_source=PricingSource(str(row["pricing_source"])),
+        detail_json=detail_json,
+        validated_at=str(row["last_validated_at"]),
+    )
 
 
 def get_catalog_metadata() -> dict[str, int | str]:

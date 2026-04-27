@@ -476,7 +476,7 @@ def _estimate_service_for_family(
 ) -> ServiceEstimate | None:
     catalog = get_catalog_services(provider=provider)
     catalog_service = next((service for service in catalog if service.service_family == service_family), None)
-    if catalog_service and catalog_service.pricing_source != PricingSource.GENERATED:
+    if catalog_service and _is_verified_live_service(catalog_service):
         return ServiceEstimate(
             provider=provider,
             service_code=catalog_service.service_code,
@@ -488,6 +488,7 @@ def _estimate_service_for_family(
             ),
             pricing_source=catalog_service.pricing_source,
             last_validated_at=catalog_service.last_validated_at,
+            verified_live_price=catalog_service.verified_live_price,
         )
 
     fallback_services = _estimate_profile_services(request, provider, archetype)
@@ -600,10 +601,9 @@ def _estimate_catalog_services(
     ]
     if not selected_services:
         return []
-    if any(service.pricing_source == PricingSource.GENERATED for service in selected_services):
-        # Generated catalog entries are synthetic comparison placeholders, not
-        # provider-backed price points. Fall back to the explicit provider
-        # workload profiles instead of treating generated services as real.
+    if any(not _is_verified_live_service(service) for service in selected_services):
+        # Estimation should only consume catalog prices after they have been
+        # refreshed from the provider and cross-checked by the platform.
         return []
 
     return [
@@ -615,6 +615,7 @@ def _estimate_catalog_services(
             estimated_monthly_cost_usd=round(_estimate_catalog_service_monthly_cost(request, service), 2),
             pricing_source=service.pricing_source,
             last_validated_at=service.last_validated_at,
+            verified_live_price=service.verified_live_price,
         )
         for service in selected_services
     ]
@@ -663,3 +664,7 @@ def _dimension_quantity(
     if key in {"vcpu_count"}:
         return max(dimension.suggested_value, float(max(round(request.concurrent_users / 40), 2)))
     return dimension.suggested_value
+
+
+def _is_verified_live_service(service: CatalogService) -> bool:
+    return service.pricing_source == PricingSource.LIVE_API and service.verified_live_price

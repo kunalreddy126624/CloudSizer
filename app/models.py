@@ -116,6 +116,7 @@ class ServiceEstimate(BaseModel):
     estimated_monthly_cost_usd: float
     pricing_source: PricingSource = PricingSource.CATALOG_SNAPSHOT
     last_validated_at: str | None = None
+    verified_live_price: bool = False
     accuracy: "ServiceAccuracy | None" = None
 
 
@@ -137,6 +138,7 @@ class ServiceAccuracy(BaseModel):
     mean_absolute_percentage_error: float | None = Field(default=None, ge=0.0)
     pricing_source: PricingSource
     live_pricing_available: bool = False
+    verified_live_price: bool = False
     caveats: list[str] = Field(default_factory=list)
 
 
@@ -182,6 +184,7 @@ class CatalogService(BaseModel):
     dimensions: list[PricingDimension] = Field(default_factory=list)
     pricing_source: PricingSource = PricingSource.CATALOG_SNAPSHOT
     last_validated_at: str | None = None
+    verified_live_price: bool = False
 
 
 class ServiceComparisonGroup(BaseModel):
@@ -221,6 +224,7 @@ class CalculatedLineItem(BaseModel):
     estimated_monthly_cost_usd: float
     pricing_source: PricingSource = PricingSource.CATALOG_SNAPSHOT
     last_validated_at: str | None = None
+    verified_live_price: bool = False
     accuracy: ServiceAccuracy | None = None
 
 
@@ -397,6 +401,7 @@ class LivePricingRefreshRequest(BaseModel):
 class LivePricingRefreshResult(BaseModel):
     provider: CloudProvider
     updated_services: int = Field(default=0, ge=0)
+    verified_services: int = Field(default=0, ge=0)
     skipped_services: int = Field(default=0, ge=0)
     warnings: list[str] = Field(default_factory=list)
 
